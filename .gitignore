@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.eggs/
+*.egg-info/
+dist/
+build/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+*.egg
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build
+src/frontend/dist/
+
+# ML Models (large files)
+models/
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio samples (user data)
+voicebanks/
+samples/
+*.wav
+*.mp3
+
+# Claude Code local settings
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Logs
+logs/
+*.log
