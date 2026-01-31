@@ -4,6 +4,7 @@ import { customElement, property, state, query } from 'lit/decorators.js';
 
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
+import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
 
 /**
  * Marker configuration for oto.ini parameters.
@@ -230,6 +231,65 @@ export class UvmWaveformEditor extends LitElement {
       font-size: 0.75rem;
       color: var(--sl-color-neutral-400, #94a3b8);
     }
+
+    .playback-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .playback-controls sl-icon-button {
+      font-size: 1.25rem;
+    }
+
+    .playback-controls sl-icon-button::part(base) {
+      color: var(--sl-color-neutral-700, #334155);
+    }
+
+    .playback-controls sl-icon-button::part(base):hover {
+      color: var(--sl-color-primary-600, #4f46e5);
+    }
+
+    :host([theme='dark']) .playback-controls sl-icon-button::part(base) {
+      color: var(--sl-color-neutral-300, #cbd5e1);
+    }
+
+    :host([theme='dark']) .playback-controls sl-icon-button::part(base):hover {
+      color: var(--sl-color-primary-400, #818cf8);
+    }
+
+    .playback-time {
+      font-family: monospace;
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-600, #475569);
+      min-width: 5rem;
+    }
+
+    :host([theme='dark']) .playback-time {
+      color: var(--sl-color-neutral-400, #94a3b8);
+    }
+
+    .playhead {
+      position: absolute;
+      top: 0;
+      width: 2px;
+      height: 100%;
+      background-color: #fbbf24;
+      pointer-events: none;
+      z-index: 10;
+      box-shadow: 0 0 4px rgba(251, 191, 36, 0.5);
+    }
+
+    .playhead::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -4px;
+      width: 10px;
+      height: 10px;
+      background-color: #fbbf24;
+      border-radius: 50%;
+    }
   `;
 
   /**
@@ -295,7 +355,18 @@ export class UvmWaveformEditor extends LitElement {
   @state()
   private _containerWidth = 800;
 
+  @state()
+  private _isPlaying = false;
+
+  @state()
+  private _playbackPosition = 0; // Current position in ms from start of audio
+
   private _resizeObserver: ResizeObserver | null = null;
+  private _audioContext: AudioContext | null = null;
+  private _sourceNode: AudioBufferSourceNode | null = null;
+  private _playbackStartTime = 0; // AudioContext time when playback started
+  private _playbackStartPosition = 0; // Position in audio (seconds) where playback started
+  private _animationFrameId: number | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -306,6 +377,8 @@ export class UvmWaveformEditor extends LitElement {
     super.disconnectedCallback();
     this._resizeObserver?.disconnect();
     this._removeGlobalListeners();
+    this._stopPlayback();
+    this._cleanupAudioContext();
   }
 
   firstUpdated(): void {
@@ -535,6 +608,14 @@ export class UvmWaveformEditor extends LitElement {
         e.preventDefault();
         this._panRight();
         break;
+      case ' ':
+        e.preventDefault();
+        this._togglePlayback();
+        break;
+      case 'Escape':
+        e.preventDefault();
+        this._stopPlayback();
+        break;
     }
   };
 
@@ -569,6 +650,184 @@ export class UvmWaveformEditor extends LitElement {
       this._canvasWrapper.scrollLeft += 50;
     }
   }
+
+  // ==================== Playback Methods ====================
+
+  /**
+   * Toggle playback on/off.
+   */
+  private _togglePlayback(): void {
+    if (this._isPlaying) {
+      this._stopPlayback();
+    } else {
+      this._startPlayback();
+    }
+  }
+
+  /**
+   * Calculate the end time for playback based on cutoff parameter.
+   * @returns End time in seconds
+   */
+  private _getPlaybackEndTime(): number {
+    if (!this.audioBuffer) return 0;
+
+    if (this.cutoff < 0) {
+      // Negative cutoff: measured from end of audio
+      return this.audioBuffer.duration + (this.cutoff / 1000);
+    } else if (this.cutoff > 0) {
+      // Positive cutoff: absolute position from start
+      return this.cutoff / 1000;
+    } else {
+      // Zero cutoff: play to end
+      return this.audioBuffer.duration;
+    }
+  }
+
+  /**
+   * Start audio playback from offset to cutoff position.
+   * Creates AudioContext on first call (must be after user interaction).
+   */
+  private async _startPlayback(): Promise<void> {
+    if (!this.audioBuffer) return;
+
+    // Create audio context if needed (must be after user gesture)
+    if (!this._audioContext) {
+      this._audioContext = new AudioContext();
+    }
+
+    // Resume context if it was suspended (browser autoplay policy)
+    if (this._audioContext.state === 'suspended') {
+      await this._audioContext.resume();
+    }
+
+    // Calculate start and end times in seconds
+    const startTime = this.offset / 1000;
+    const endTime = this._getPlaybackEndTime();
+    const duration = Math.max(0, endTime - startTime);
+
+    if (duration <= 0) {
+      console.warn('Invalid playback region: offset >= cutoff');
+      return;
+    }
+
+    // Stop any existing playback
+    this._stopSourceNode();
+
+    // Create and configure source node
+    this._sourceNode = this._audioContext.createBufferSource();
+    this._sourceNode.buffer = this.audioBuffer;
+    this._sourceNode.connect(this._audioContext.destination);
+
+    // Store timing info for playhead animation
+    this._playbackStartTime = this._audioContext.currentTime;
+    this._playbackStartPosition = startTime;
+    this._playbackPosition = this.offset;
+
+    // Start playback
+    this._sourceNode.start(0, startTime, duration);
+    this._isPlaying = true;
+
+    // Handle playback end
+    this._sourceNode.onended = () => {
+      this._onPlaybackEnded();
+    };
+
+    // Start playhead animation
+    this._startPlayheadAnimation();
+  }
+
+  /**
+   * Stop audio playback.
+   */
+  private _stopPlayback(): void {
+    this._stopSourceNode();
+    this._stopPlayheadAnimation();
+    this._isPlaying = false;
+    this._playbackPosition = this.offset;
+  }
+
+  /**
+   * Stop the audio source node safely.
+   */
+  private _stopSourceNode(): void {
+    if (this._sourceNode) {
+      try {
+        this._sourceNode.stop();
+      } catch {
+        // Ignore errors if already stopped
+      }
+      this._sourceNode.disconnect();
+      this._sourceNode = null;
+    }
+  }
+
+  /**
+   * Clean up audio context when component is disconnected.
+   */
+  private _cleanupAudioContext(): void {
+    this._stopSourceNode();
+    if (this._audioContext) {
+      this._audioContext.close();
+      this._audioContext = null;
+    }
+  }
+
+  /**
+   * Handle playback ended event.
+   */
+  private _onPlaybackEnded(): void {
+    this._stopPlayheadAnimation();
+    this._isPlaying = false;
+    this._sourceNode = null;
+    // Reset playhead to start position
+    this._playbackPosition = this.offset;
+  }
+
+  /**
+   * Start the playhead animation loop.
+   */
+  private _startPlayheadAnimation(): void {
+    const animate = (): void => {
+      if (!this._isPlaying || !this._audioContext) {
+        return;
+      }
+
+      // Calculate current position based on audio context time
+      const elapsed = this._audioContext.currentTime - this._playbackStartTime;
+      const currentPositionSec = this._playbackStartPosition + elapsed;
+      this._playbackPosition = currentPositionSec * 1000;
+
+      // Check if we've reached the end
+      const endTime = this._getPlaybackEndTime();
+      if (currentPositionSec >= endTime) {
+        this._playbackPosition = endTime * 1000;
+        return;
+      }
+
+      this._animationFrameId = requestAnimationFrame(animate);
+    };
+
+    this._animationFrameId = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Stop the playhead animation loop.
+   */
+  private _stopPlayheadAnimation(): void {
+    if (this._animationFrameId !== null) {
+      cancelAnimationFrame(this._animationFrameId);
+      this._animationFrameId = null;
+    }
+  }
+
+  /**
+   * Get the playhead pixel position.
+   */
+  private _getPlayheadPixel(): number {
+    return this._msToPixel(this._playbackPosition);
+  }
+
+  // ==================== End Playback Methods ====================
 
   private _formatTime(ms: number): string {
     const absMs = Math.abs(ms);
@@ -612,6 +871,15 @@ export class UvmWaveformEditor extends LitElement {
     return html`
       <div class="waveform-container">
         <div class="controls">
+          <div class="playback-controls">
+            <sl-icon-button
+              name=${this._isPlaying ? 'stop-fill' : 'play-fill'}
+              label=${this._isPlaying ? 'Stop' : 'Play'}
+              @click=${this._togglePlayback}
+              ?disabled=${!this.audioBuffer}
+            ></sl-icon-button>
+            <span class="playback-time">${this._formatTime(this._playbackPosition)}</span>
+          </div>
           <div class="zoom-controls">
             <span class="zoom-label">Zoom: ${this.zoom.toFixed(1)}x</span>
             <div class="zoom-buttons">
@@ -619,7 +887,7 @@ export class UvmWaveformEditor extends LitElement {
               <button class="zoom-btn" @click=${this._zoomIn} title="Zoom in (+)">+</button>
             </div>
           </div>
-          <span class="keyboard-hint">Keys: +/- zoom, arrows pan</span>
+          <span class="keyboard-hint">Space: play, +/- zoom, arrows pan</span>
           <span class="time-display">Duration: ${this._formatTime(duration)}</span>
         </div>
 
@@ -633,6 +901,9 @@ export class UvmWaveformEditor extends LitElement {
                   ${this._renderMarker('cutoff', this._getCutoffPixel())}
                   ${this._renderMarker('preutterance', this._msToPixel(this.preutterance))}
                   ${this._renderMarker('overlap', this._msToPixel(this.overlap))}
+                  ${this._isPlaying
+                    ? html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`
+                    : null}
                 </div>
               </div>
             `

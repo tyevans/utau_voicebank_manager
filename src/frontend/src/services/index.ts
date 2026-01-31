@@ -5,8 +5,16 @@
  * Services handle HTTP requests, error handling, and response parsing.
  */
 
-// API clients will be exported here as they are created
-// Example:
-// export { VoicebankService } from './voicebank-service.js';
-// export { SampleService } from './sample-service.js';
-// export { OtoService } from './oto-service.js';
+// API client
+export { api, ApiClient, ApiError } from './api.js';
+
+// Type definitions
+export type {
+  MlStatus,
+  OtoEntry,
+  OtoEntryCreate,
+  OtoEntryUpdate,
+  PhonemeSegment,
+  Voicebank,
+  VoicebankSummary,
+} from './types.js';

@@ -8,6 +8,7 @@ dependencies = [
     "fastapi[standard]>=0.115.0",
     "pydantic>=2.10.0",
     "python-multipart>=0.0.18",
+    "python-slugify>=8.0.0",
     "torch>=2.0.0",
     "transformers>=4.36.0",
     "librosa>=0.10.0",

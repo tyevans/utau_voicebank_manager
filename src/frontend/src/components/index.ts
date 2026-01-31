@@ -11,7 +11,5 @@ export { UvmApp } from './uvm-app.js';
 // Waveform editor for audio visualization and oto.ini parameter editing
 export { UvmWaveformEditor } from './uvm-waveform-editor.js';
 
-// Additional components will be exported here as they are created
-// Example:
-// export { UvmSampleList } from './uvm-sample-list.js';
-// export { UvmOtoEditor } from './uvm-oto-editor.js';
+// Sample browser for selecting voicebank samples
+export { UvmSampleBrowser } from './uvm-sample-browser.js';

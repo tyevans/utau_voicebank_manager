@@ -54,7 +54,8 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-# Audio samples (user data)
+# Audio samples and user data
+data/
 voicebanks/
 samples/
 *.wav
