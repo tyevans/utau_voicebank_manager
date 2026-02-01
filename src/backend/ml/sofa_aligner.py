@@ -271,12 +271,8 @@ class SOFAForcedAligner(ForcedAligner):
             lab_file = segments_dir / "audio.lab"
             lab_file.write_text(transcript, encoding="utf-8")
 
-            # Output directory for TextGrid
-            output_dir = temp_dir / "output"
-            output_dir.mkdir()
-
             # Run SOFA inference
-            # SOFA CLI: python infer.py --ckpt <ckpt> --folder <segments> --dictionary <dict> --out_formats TextGrid
+            # SOFA outputs TextGrid to the same folder as input
             assert self._sofa_path is not None  # Checked in is_available()
             cmd = [
                 "python",
@@ -289,8 +285,6 @@ class SOFAForcedAligner(ForcedAligner):
                 str(dict_path),
                 "--out_formats",
                 "TextGrid",
-                "--save_dir",
-                str(output_dir),
             ]
 
             logger.info(f"Running SOFA: {' '.join(cmd)}")
@@ -315,8 +309,8 @@ class SOFAForcedAligner(ForcedAligner):
                 logger.error(f"SOFA failed: {error_msg}")
                 raise AlignmentError(f"SOFA alignment failed: {error_msg}")
 
-            # Parse TextGrid output
-            result = await self._parse_sofa_output(output_dir, audio_path)
+            # Parse TextGrid output (SOFA writes to input folder)
+            result = await self._parse_sofa_output(segments_dir, audio_path)
             return result
 
         finally:

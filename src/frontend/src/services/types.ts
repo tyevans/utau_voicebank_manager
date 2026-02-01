@@ -116,6 +116,16 @@ export interface MlStatus {
   cuda_available: boolean;
   /** Name of the ML model being used */
   model?: string;
+  /** Whether eSpeak is configured for phoneme detection */
+  espeak_configured?: boolean;
+  /** Path to eSpeak library */
+  espeak_path?: string;
+  /** Platform (linux, darwin, win32) */
+  platform?: string;
+  /** Whether SOFA (singing-oriented aligner) is available */
+  sofa_available?: boolean;
+  /** Languages available for SOFA alignment */
+  sofa_languages?: string[];
 }
 
 /**
@@ -145,4 +155,26 @@ export interface OtoSuggestion {
   phonemes_detected: PhonemeSegment[];
   /** Total audio duration in milliseconds */
   audio_duration_ms: number;
+}
+
+/**
+ * Result of batch oto generation for an entire voicebank.
+ */
+export interface BatchOtoResult {
+  /** ID of the processed voicebank */
+  voicebank_id: string;
+  /** Total number of WAV samples in the voicebank */
+  total_samples: number;
+  /** Number of samples successfully processed */
+  processed: number;
+  /** Number of samples skipped (already had oto entries) */
+  skipped: number;
+  /** Number of samples that failed ML processing */
+  failed: number;
+  /** Generated oto entries */
+  entries: OtoEntry[];
+  /** Filenames of samples that failed processing */
+  failed_files: string[];
+  /** Average confidence score across all generated entries (0-1) */
+  average_confidence: number;
 }

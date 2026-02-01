@@ -6,6 +6,7 @@
  */
 
 import type {
+  BatchOtoResult,
   MlStatus,
   OtoEntry,
   OtoEntryCreate,
@@ -461,7 +462,7 @@ export class ApiClient {
    *
    * @param voicebankId - Voicebank identifier
    * @param filename - WAV filename within the voicebank
-   * @param alias - Optional alias override (auto-generated if not provided)
+   * @param options - Optional settings (alias, preferSofa, sofaLanguage)
    * @returns Suggested oto parameters with confidence score
    * @throws {ApiError} 404 if voicebank or sample not found
    * @throws {ApiError} 503 if ML model is not available
@@ -469,18 +470,52 @@ export class ApiClient {
   async suggestOto(
     voicebankId: string,
     filename: string,
-    alias?: string
+    options?: {
+      alias?: string;
+      /** Use SOFA (singing-optimized) aligner when available. Defaults to true. */
+      preferSofa?: boolean;
+      /** Language code for SOFA alignment. Defaults to 'ja'. */
+      sofaLanguage?: string;
+    }
   ): Promise<OtoSuggestion> {
     const params = new URLSearchParams({
       voicebank_id: voicebankId,
       filename,
     });
-    if (alias) {
-      params.append('alias', alias);
+    if (options?.alias) {
+      params.append('alias', options.alias);
+    }
+    // Default to preferring SOFA for singing-oriented alignment
+    params.append('prefer_sofa', String(options?.preferSofa ?? true));
+    if (options?.sofaLanguage) {
+      params.append('sofa_language', options.sofaLanguage);
     }
 
     return this.request<OtoSuggestion>(`/ml/oto/suggest?${params}`, {
       method: 'POST',
+    });
+  }
+
+  /**
+   * Generate oto entries for all samples in a voicebank.
+   *
+   * Processes each WAV sample through the ML pipeline to generate
+   * suggested oto parameters. This is a potentially long-running
+   * operation for large voicebanks.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @param overwriteExisting - If true, replace existing entries. If false, skip files with entries.
+   * @returns BatchOtoResult with generated entries and statistics
+   * @throws {ApiError} 404 if voicebank not found
+   * @throws {ApiError} 503 if ML model is not available
+   */
+  async batchGenerateOto(
+    voicebankId: string,
+    overwriteExisting = false
+  ): Promise<BatchOtoResult> {
+    return this.requestJson<BatchOtoResult>('/ml/oto/batch-generate', 'POST', {
+      voicebank_id: voicebankId,
+      overwrite_existing: overwriteExisting,
     });
   }
 }

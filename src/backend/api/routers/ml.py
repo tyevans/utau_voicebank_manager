@@ -67,7 +67,8 @@ def get_batch_oto_service(
     oto_repository: Annotated[OtoRepository, Depends(get_oto_repository)],
 ) -> BatchOtoService:
     """Dependency provider for BatchOtoService."""
-    oto_suggester = get_oto_suggester()
+    # Use SOFA-enabled suggester for batch processing (optimized for singing)
+    oto_suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
     return BatchOtoService(voicebank_service, oto_suggester, oto_repository)
 
 

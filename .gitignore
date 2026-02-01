@@ -71,3 +71,7 @@ CLAUDE.local.md
 # Logs
 logs/
 *.log
+
+# MCP (Model Context Protocol) local config
+.mcp.json
+.playwright-mcp/

@@ -993,7 +993,7 @@ export class UvmEditorView extends LitElement {
       const suggestion = await api.suggestOto(
         this._currentVoicebankId,
         this._currentFilename,
-        this._currentEntry?.alias
+        { alias: this._currentEntry?.alias }
       );
 
       // Apply suggested values

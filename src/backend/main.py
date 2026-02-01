@@ -1,5 +1,17 @@
 """FastAPI application entry point for UTAU Voicebank Manager."""
 
+import logging
+
+# Configure logging before importing modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+# Set DEBUG level for ML modules to see aligner selection
+logging.getLogger("src.backend.ml").setLevel(logging.DEBUG)
+logging.getLogger("src.backend.services").setLevel(logging.DEBUG)
+
 # Configure eSpeak before importing ML modules (must be first)
 from src.backend.utils.espeak_config import configure_espeak  # noqa: E402
 

@@ -15,7 +15,7 @@ import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 
 import { api, ApiError } from '../services/api.js';
-import type { VoicebankSummary } from '../services/types.js';
+import type { BatchOtoResult, VoicebankSummary } from '../services/types.js';
 import './uvm-upload-zone.js';
 import type { UvmUploadZone } from './uvm-upload-zone.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
@@ -26,7 +26,7 @@ import { UvmToastManager } from './uvm-toast-manager.js';
  * Displays a two-panel layout with voicebanks on the left and
  * samples in the selected voicebank on the right (as a chip grid).
  *
- * @fires sample-select - Fired when a sample is selected (double-click or Enter)
+ * @fires sample-select - Fired when a sample is selected (click or Enter)
  *
  * @example
  * ```html
@@ -484,6 +484,18 @@ export class UvmSampleBrowser extends LitElement {
   @state()
   private _isDeleting = false;
 
+  @state()
+  private _showBatchDialog = false;
+
+  @state()
+  private _isBatchProcessing = false;
+
+  @state()
+  private _batchOverwriteExisting = false;
+
+  @state()
+  private _batchResult: BatchOtoResult | null = null;
+
   @query('uvm-upload-zone')
   private _uploadZone!: UvmUploadZone;
 
@@ -557,16 +569,9 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Handle sample click (single click for selection).
+   * Handle sample click (select and load sample).
    */
   private _onSampleClick(filename: string): void {
-    this._selectedSample = filename;
-  }
-
-  /**
-   * Handle sample double-click (selection and emit event).
-   */
-  private _onSampleDblClick(filename: string): void {
     this._selectedSample = filename;
     this._emitSampleSelect(filename);
   }
@@ -785,6 +790,17 @@ export class UvmSampleBrowser extends LitElement {
                 (${this._getSelectedVoicebankName()})
               </span>`
             : null}
+          ${this._selectedVoicebank && this._samples.length > 0
+            ? html`
+                <div class="panel-header-actions">
+                  <sl-icon-button
+                    name="magic"
+                    label="Auto-detect all samples"
+                    @click=${this._openBatchDialog}
+                  ></sl-icon-button>
+                </div>
+              `
+            : null}
         </div>
         <div class="panel-content">
           ${!this._selectedVoicebank
@@ -832,7 +848,6 @@ export class UvmSampleBrowser extends LitElement {
                 tabindex="0"
                 data-sample-filename=${filename}
                 @click=${() => this._onSampleClick(filename)}
-                @dblclick=${() => this._onSampleDblClick(filename)}
                 @keydown=${(e: KeyboardEvent) => this._onSampleKeyDown(e, filename)}
                 title=${filename}
               >
@@ -941,6 +956,7 @@ export class UvmSampleBrowser extends LitElement {
       </div>
       ${this._renderUploadDialog()}
       ${this._renderDeleteDialog()}
+      ${this._renderBatchDialog()}
     `;
   }
 
@@ -1209,6 +1225,230 @@ export class UvmSampleBrowser extends LitElement {
           </sl-button>
         </div>
       </sl-dialog>
+    `;
+  }
+
+  /**
+   * Open the batch autodetect dialog.
+   */
+  private _openBatchDialog(): void {
+    this._showBatchDialog = true;
+    this._batchResult = null;
+    this._batchOverwriteExisting = false;
+  }
+
+  /**
+   * Close the batch autodetect dialog.
+   */
+  private _closeBatchDialog(): void {
+    if (this._isBatchProcessing) return;
+    this._showBatchDialog = false;
+    this._batchResult = null;
+    this._batchOverwriteExisting = false;
+  }
+
+  /**
+   * Handle batch dialog close request.
+   */
+  private _onBatchDialogClose(e: Event): void {
+    if (this._isBatchProcessing) {
+      e.preventDefault();
+      return;
+    }
+    this._closeBatchDialog();
+  }
+
+  /**
+   * Toggle overwrite existing checkbox.
+   */
+  private _onOverwriteChange(e: Event): void {
+    const checkbox = e.target as HTMLInputElement;
+    this._batchOverwriteExisting = checkbox.checked;
+  }
+
+  /**
+   * Run batch autodetect on all samples.
+   */
+  private async _runBatchAutodetect(): Promise<void> {
+    if (!this._selectedVoicebank) return;
+
+    this._isBatchProcessing = true;
+    this._batchResult = null;
+
+    try {
+      const result = await api.batchGenerateOto(
+        this._selectedVoicebank,
+        this._batchOverwriteExisting
+      );
+
+      this._batchResult = result;
+
+      // Refresh the oto status indicators
+      await this._fetchSamples(this._selectedVoicebank);
+
+      // Show success toast
+      if (result.processed > 0) {
+        UvmToastManager.success(
+          `Auto-detected ${result.processed} samples (${Math.round(result.average_confidence * 100)}% avg confidence)`
+        );
+      } else if (result.skipped === result.total_samples) {
+        UvmToastManager.info('All samples already have oto entries');
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 503) {
+          UvmToastManager.error('ML model not available. Please try again later.');
+        } else {
+          UvmToastManager.error(`Batch autodetect failed: ${error.message}`);
+        }
+      } else {
+        UvmToastManager.error('Batch autodetect failed unexpectedly');
+      }
+    } finally {
+      this._isBatchProcessing = false;
+    }
+  }
+
+  /**
+   * Render the batch autodetect dialog.
+   */
+  private _renderBatchDialog() {
+    const voicebankName = this._getSelectedVoicebankName();
+
+    return html`
+      <sl-dialog
+        label="Auto-detect All Samples"
+        ?open=${this._showBatchDialog}
+        @sl-request-close=${this._onBatchDialogClose}
+        style="--width: 28rem;"
+      >
+        ${this._batchResult
+          ? this._renderBatchResult()
+          : this._renderBatchConfirmation(voicebankName)}
+
+        <div slot="footer" class="upload-dialog-footer">
+          ${this._batchResult
+            ? html`
+                <sl-button variant="primary" @click=${this._closeBatchDialog}>
+                  Done
+                </sl-button>
+              `
+            : html`
+                <sl-button
+                  @click=${this._closeBatchDialog}
+                  ?disabled=${this._isBatchProcessing}
+                >
+                  Cancel
+                </sl-button>
+                <sl-button
+                  variant="primary"
+                  ?loading=${this._isBatchProcessing}
+                  @click=${this._runBatchAutodetect}
+                >
+                  ${this._isBatchProcessing ? 'Processing...' : 'Start'}
+                </sl-button>
+              `}
+        </div>
+      </sl-dialog>
+    `;
+  }
+
+  /**
+   * Render the batch confirmation content.
+   */
+  private _renderBatchConfirmation(voicebankName: string) {
+    return html`
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        <p style="margin: 0; color: #374151;">
+          Run ML-based phoneme detection on all <strong>${this._samples.length}</strong> samples
+          in <strong>${voicebankName}</strong> to automatically generate oto.ini entries.
+        </p>
+
+        <sl-alert variant="primary" open>
+          <sl-icon slot="icon" name="info-circle"></sl-icon>
+          This may take a while for large voicebanks. Each sample is processed through the ML pipeline.
+        </sl-alert>
+
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <input
+            type="checkbox"
+            .checked=${this._batchOverwriteExisting}
+            @change=${this._onOverwriteChange}
+            ?disabled=${this._isBatchProcessing}
+          />
+          <span style="color: #374151; font-size: 0.875rem;">
+            Overwrite existing entries
+          </span>
+        </label>
+
+        ${this._isBatchProcessing
+          ? html`
+              <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: #f9fafb; border-radius: 0.5rem;">
+                <sl-spinner style="font-size: 1.25rem; --indicator-color: #3b82f6;"></sl-spinner>
+                <span style="color: #6b7280; font-size: 0.875rem;">
+                  Processing samples... This may take a few minutes.
+                </span>
+              </div>
+            `
+          : null}
+      </div>
+    `;
+  }
+
+  /**
+   * Render the batch result summary.
+   */
+  private _renderBatchResult() {
+    const result = this._batchResult!;
+
+    return html`
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        <sl-alert
+          variant=${result.processed > 0 ? 'success' : result.skipped > 0 ? 'primary' : 'warning'}
+          open
+        >
+          <sl-icon slot="icon" name=${result.processed > 0 ? 'check-circle' : 'info-circle'}></sl-icon>
+          ${result.processed > 0
+            ? `Successfully processed ${result.processed} samples`
+            : result.skipped > 0
+              ? 'All samples already have oto entries'
+              : 'No samples were processed'}
+        </sl-alert>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem;">
+          <div style="padding: 0.75rem; background: #f0fdf4; border-radius: 0.5rem; text-align: center;">
+            <div style="font-size: 1.5rem; font-weight: 600; color: #16a34a;">${result.processed}</div>
+            <div style="font-size: 0.75rem; color: #6b7280;">Processed</div>
+          </div>
+          <div style="padding: 0.75rem; background: #f0f9ff; border-radius: 0.5rem; text-align: center;">
+            <div style="font-size: 1.5rem; font-weight: 600; color: #0284c7;">${result.skipped}</div>
+            <div style="font-size: 0.75rem; color: #6b7280;">Skipped</div>
+          </div>
+          <div style="padding: 0.75rem; background: #fef2f2; border-radius: 0.5rem; text-align: center;">
+            <div style="font-size: 1.5rem; font-weight: 600; color: #dc2626;">${result.failed}</div>
+            <div style="font-size: 0.75rem; color: #6b7280;">Failed</div>
+          </div>
+          <div style="padding: 0.75rem; background: #faf5ff; border-radius: 0.5rem; text-align: center;">
+            <div style="font-size: 1.5rem; font-weight: 600; color: #7c3aed;">
+              ${result.processed > 0 ? Math.round(result.average_confidence * 100) : '-'}%
+            </div>
+            <div style="font-size: 0.75rem; color: #6b7280;">Avg Confidence</div>
+          </div>
+        </div>
+
+        ${result.failed_files.length > 0
+          ? html`
+              <details style="margin-top: 0.5rem;">
+                <summary style="cursor: pointer; color: #dc2626; font-size: 0.875rem;">
+                  ${result.failed_files.length} failed file(s)
+                </summary>
+                <ul style="margin: 0.5rem 0 0; padding-left: 1.5rem; color: #6b7280; font-size: 0.8125rem;">
+                  ${result.failed_files.map((f) => html`<li>${f}</li>`)}
+                </ul>
+              </details>
+            `
+          : null}
+      </div>
     `;
   }
 }
