@@ -167,6 +167,19 @@ function findOtoEntry(
     }
   }
 
+  // Try dash-prefix decomposition: if alias starts with "- " (e.g., "- sa"),
+  // strip the prefix and check for just the CV part (e.g., "sa").
+  // This allows VCV songs with dash-prefixed phonemes to play on CV voicebanks.
+  if (alias.startsWith(CV_PREFIX)) {
+    const cvPart = alias.slice(CV_PREFIX.length);
+    if (cvPart) {
+      const cvResult = findOtoEntry(cvPart, otoMap, depth + 1);
+      if (cvResult) {
+        return cvResult;
+      }
+    }
+  }
+
   // Try VCV decomposition: if alias is VCV format (e.g., "a sa"),
   // try to find just the CV part (e.g., "sa" or "- sa") as a fallback.
   // This allows VCV songs to play on CV voicebanks with graceful degradation.

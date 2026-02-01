@@ -603,6 +603,16 @@ function hasPhonemeAlias(phoneme: string, availableAliases: Set<string>, depth =
     }
   }
 
+  // Try dash-prefix decomposition: if phoneme starts with "- " (e.g., "- sa"),
+  // strip the prefix and check for just the CV part (e.g., "sa").
+  // This allows VCV songs with dash-prefixed phonemes to play on CV voicebanks.
+  if (phoneme.startsWith(CV_PREFIX)) {
+    const cvPart = phoneme.slice(CV_PREFIX.length);
+    if (cvPart && hasPhonemeAlias(cvPart, availableAliases, depth + 1)) {
+      return true;
+    }
+  }
+
   // Try VCV decomposition: if phoneme is VCV format (e.g., "a sa"),
   // check if just the CV part (e.g., "sa") is available.
   // This allows VCV songs to show as compatible with CV voicebanks.
