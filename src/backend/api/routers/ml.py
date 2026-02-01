@@ -11,12 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from src.backend.domain.batch_oto import BatchOtoRequest, BatchOtoResult
 from src.backend.domain.oto_suggestion import OtoSuggestion
 from src.backend.domain.phoneme import PhonemeSegment
-from src.backend.ml.oto_suggester import get_oto_suggester
+from src.backend.ml.oto_suggester import OtoSuggester, get_oto_suggester
 from src.backend.ml.phoneme_detector import (
     AudioProcessingError,
     ModelNotLoadedError,
     get_phoneme_detector,
 )
+from src.backend.ml.sofa_aligner import get_sofa_aligner, is_sofa_available
 from src.backend.repositories.oto_repository import OtoRepository
 from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.services.batch_oto_service import BatchOtoService
@@ -168,17 +169,24 @@ async def detect_phonemes(file: UploadFile) -> list[PhonemeSegment]:
 
 
 @router.get("/status")
-async def ml_status() -> dict[str, str | bool | None]:
+async def ml_status() -> dict[str, str | bool | list[str] | None]:
     """Check ML service status and model availability.
 
     Returns:
-        Dictionary with status information including eSpeak configuration
+        Dictionary with status information including eSpeak and SOFA configuration
     """
     import torch
 
     from src.backend.utils.espeak_config import get_espeak_status
 
     espeak_status = get_espeak_status()
+
+    # Check SOFA availability and languages
+    sofa_available = is_sofa_available()
+    sofa_languages: list[str] = []
+    if sofa_available:
+        sofa = get_sofa_aligner()
+        sofa_languages = sofa.get_available_languages()
 
     return {
         "status": "available",
@@ -188,6 +196,8 @@ async def ml_status() -> dict[str, str | bool | None]:
         "espeak_configured": espeak_status.get("espeak_configured", False),
         "espeak_path": espeak_status.get("espeak_path"),
         "platform": espeak_status.get("platform"),
+        "sofa_available": sofa_available,
+        "sofa_languages": sofa_languages,
     }
 
 
@@ -196,6 +206,14 @@ async def suggest_oto(
     voicebank_id: str = Query(..., description="ID of the voicebank"),
     filename: str = Query(..., description="Filename of the sample"),
     alias: str | None = Query(None, description="Optional alias override"),
+    prefer_sofa: bool = Query(
+        False,
+        description="Use SOFA (Singing-Oriented Forced Aligner) if available",
+    ),
+    sofa_language: str = Query(
+        "ja",
+        description="Language code for SOFA alignment (ja, en, zh, ko, fr)",
+    ),
 ) -> OtoSuggestion:
     """Get ML-suggested oto parameters for a voicebank sample.
 
@@ -207,6 +225,8 @@ async def suggest_oto(
         voicebank_id: ID of the voicebank containing the sample
         filename: Filename of the sample within the voicebank
         alias: Optional alias override (auto-generated from filename if not provided)
+        prefer_sofa: If True, use SOFA aligner (optimized for singing) when available
+        sofa_language: Language code for SOFA alignment
 
     Returns:
         OtoSuggestion with suggested parameters and detected phonemes
@@ -237,8 +257,15 @@ async def suggest_oto(
             )
 
     try:
-        suggester = get_oto_suggester()
-        suggestion = await suggester.suggest_oto(audio_path, alias)
+        # Use SOFA-enabled suggester if preferred and available
+        if prefer_sofa and is_sofa_available():
+            suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
+            suggestion = await suggester.suggest_oto(
+                audio_path, alias, sofa_language=sofa_language
+            )
+        else:
+            suggester = get_oto_suggester()
+            suggestion = await suggester.suggest_oto(audio_path, alias)
 
         logger.info(
             f"Generated oto suggestion for {filename}: "
@@ -274,6 +301,14 @@ async def suggest_oto(
 async def suggest_oto_from_upload(
     file: UploadFile,
     alias: str | None = Query(None, description="Optional alias override"),
+    prefer_sofa: bool = Query(
+        False,
+        description="Use SOFA (Singing-Oriented Forced Aligner) if available",
+    ),
+    sofa_language: str = Query(
+        "ja",
+        description="Language code for SOFA alignment (ja, en, zh, ko, fr)",
+    ),
 ) -> OtoSuggestion:
     """Get ML-suggested oto parameters for an uploaded audio file.
 
@@ -284,6 +319,8 @@ async def suggest_oto_from_upload(
     Args:
         file: Audio file (WAV, MP3, FLAC, OGG, or M4A)
         alias: Optional alias override (auto-generated from filename if not provided)
+        prefer_sofa: If True, use SOFA aligner (optimized for singing) when available
+        sofa_language: Language code for SOFA alignment
 
     Returns:
         OtoSuggestion with suggested parameters and detected phonemes
@@ -313,10 +350,15 @@ async def suggest_oto_from_upload(
             tmp_path = Path(tmp_file.name)
 
         # Run oto suggestion
-        suggester = get_oto_suggester()
-
-        # Create a temporary path but keep original filename in suggestion
-        suggestion = await suggester.suggest_oto(tmp_path, alias)
+        # Use SOFA-enabled suggester if preferred and available
+        if prefer_sofa and is_sofa_available():
+            suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
+            suggestion = await suggester.suggest_oto(
+                tmp_path, alias, sofa_language=sofa_language
+            )
+        else:
+            suggester = get_oto_suggester()
+            suggestion = await suggester.suggest_oto(tmp_path, alias)
 
         # Replace the temp filename with the original
         suggestion = OtoSuggestion(

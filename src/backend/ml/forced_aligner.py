@@ -4,6 +4,8 @@ Uses Montreal Forced Aligner (MFA) for high-precision alignment when available,
 with fallback to Wav2Vec2-based alignment for simpler deployments.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -11,12 +13,16 @@ import shutil
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import librosa
 import numpy as np
 import soundfile as sf
 
 from src.backend.domain.phoneme import PhonemeSegment
+
+if TYPE_CHECKING:
+    from src.backend.ml.sofa_aligner import SOFAForcedAligner
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +201,7 @@ class MFAForcedAligner(ForcedAligner):
             transcript_file.write_text(transcript, encoding="utf-8")
 
             # Run MFA alignment
+            assert self._mfa_path is not None  # Checked in is_available()
             cmd = [
                 self._mfa_path,
                 "align",
@@ -463,22 +470,44 @@ class Wav2Vec2ForcedAligner(ForcedAligner):
 class ForcedAlignerFactory:
     """Factory for creating the appropriate forced aligner.
 
-    Prefers MFA when available, falls back to Wav2Vec2.
+    Priority order (configurable):
+    1. SOFA (if prefer_sofa=True and available) - best for singing
+    2. MFA (if prefer_mfa=True and available) - best for speech
+    3. Wav2Vec2 - always available fallback
     """
 
     _mfa_aligner: MFAForcedAligner | None = None
     _wav2vec2_aligner: Wav2Vec2ForcedAligner | None = None
+    _sofa_aligner: SOFAForcedAligner | None = None
 
     @classmethod
-    def get_aligner(cls, prefer_mfa: bool = True) -> ForcedAligner:
+    def get_aligner(
+        cls,
+        prefer_mfa: bool = True,
+        prefer_sofa: bool = False,
+    ) -> ForcedAligner:
         """Get the best available forced aligner.
 
         Args:
-            prefer_mfa: If True, use MFA when available
+            prefer_mfa: If True, prefer MFA over Wav2Vec2
+            prefer_sofa: If True, prefer SOFA over MFA (for singing)
 
         Returns:
             ForcedAligner instance
+
+        Priority order:
+            1. SOFA (if prefer_sofa and available)
+            2. MFA (if prefer_mfa and available)
+            3. Wav2Vec2 (always available)
         """
+        # Try SOFA first if preferred (best for singing)
+        if prefer_sofa:
+            sofa = cls.get_sofa_aligner()
+            if sofa.is_available():
+                logger.info("Using SOFA (Singing-Oriented Forced Aligner)")
+                return sofa
+
+        # Try MFA if preferred (best for speech)
         if prefer_mfa:
             if cls._mfa_aligner is None:
                 cls._mfa_aligner = MFAForcedAligner()
@@ -487,10 +516,11 @@ class ForcedAlignerFactory:
                 logger.info("Using Montreal Forced Aligner")
                 return cls._mfa_aligner
 
+        # Fallback to Wav2Vec2
         if cls._wav2vec2_aligner is None:
             cls._wav2vec2_aligner = Wav2Vec2ForcedAligner()
 
-        logger.info("Using Wav2Vec2 aligner (MFA not available)")
+        logger.info("Using Wav2Vec2 aligner (MFA/SOFA not available)")
         return cls._wav2vec2_aligner
 
     @classmethod
@@ -515,20 +545,37 @@ class ForcedAlignerFactory:
             cls._wav2vec2_aligner = Wav2Vec2ForcedAligner()
         return cls._wav2vec2_aligner
 
+    @classmethod
+    def get_sofa_aligner(cls) -> SOFAForcedAligner:
+        """Get SOFA aligner (may not be available).
+
+        Returns:
+            SOFAForcedAligner instance
+        """
+        if cls._sofa_aligner is None:
+            from src.backend.ml.sofa_aligner import SOFAForcedAligner
+
+            cls._sofa_aligner = SOFAForcedAligner()
+        return cls._sofa_aligner
+
 
 # Module-level convenience functions
 
 
-def get_forced_aligner(prefer_mfa: bool = True) -> ForcedAligner:
+def get_forced_aligner(
+    prefer_mfa: bool = True,
+    prefer_sofa: bool = False,
+) -> ForcedAligner:
     """Get the best available forced aligner.
 
     Args:
         prefer_mfa: If True, prefer MFA over Wav2Vec2
+        prefer_sofa: If True, prefer SOFA over MFA (for singing)
 
     Returns:
         ForcedAligner instance
     """
-    return ForcedAlignerFactory.get_aligner(prefer_mfa)
+    return ForcedAlignerFactory.get_aligner(prefer_mfa, prefer_sofa)
 
 
 async def align_audio(
@@ -536,6 +583,7 @@ async def align_audio(
     transcript: str,
     language: str = "ja",
     prefer_mfa: bool = True,
+    prefer_sofa: bool = False,
 ) -> AlignmentResult:
     """Convenience function to align audio to transcript.
 
@@ -544,9 +592,10 @@ async def align_audio(
         transcript: Text transcript
         language: Language code
         prefer_mfa: If True, prefer MFA when available
+        prefer_sofa: If True, prefer SOFA when available (for singing)
 
     Returns:
         AlignmentResult with phoneme timestamps
     """
-    aligner = get_forced_aligner(prefer_mfa)
+    aligner = get_forced_aligner(prefer_mfa, prefer_sofa)
     return await aligner.align(audio_path, transcript, language)

@@ -25,6 +25,11 @@ from src.backend.ml.phoneme_detector import (
     PhonemeDetector,
     get_phoneme_detector,
 )
+from src.backend.ml.sofa_aligner import (
+    SOFAForcedAligner,
+    get_sofa_aligner,
+    is_sofa_available,
+)
 
 __all__ = [
     # Forced alignment (MFA-based)
@@ -36,6 +41,10 @@ __all__ = [
     "Wav2Vec2ForcedAligner",
     "align_audio",
     "get_forced_aligner",
+    # SOFA (Singing-Oriented Forced Aligner)
+    "SOFAForcedAligner",
+    "get_sofa_aligner",
+    "is_sofa_available",
     # Forced alignment detector (TorchAudio MMS_FA)
     "ForcedAlignmentDetector",
     "ForcedAlignmentError",

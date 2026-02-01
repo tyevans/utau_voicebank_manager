@@ -11,9 +11,16 @@ from src.backend.ml.forced_alignment_detector import (
     ForcedAlignmentDetector,
     ForcedAlignmentError,
     TranscriptExtractionError,
+    extract_transcript_from_filename,
     get_forced_alignment_detector,
 )
 from src.backend.ml.phoneme_detector import PhonemeDetector, preprocess_audio
+from src.backend.ml.sofa_aligner import (
+    AlignmentError,
+    SOFAForcedAligner,
+    get_sofa_aligner,
+    is_sofa_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +148,8 @@ class OtoSuggester:
     Uses ML-detected phoneme boundaries to automatically estimate
     initial oto.ini parameters for voicebank samples.
 
-    Supports two detection modes:
+    Supports multiple detection modes:
+    - SOFA alignment: Optimized for singing voice (enabled with use_sofa=True)
     - Forced alignment (default): Higher accuracy using expected phonemes from filename
     - Blind detection: Fallback using Wav2Vec2 phoneme recognition
     """
@@ -150,6 +158,7 @@ class OtoSuggester:
         self,
         phoneme_detector: PhonemeDetector | None = None,
         use_forced_alignment: bool = True,
+        use_sofa: bool = False,
     ):
         """Initialize the oto suggester.
 
@@ -159,10 +168,16 @@ class OtoSuggester:
             use_forced_alignment: If True, attempt forced alignment first for higher
                                   accuracy. Falls back to blind detection on failure.
                                   Defaults to True.
+            use_sofa: If True, attempt SOFA (Singing-Oriented Forced Aligner) first.
+                     SOFA is optimized for singing voice and produces better results
+                     for sustained vowels. Falls back to forced alignment if unavailable.
+                     Defaults to False.
         """
         self._phoneme_detector = phoneme_detector
         self._forced_alignment_detector: ForcedAlignmentDetector | None = None
+        self._sofa_aligner: SOFAForcedAligner | None = None
         self.use_forced_alignment = use_forced_alignment
+        self.use_sofa = use_sofa
 
     @property
     def phoneme_detector(self) -> PhonemeDetector:
@@ -180,16 +195,25 @@ class OtoSuggester:
             self._forced_alignment_detector = get_forced_alignment_detector()
         return self._forced_alignment_detector
 
+    @property
+    def sofa_aligner(self) -> SOFAForcedAligner:
+        """Get the SOFA aligner, loading lazily if needed."""
+        if self._sofa_aligner is None:
+            self._sofa_aligner = get_sofa_aligner()
+        return self._sofa_aligner
+
     async def suggest_oto(
         self,
         audio_path: Path,
         alias: str | None = None,
+        sofa_language: str = "ja",
     ) -> OtoSuggestion:
         """Analyze audio and suggest oto parameters.
 
         Args:
             audio_path: Path to WAV file
             alias: Optional alias override (defaults to filename-based)
+            sofa_language: Language code for SOFA alignment (ja, en, zh, ko, fr)
 
         Returns:
             OtoSuggestion with suggested parameters
@@ -206,8 +230,29 @@ class OtoSuggester:
         audio_duration_ms = 0.0
         detection_method = "none"
 
-        # Try forced alignment first if enabled
-        if self.use_forced_alignment:
+        # Try SOFA alignment first if enabled and available
+        if self.use_sofa and is_sofa_available():
+            try:
+                # Extract transcript from filename for SOFA
+                transcript = extract_transcript_from_filename(filename)
+                alignment_result = await self.sofa_aligner.align(
+                    audio_path, transcript, language=sofa_language
+                )
+                segments = alignment_result.segments
+                audio_duration_ms = alignment_result.audio_duration_ms
+                detection_method = "sofa"
+                logger.info(
+                    f"SOFA alignment succeeded for {filename}: "
+                    f"{len(segments)} segments detected"
+                )
+            except AlignmentError as e:
+                logger.warning(
+                    f"SOFA alignment failed for {filename}, "
+                    f"falling back to forced alignment: {e}"
+                )
+
+        # Try forced alignment if SOFA didn't work and forced alignment is enabled
+        if not segments and self.use_forced_alignment:
             try:
                 detection_result = await self.forced_alignment_detector.detect_phonemes(
                     audio_path
