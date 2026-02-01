@@ -237,40 +237,24 @@ _あかさ.wav=a さ,550,110,-180,75,35
 ### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/utau_voicebank_manager.git
 cd utau_voicebank_manager
-
-# Install Python dependencies with uv
-uv sync
-
-# Install frontend dependencies
-cd src/frontend
-npm install
-
-# Download ML models (first run)
-uv run python -m src.backend.ml.download_models
+script/setup          # Install deps + create data dirs
+script/models         # Download ML models (optional)
 ```
 
 ### Development
 
 ```bash
-# Start the backend server
-uv run fastapi dev src/backend/main.py
-
-# Start the frontend dev server (in another terminal)
-cd src/frontend
-npm run dev
+script/server         # Start backend (:8000) + frontend (:5173)
+script/test           # Run tests
+script/console        # Python REPL with project loaded
 ```
 
 ### Production
 
 ```bash
-# Build frontend
-cd src/frontend
-npm run build
-
-# Run production server
+script/cibuild        # Full CI: lint, typecheck, test, build
 uv run fastapi run src/backend/main.py
 ```
 

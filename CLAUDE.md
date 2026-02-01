@@ -86,21 +86,12 @@ Maintain running notes to pass emergent knowledge across sessions and agents. No
 ## Quick Reference
 
 ```bash
-# Backend
-uv sync                              # Install Python dependencies
-uv run fastapi dev src/backend/main.py  # Run dev server (port 8000)
-uv run pytest                        # Run backend tests
-uv run ruff check src/backend        # Lint Python code
-uv run ruff format src/backend       # Format Python code
-
-# Frontend
-cd src/frontend && npm install       # Install frontend deps
-cd src/frontend && npm run dev       # Run Vite dev server (port 5173)
-cd src/frontend && npm run build     # Production build
-cd src/frontend && npm run lint      # Lint TypeScript
-
-# ML Models
-uv run python -m src.backend.ml.download_models  # Download models
+script/setup      # First-time setup (bootstrap + create dirs)
+script/server     # Start backend (:8000) + frontend (:5173)
+script/test       # Run pytest + frontend lint
+script/cibuild    # Full CI: lint, typecheck, test, build
+script/models     # Download ML models
+script/console    # Python REPL with project loaded
 ```
 
 ## Project Structure
