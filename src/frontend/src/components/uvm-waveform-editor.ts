@@ -5,7 +5,15 @@ import { customElement, property, state, query } from 'lit/decorators.js';
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
+import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
+import '@shoelace-style/shoelace/dist/components/select/select.js';
+import '@shoelace-style/shoelace/dist/components/option/option.js';
+import '@shoelace-style/shoelace/dist/components/divider/divider.js';
+
+// Import melody preview services
+import { MelodyPlayer, MELODY_PATTERNS, getMelodyPattern } from '../services/index.js';
+import type { OtoEntry } from '../services/index.js';
 
 /**
  * Marker configuration for oto.ini parameters.
@@ -485,6 +493,78 @@ export class UvmWaveformEditor extends LitElement {
     .spectrogram-canvas {
       display: block;
     }
+
+    .preview-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .preview-controls sl-select {
+      min-width: 120px;
+    }
+
+    .preview-controls sl-select::part(combobox) {
+      font-size: 0.75rem;
+      min-height: 1.75rem;
+    }
+
+    .preview-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      background-color: var(--sl-color-neutral-50, #f8fafc);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      line-height: 1;
+      color: var(--sl-color-neutral-600, #475569);
+      transition: all 0.15s ease;
+    }
+
+    .preview-btn:hover {
+      background-color: var(--sl-color-neutral-100, #f1f5f9);
+      color: var(--sl-color-neutral-700, #334155);
+      border-color: var(--sl-color-neutral-300, #cbd5e1);
+    }
+
+    .preview-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .preview-btn.playing {
+      background-color: var(--sl-color-primary-50, #eff6ff);
+      border-color: var(--sl-color-primary-300, #93c5fd);
+      color: var(--sl-color-primary-600, #2563eb);
+    }
+
+    .preview-btn.playing:hover {
+      background-color: var(--sl-color-primary-100, #dbeafe);
+    }
+
+    :host([theme='dark']) .preview-btn {
+      background-color: var(--sl-color-neutral-700, #334155);
+      border-color: var(--sl-color-neutral-600, #475569);
+      color: var(--sl-color-neutral-200, #e2e8f0);
+    }
+
+    :host([theme='dark']) .preview-btn:hover {
+      background-color: var(--sl-color-neutral-600, #475569);
+      color: white;
+    }
+
+    :host([theme='dark']) .preview-btn.playing {
+      background-color: var(--sl-color-primary-900, #1e3a8a);
+      border-color: var(--sl-color-primary-700, #1d4ed8);
+      color: var(--sl-color-primary-200, #bfdbfe);
+    }
+
+    .preview-btn sl-icon {
+      font-size: 0.875rem;
+    }
   `;
 
   /**
@@ -579,6 +659,15 @@ export class UvmWaveformEditor extends LitElement {
   @state()
   private _spectrogramData: Float32Array[] | null = null;
 
+  @state()
+  private _melodyPlayer: MelodyPlayer | null = null;
+
+  @state()
+  private _selectedPatternId: string = 'scale';
+
+  @state()
+  private _isPreviewPlaying: boolean = false;
+
   private _resizeObserver: ResizeObserver | null = null;
   private _audioContext: AudioContext | null = null;
   private _sourceNode: AudioBufferSourceNode | null = null;
@@ -596,6 +685,7 @@ export class UvmWaveformEditor extends LitElement {
     this._resizeObserver?.disconnect();
     this._removeGlobalListeners();
     this._stopPlayback();
+    this._stopPreview();
     this._cleanupAudioContext();
   }
 
@@ -1075,6 +1165,12 @@ export class UvmWaveformEditor extends LitElement {
       case 'Escape':
         e.preventDefault();
         this._stopPlayback();
+        this._stopPreview();
+        break;
+      case 'p':
+      case 'P':
+        e.preventDefault();
+        this._togglePreview();
         break;
     }
   };
@@ -1289,6 +1385,112 @@ export class UvmWaveformEditor extends LitElement {
 
   // ==================== End Playback Methods ====================
 
+  // ==================== Melody Preview Methods ====================
+
+  /**
+   * Build an OtoEntry from the component's individual oto properties.
+   * The MelodyPlayer needs a complete OtoEntry object.
+   */
+  private _buildCurrentOtoEntry(): OtoEntry {
+    return {
+      filename: 'sample.wav', // Placeholder - not used by MelodyPlayer
+      alias: 'sample',        // Placeholder - not used by MelodyPlayer
+      offset: this.offset,
+      consonant: this.consonant,
+      cutoff: this.cutoff,
+      preutterance: this.preutterance,
+      overlap: this.overlap,
+    };
+  }
+
+  /**
+   * Toggle melody preview on/off.
+   */
+  private _togglePreview(): void {
+    if (this._isPreviewPlaying) {
+      this._stopPreview();
+    } else {
+      this._startPreview();
+    }
+  }
+
+  /**
+   * Start melody preview with the selected pattern.
+   */
+  private _startPreview(): void {
+    if (!this.audioBuffer) return;
+
+    // Stop regular playback if active
+    if (this._isPlaying) {
+      this._stopPlayback();
+    }
+
+    // Initialize AudioContext if needed
+    if (!this._audioContext) {
+      this._audioContext = new AudioContext();
+    }
+
+    // Resume context if suspended (browser autoplay policy)
+    if (this._audioContext.state === 'suspended') {
+      this._audioContext.resume();
+    }
+
+    // Initialize MelodyPlayer if needed (reuses existing audioContext)
+    if (!this._melodyPlayer) {
+      this._melodyPlayer = new MelodyPlayer(this._audioContext);
+    }
+
+    const pattern = getMelodyPattern(this._selectedPatternId);
+    if (!pattern) return;
+
+    const otoEntry = this._buildCurrentOtoEntry();
+
+    this._melodyPlayer.playSequence(pattern.notes, {
+      otoEntry,
+      audioBuffer: this.audioBuffer,
+    });
+    this._isPreviewPlaying = true;
+
+    // Calculate total pattern duration and schedule end
+    const totalDuration = pattern.notes.reduce((max, note) => {
+      return Math.max(max, note.startTime + note.duration);
+    }, 0);
+
+    // Check periodically if playback has ended
+    const checkInterval = setInterval(() => {
+      if (!this._melodyPlayer?.isPlaying) {
+        this._isPreviewPlaying = false;
+        clearInterval(checkInterval);
+      }
+    }, 100);
+
+    // Fallback: stop after pattern duration + buffer
+    setTimeout(() => {
+      clearInterval(checkInterval);
+      if (this._isPreviewPlaying && !this._melodyPlayer?.isPlaying) {
+        this._isPreviewPlaying = false;
+      }
+    }, (totalDuration + 0.5) * 1000);
+  }
+
+  /**
+   * Stop melody preview.
+   */
+  private _stopPreview(): void {
+    this._melodyPlayer?.stop();
+    this._isPreviewPlaying = false;
+  }
+
+  /**
+   * Handle pattern selection change.
+   */
+  private _onPatternChange(e: Event): void {
+    const select = e.target as HTMLSelectElement;
+    this._selectedPatternId = select.value;
+  }
+
+  // ==================== End Melody Preview Methods ====================
+
   private _formatTime(ms: number): string {
     const absMs = Math.abs(ms);
     const seconds = Math.floor(absMs / 1000);
@@ -1366,7 +1568,29 @@ export class UvmWaveformEditor extends LitElement {
             </div>
           </div>
           <div class="controls-divider"></div>
-          <span class="keyboard-hint">Space play | +/- zoom | arrows pan</span>
+          <div class="preview-controls">
+            <sl-select
+              size="small"
+              value=${this._selectedPatternId}
+              @sl-change=${this._onPatternChange}
+              ?disabled=${!this.audioBuffer}
+            >
+              ${MELODY_PATTERNS.map(
+                (p) => html`<sl-option value=${p.id}>${p.name}</sl-option>`
+              )}
+            </sl-select>
+            <button
+              class="preview-btn ${this._isPreviewPlaying ? 'playing' : ''}"
+              @click=${this._togglePreview}
+              ?disabled=${!this.audioBuffer}
+              title="Preview with melody pattern (P)"
+            >
+              <sl-icon name=${this._isPreviewPlaying ? 'stop-fill' : 'music-note-beamed'}></sl-icon>
+              ${this._isPreviewPlaying ? 'Stop' : 'Preview'}
+            </button>
+          </div>
+          <div class="controls-divider"></div>
+          <span class="keyboard-hint">Space play | P preview | +/- zoom</span>
           <span class="time-display">${this._formatTime(duration)}</span>
         </div>
 

@@ -16,6 +16,8 @@ cd utau_voicebank_manager
 docker compose up --build
 ```
 
+> **Note:** The first build can take up to 5 minutes while Python and model dependencies are installed. Subsequent starts are much faster.
+
 Open **http://localhost:8989** in your browser.
 
 Your data persists in local folders:

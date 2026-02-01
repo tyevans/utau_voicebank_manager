@@ -8,6 +8,14 @@
 // API client
 export { api, ApiClient, ApiError } from './api.js';
 
+// Audio synthesis
+export { MelodyPlayer } from './melody-player.js';
+export type { NoteEvent, SynthesisOptions } from './melody-player.js';
+
+// Melody patterns for preview
+export { MELODY_PATTERNS, getMelodyPattern } from './melody-patterns.js';
+export type { MelodyPattern } from './melody-patterns.js';
+
 // Recording session API client
 export {
   recordingApi,
