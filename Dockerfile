@@ -62,30 +62,43 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# Copy application source
-COPY src/ ./src/
-
 # Clone SOFA (Singing-Oriented Forced Aligner) submodule
 # Git submodules aren't included in Docker builds, so we clone directly
+# Done BEFORE copying source so source changes don't invalidate this layer
 RUN git clone --depth 1 https://github.com/tyevans/SOFA.git vendor/SOFA
 
-# Download SOFA checkpoint and dictionary files
+# Download SOFA checkpoint and dictionary files with caching
 # English: checkpoint ~387MB, dictionary ~3MB
 # Japanese: zip ~1.1GB containing checkpoint and dictionary
-RUN mkdir -p vendor/SOFA/ckpt vendor/SOFA/dictionary && \
-    curl -L -o vendor/SOFA/ckpt/tgm_en_v100.ckpt \
-        "https://github.com/spicytigermeat/SOFA-Models/releases/download/v1.0.0_en/tgm_en_v100.ckpt" && \
-    curl -L -o vendor/SOFA/dictionary/english.txt \
-        "https://github.com/spicytigermeat/SOFA-Models/releases/download/v0.0.5/tgm_sofa_dict.txt" && \
-    curl -L -o /tmp/sofa_jpn.zip \
-        "https://github.com/colstone/SOFA_Models/releases/download/JPN-V0.0.2b/SOFA_model_JPN_Ver0.0.2_Beta.zip" && \
-    unzip -j /tmp/sofa_jpn.zip "*.ckpt" -d vendor/SOFA/ckpt/ && \
-    unzip -j /tmp/sofa_jpn.zip "*.txt" -d vendor/SOFA/dictionary/ && \
-    rm /tmp/sofa_jpn.zip && \
+# Uses BuildKit cache mount to persist downloads across builds
+RUN --mount=type=cache,target=/tmp/sofa-cache \
+    mkdir -p vendor/SOFA/ckpt vendor/SOFA/dictionary && \
+    # English checkpoint
+    if [ ! -f /tmp/sofa-cache/tgm_en_v100.ckpt ]; then \
+        curl -L -o /tmp/sofa-cache/tgm_en_v100.ckpt \
+            "https://github.com/spicytigermeat/SOFA-Models/releases/download/v1.0.0_en/tgm_en_v100.ckpt"; \
+    fi && \
+    cp /tmp/sofa-cache/tgm_en_v100.ckpt vendor/SOFA/ckpt/ && \
+    # English dictionary
+    if [ ! -f /tmp/sofa-cache/english.txt ]; then \
+        curl -L -o /tmp/sofa-cache/english.txt \
+            "https://github.com/spicytigermeat/SOFA-Models/releases/download/v0.0.5/tgm_sofa_dict.txt"; \
+    fi && \
+    cp /tmp/sofa-cache/english.txt vendor/SOFA/dictionary/ && \
+    # Japanese models (zip file)
+    if [ ! -f /tmp/sofa-cache/sofa_jpn.zip ]; then \
+        curl -L -o /tmp/sofa-cache/sofa_jpn.zip \
+            "https://github.com/colstone/SOFA_Models/releases/download/JPN-V0.0.2b/SOFA_model_JPN_Ver0.0.2_Beta.zip"; \
+    fi && \
+    unzip -j /tmp/sofa-cache/sofa_jpn.zip "*.ckpt" -d vendor/SOFA/ckpt/ && \
+    unzip -j /tmp/sofa-cache/sofa_jpn.zip "*.txt" -d vendor/SOFA/dictionary/ && \
     # Rename Japanese checkpoint to expected name (code looks for japanese.ckpt)
     find vendor/SOFA/ckpt -name "*.ckpt" ! -name "tgm_en_v100.ckpt" -exec mv {} vendor/SOFA/ckpt/japanese.ckpt \; && \
     # Rename Japanese dictionary to expected name (code looks for japanese.txt)
     find vendor/SOFA/dictionary -name "*.txt" ! -name "english.txt" -exec mv {} vendor/SOFA/dictionary/japanese.txt \;
+
+# Copy application source (after downloads so source changes don't re-download)
+COPY src/ ./src/
 
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./src/frontend/dist

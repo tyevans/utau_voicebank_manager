@@ -7,8 +7,10 @@ import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 
 // Set Shoelace base path for assets (icons, etc.)
+// In dev mode, Vite serves node_modules directly
+// In production, assets are copied to /shoelace by vite-plugin-static-copy
 import { setBasePath } from '@shoelace-style/shoelace/dist/utilities/base-path.js';
-setBasePath('/node_modules/@shoelace-style/shoelace/dist');
+setBasePath(import.meta.env.DEV ? '/node_modules/@shoelace-style/shoelace/dist' : '/shoelace');
 
 // Import the editor view component
 import './uvm-editor-view.js';
