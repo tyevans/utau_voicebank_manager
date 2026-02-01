@@ -6,6 +6,14 @@ uses the known expected phonemes (extracted from filenames like _ka.wav)
 to achieve much more accurate timing boundaries.
 
 Uses torchaudio.pipelines.MMS_FA which is trained on 1100+ languages.
+
+For UTAU voicebank samples (sustained vowels), this module uses a hybrid approach:
+- Forced alignment: Detects phoneme onset positions with high precision
+- Energy analysis: Extends the final segment to capture sustained sounds
+
+This hybrid approach addresses the limitation that CTC-based models only detect
+short phoneme boundaries (typical of speech), while UTAU samples contain
+sustained vowels lasting 1-3 seconds.
 """
 
 import logging
@@ -25,6 +33,19 @@ logger = logging.getLogger(__name__)
 
 # Target sample rate for MMS_FA model (16kHz)
 MMS_FA_SAMPLE_RATE = 16000
+
+# Energy analysis parameters for extending segments
+ENERGY_HOP_LENGTH = 256  # ~16ms at 16kHz
+ENERGY_THRESHOLD_RATIO = 0.1  # 10% above noise floor
+ENERGY_END_PADDING_MS = 20.0  # Padding after energy drops
+
+# Maximum allowed offset between FA onset and energy onset
+# If FA detects phoneme much later than energy start, use energy start instead
+MAX_FA_ENERGY_OFFSET_MS = 300.0
+
+# Maximum allowed gap between consecutive segments
+# If FA detects a segment much later than previous segment ends, adjust it
+MAX_SEGMENT_GAP_MS = 200.0
 
 # Cache directory for models
 MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models" / "torchaudio"
@@ -128,7 +149,7 @@ def extract_transcript_from_filename(filename: str) -> str:
 def preprocess_audio_for_alignment(
     file_path: Path,
     target_sr: int = MMS_FA_SAMPLE_RATE,
-) -> tuple[torch.Tensor, int, float]:
+) -> tuple[torch.Tensor, int, float, np.ndarray]:
     """Load and preprocess audio for MMS_FA forced alignment.
 
     Args:
@@ -136,7 +157,8 @@ def preprocess_audio_for_alignment(
         target_sr: Target sample rate (16kHz for MMS_FA)
 
     Returns:
-        Tuple of (waveform_tensor, sample_rate, duration_ms)
+        Tuple of (waveform_tensor, sample_rate, duration_ms, raw_audio)
+        where raw_audio is the unnormalized numpy array for energy analysis
 
     Raises:
         ForcedAlignmentError: If audio cannot be processed
@@ -148,7 +170,10 @@ def preprocess_audio_for_alignment(
         # Calculate duration in milliseconds
         duration_ms = (len(audio) / sr) * 1000
 
-        # Normalize audio
+        # Keep raw audio for energy analysis
+        raw_audio = audio.copy()
+
+        # Normalize audio for model
         max_val = np.max(np.abs(audio))
         if max_val > 0:
             audio = audio / max_val
@@ -156,11 +181,62 @@ def preprocess_audio_for_alignment(
         # Convert to torch tensor with batch dimension [1, num_samples]
         waveform = torch.from_numpy(audio).float().unsqueeze(0)
 
-        return waveform, sr, duration_ms
+        return waveform, sr, duration_ms, raw_audio
 
     except Exception as e:
         logger.exception(f"Failed to process audio file: {file_path}")
         raise ForcedAlignmentError(f"Failed to process audio: {e}") from e
+
+
+def detect_energy_boundaries(
+    audio: np.ndarray,
+    sample_rate: int,
+    hop_length: int = ENERGY_HOP_LENGTH,
+    threshold_ratio: float = ENERGY_THRESHOLD_RATIO,
+) -> tuple[float, float]:
+    """Detect sound boundaries using RMS energy analysis.
+
+    For UTAU voicebank samples with sustained vowels, this provides the actual
+    sound duration that CTC-based alignment misses.
+
+    Args:
+        audio: Raw audio samples (numpy array)
+        sample_rate: Audio sample rate
+        hop_length: Hop length for RMS calculation
+        threshold_ratio: Ratio above noise floor to consider as sound
+
+    Returns:
+        Tuple of (start_ms, end_ms) representing sound boundaries
+    """
+    # Calculate RMS energy
+    rms = librosa.feature.rms(y=audio, hop_length=hop_length)[0]
+    times = librosa.frames_to_time(np.arange(len(rms)), sr=sample_rate, hop_length=hop_length) * 1000
+
+    if len(rms) == 0:
+        return 0.0, len(audio) / sample_rate * 1000
+
+    # Determine threshold using noise floor estimation
+    noise_rms = np.percentile(rms, 10)  # Bottom 10% is likely silence
+    signal_rms = np.percentile(rms, 90)  # Top 90% is likely signal
+
+    # Threshold is threshold_ratio above noise floor
+    threshold = noise_rms + (signal_rms - noise_rms) * threshold_ratio
+
+    # Find where sound is above threshold
+    above_threshold = rms > threshold
+
+    if not any(above_threshold):
+        # No sound detected, return full duration
+        return 0.0, len(audio) / sample_rate * 1000
+
+    # Find first and last frames above threshold
+    first_frame = int(np.argmax(above_threshold))
+    last_frame = len(rms) - 1 - int(np.argmax(above_threshold[::-1]))
+
+    start_ms = float(times[first_frame])
+    end_ms = float(times[last_frame]) + ENERGY_END_PADDING_MS
+
+    return start_ms, end_ms
 
 
 def tokenize_transcript(
@@ -266,6 +342,10 @@ class ForcedAlignmentDetector:
     ) -> PhonemeDetectionResult:
         """Detect phonemes using forced alignment with provided transcript.
 
+        Uses a hybrid approach for UTAU samples:
+        1. Forced alignment detects phoneme onset positions
+        2. Energy analysis extends the final segment to capture sustained sounds
+
         Args:
             audio_path: Path to the audio file (WAV recommended)
             transcript: Expected text/phonemes in the audio
@@ -280,8 +360,13 @@ class ForcedAlignmentDetector:
         device = next(model.parameters()).device
 
         # Load and preprocess audio
-        waveform, sample_rate, duration_ms = preprocess_audio_for_alignment(audio_path)
+        waveform, sample_rate, duration_ms, raw_audio = preprocess_audio_for_alignment(
+            audio_path
+        )
         waveform = waveform.to(device)
+
+        # Detect energy-based sound boundaries for extending segments
+        energy_start_ms, energy_end_ms = detect_energy_boundaries(raw_audio, sample_rate)
 
         # Tokenize transcript
         tokens = tokenize_transcript(transcript, dictionary)
@@ -302,13 +387,15 @@ class ForcedAlignmentDetector:
             # scores are log probabilities, exp() converts to probabilities
             token_spans = F.merge_tokens(alignments[0], scores[0].exp())
 
-            # Convert to PhonemeSegments
+            # Convert to PhonemeSegments with energy-corrected boundaries
             segments = self._spans_to_segments(
                 token_spans,
                 transcript,
                 waveform.size(1),
                 emission.size(1),
                 sample_rate,
+                energy_start_ms=energy_start_ms,
+                energy_end_ms=energy_end_ms,
             )
 
             return PhonemeDetectionResult(
@@ -333,8 +420,14 @@ class ForcedAlignmentDetector:
         num_samples: int,
         num_frames: int,
         sample_rate: int,
+        energy_start_ms: float | None = None,
+        energy_end_ms: float | None = None,
     ) -> list[PhonemeSegment]:
         """Convert token spans to PhonemeSegment objects.
+
+        For UTAU samples with sustained vowels:
+        - First segment start is adjusted if FA detected it too late
+        - Final segment is extended to energy-detected sound end
 
         Args:
             token_spans: List of TokenSpan objects from merge_tokens
@@ -342,6 +435,10 @@ class ForcedAlignmentDetector:
             num_samples: Number of audio samples
             num_frames: Number of emission frames
             sample_rate: Audio sample rate
+            energy_start_ms: Optional energy-detected sound start for adjusting
+                            the first segment (when FA misdetects onset)
+            energy_end_ms: Optional energy-detected sound end for extending
+                          the final segment (for sustained vowels)
 
         Returns:
             List of PhonemeSegment objects with timing in milliseconds
@@ -365,6 +462,41 @@ class ForcedAlignmentDetector:
             # Convert frame indices to milliseconds
             start_ms = span.start * seconds_per_frame * 1000
             end_ms = span.end * seconds_per_frame * 1000
+
+            # For the first segment, check if FA detected it too late
+            # This happens when the model struggles with certain vowels
+            is_first_segment = i == 0
+            if is_first_segment and energy_start_ms is not None:
+                offset = start_ms - energy_start_ms
+                if offset > MAX_FA_ENERGY_OFFSET_MS:
+                    # FA detected phoneme much later than sound start
+                    # Use energy-detected start instead
+                    logger.debug(
+                        f"FA start ({start_ms:.1f}ms) is {offset:.1f}ms after "
+                        f"energy start ({energy_start_ms:.1f}ms), using energy start"
+                    )
+                    start_ms = energy_start_ms
+
+            # For non-first segments, check for unreasonable gaps
+            # This happens when FA detects a vowel at the end instead of after consonant
+            if not is_first_segment and len(segments) > 0:
+                prev_segment = segments[-1]
+                gap = start_ms - prev_segment.end_ms
+                if gap > MAX_SEGMENT_GAP_MS:
+                    # Gap is too large, assume phoneme should follow previous
+                    adjusted_start = prev_segment.end_ms + 10  # Small gap for transition
+                    logger.debug(
+                        f"Gap ({gap:.1f}ms) after '{prev_segment.phoneme}' is too large, "
+                        f"adjusting '{phoneme}' start from {start_ms:.1f}ms to {adjusted_start:.1f}ms"
+                    )
+                    start_ms = adjusted_start
+
+            # For the final segment, extend to energy-detected end if available
+            # This captures sustained vowels that CTC models miss
+            is_last_segment = i == len(token_spans) - 1
+            if is_last_segment and energy_end_ms is not None:
+                # Extend to energy-detected sound end
+                end_ms = max(end_ms, energy_end_ms)
 
             # Score is already a probability (0-1) from exp()
             confidence = float(span.score)

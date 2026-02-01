@@ -599,10 +599,13 @@ class OtoSuggester:
     ) -> float:
         """Calculate overall confidence in the suggestion.
 
-        Based on:
-        - Number of detected segments
-        - Average segment confidence
-        - Coverage of audio duration
+        For UTAU voicebank samples (sustained vowels), the key indicators are:
+        - Coverage: How much of the audio is covered by detected segments
+        - Segment consistency: Segments should be contiguous and ordered
+        - Raw detection confidence: Used as a minor factor
+
+        The raw FA confidence is often low for sustained vowels (model expects
+        short phonemes), so we prioritize coverage as the main quality signal.
 
         Args:
             segments: List of detected phoneme segments
@@ -614,10 +617,8 @@ class OtoSuggester:
         if not segments:
             return 0.0
 
-        # Factor 1: Average segment confidence
-        avg_confidence = float(np.mean([s.confidence for s in segments]))
-
-        # Factor 2: Coverage of audio (segments should cover reasonable portion)
+        # Factor 1: Coverage of audio (most important for UTAU samples)
+        # Energy-extended segments should cover most of the sound
         total_segment_duration = sum(s.duration_ms for s in segments)
         coverage = (
             min(1.0, total_segment_duration / audio_duration_ms)
@@ -625,22 +626,32 @@ class OtoSuggester:
             else 0
         )
 
-        # Factor 3: Number of segments (penalize too few or too many)
-        # Optimal is 2-5 segments for typical CV/VCV samples
-        segment_count = len(segments)
-        if segment_count == 0:
-            segment_factor = 0.0
-        elif 2 <= segment_count <= 5:
-            segment_factor = 1.0
-        elif segment_count == 1:
-            segment_factor = 0.7
-        elif segment_count <= 10:
-            segment_factor = 0.8
+        # Coverage scoring: 70%+ is good, 50-70% is acceptable
+        if coverage >= 0.7:
+            coverage_score = 0.9 + (coverage - 0.7) * 0.33  # 0.9-1.0
+        elif coverage >= 0.5:
+            coverage_score = 0.6 + (coverage - 0.5) * 1.5  # 0.6-0.9
         else:
-            segment_factor = 0.5  # Too many segments might indicate noise
+            coverage_score = coverage * 1.2  # 0.0-0.6
 
-        # Weighted combination
-        confidence = avg_confidence * 0.5 + coverage * 0.3 + segment_factor * 0.2
+        # Factor 2: Segment consistency (are segments properly ordered/non-overlapping?)
+        consistency_score = 1.0
+        for i in range(1, len(segments)):
+            if segments[i].start_ms < segments[i - 1].end_ms:
+                # Overlapping segments reduce confidence
+                consistency_score *= 0.9
+            if segments[i].start_ms < segments[i - 1].start_ms:
+                # Out-of-order segments significantly reduce confidence
+                consistency_score *= 0.7
+
+        # Factor 3: Raw detection confidence (minor factor)
+        # This is often low for sustained vowels, so we weight it less
+        avg_raw_confidence = float(np.mean([s.confidence for s in segments]))
+        # Normalize: FA confidence of 0.3+ is considered good
+        raw_score = min(1.0, avg_raw_confidence / 0.3)
+
+        # Weighted combination: coverage is primary, raw confidence is secondary
+        confidence = coverage_score * 0.6 + consistency_score * 0.25 + raw_score * 0.15
 
         return min(1.0, max(0.0, confidence))
 
