@@ -46,22 +46,36 @@ app.add_middleware(
 # Include API routers
 app.include_router(api_router, prefix="/api/v1")
 
-# Serve static frontend in production (when built files exist)
-FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
-if FRONTEND_DIST.exists():
-    from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse
-
-    @app.get("/")
-    async def serve_index():
-        """Serve the frontend index.html."""
-        return FileResponse(FRONTEND_DIST / "index.html")
-
-    # Mount static assets (must be after specific routes)
-    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="static")
-
 
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+# Serve static frontend in production (when built files exist)
+# NOTE: This must be LAST since it catches all unmatched routes
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    # Mount assets directory
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    # Serve vite.svg favicon
+    @app.get("/vite.svg")
+    async def serve_vite_svg():
+        """Serve the Vite favicon."""
+        return FileResponse(FRONTEND_DIST / "vite.svg")
+
+    # SPA catch-all: serve index.html for all non-API routes
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        """Serve the frontend SPA for client-side routing."""
+        # Check if it's a file in dist that exists
+        file_path = FRONTEND_DIST / path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Otherwise serve index.html for SPA routing
+        return FileResponse(FRONTEND_DIST / "index.html")
