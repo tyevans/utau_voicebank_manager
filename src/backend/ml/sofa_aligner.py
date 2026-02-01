@@ -177,9 +177,12 @@ class SOFAModelManager:
             logger.info(f"Using device: {device}")
 
             # Load model from checkpoint
+            # Note: weights_only=False is required for SOFA checkpoints which
+            # contain custom classes that need to be unpickled
             model = LitForcedAlignmentTask.load_from_checkpoint(
                 str(checkpoint_path),
                 map_location=device,
+                weights_only=False,
             )
             model.to(device)
             model.eval()
