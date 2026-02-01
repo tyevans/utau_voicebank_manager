@@ -1,5 +1,10 @@
 """FastAPI application entry point for UTAU Voicebank Manager."""
 
+# Configure eSpeak before importing ML modules (must be first)
+from src.backend.utils.espeak_config import configure_espeak  # noqa: E402
+
+configure_espeak()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

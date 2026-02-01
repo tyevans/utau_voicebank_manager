@@ -168,19 +168,26 @@ async def detect_phonemes(file: UploadFile) -> list[PhonemeSegment]:
 
 
 @router.get("/status")
-async def ml_status() -> dict[str, str | bool]:
+async def ml_status() -> dict[str, str | bool | None]:
     """Check ML service status and model availability.
 
     Returns:
-        Dictionary with status information
+        Dictionary with status information including eSpeak configuration
     """
     import torch
+
+    from src.backend.utils.espeak_config import get_espeak_status
+
+    espeak_status = get_espeak_status()
 
     return {
         "status": "available",
         "cuda_available": torch.cuda.is_available(),
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "model": "facebook/wav2vec2-lv-60-espeak-cv-ft",
+        "espeak_configured": espeak_status.get("espeak_configured", False),
+        "espeak_path": espeak_status.get("espeak_path"),
+        "platform": espeak_status.get("platform"),
     }
 
 
