@@ -1,5 +1,5 @@
-import { LitElement, html, css } from 'lit';
-import { customElement, state, query } from 'lit/decorators.js';
+import { LitElement, html, css, nothing } from 'lit';
+import { customElement, state, query, property } from 'lit/decorators.js';
 
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/card/card.js';
@@ -29,19 +29,23 @@ import './uvm-phrase-preview.js';
 import type { UvmUploadZone } from './uvm-upload-zone.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
 import { getNonEmptyGroups, type PhonemeFamily } from '../utils/phoneme-groups.js';
+import type SlInput from '@shoelace-style/shoelace/dist/components/input/input.js';
 
 /**
  * Sample browser component for selecting voicebank samples.
  *
- * Displays a two-panel layout with voicebanks on the left and
- * samples in the selected voicebank on the right (as a chip grid).
+ * Displays as a modal overlay with a two-panel layout: voicebanks on the left
+ * and samples in the selected voicebank on the right (as a chip grid).
  *
  * @fires sample-select - Fired when a sample is selected (click or Enter)
+ * @fires uvm-sample-browser:close - Fired when user closes the browser
  *
  * @example
  * ```html
  * <uvm-sample-browser
+ *   ?open=${this._showBrowser}
  *   @sample-select=${this._onSampleSelect}
+ *   @uvm-sample-browser:close=${() => this._showBrowser = false}
  * ></uvm-sample-browser>
  * ```
  */
@@ -49,21 +53,115 @@ import { getNonEmptyGroups, type PhonemeFamily } from '../utils/phoneme-groups.j
 export class UvmSampleBrowser extends LitElement {
   static styles = css`
     :host {
-      display: block;
-      width: 100%;
-      height: 100%;
+      display: none;
     }
 
-    .browser-container {
+    :host([open]) {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 1000;
+    }
+
+    .backdrop {
+      position: absolute;
+      inset: 0;
+      background-color: rgba(0, 0, 0, 0.5);
+      animation: fadeIn var(--uvm-duration-fast, 200ms) ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal-container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(1000px, 90vw);
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--uvm-background, #ffffff);
+      border-radius: 12px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      animation: slideUp var(--uvm-duration-normal, 300ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+      overflow: hidden;
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translate(-50%, -45%);
+      }
+      to {
+        opacity: 1;
+        transform: translate(-50%, -50%);
+      }
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
+      background-color: #fafafa;
+      border-bottom: 1px solid #e5e7eb;
+      flex-shrink: 0;
+    }
+
+    .modal-header sl-icon-button {
+      flex-shrink: 0;
+    }
+
+    .modal-header sl-icon-button::part(base) {
+      padding: 0.25rem;
+      color: #6b7280;
+    }
+
+    .modal-header sl-icon-button::part(base):hover {
+      color: #374151;
+    }
+
+    .modal-header sl-input {
+      flex: 1;
+    }
+
+    .modal-header sl-input::part(base) {
+      border: none;
+      background-color: transparent;
+    }
+
+    .modal-header sl-input::part(input) {
+      font-size: 0.9375rem;
+    }
+
+    .modal-body {
+      flex: 1;
       display: flex;
       gap: 1rem;
-      height: 100%;
-      min-height: 400px;
+      padding: 1rem;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .modal-footer {
+      flex-shrink: 0;
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: #9ca3af;
+      background-color: #fafafa;
+      border-top: 1px solid #e5e7eb;
     }
 
     /* Responsive: stack on mobile */
     @media (max-width: 768px) {
-      .browser-container {
+      .modal-body {
         flex-direction: column;
       }
     }
@@ -642,6 +740,12 @@ export class UvmSampleBrowser extends LitElement {
     }
   `;
 
+  /**
+   * Whether the sample browser modal is open.
+   */
+  @property({ type: Boolean, reflect: true })
+  open = false;
+
   @state()
   private _voicebanks: VoicebankSummary[] = [];
 
@@ -714,13 +818,89 @@ export class UvmSampleBrowser extends LitElement {
   @state()
   private _viewMode: SampleViewMode = 'grid';
 
+  @state()
+  private _searchQuery = '';
+
   @query('uvm-upload-zone')
   private _uploadZone!: UvmUploadZone;
 
+  @query('.search-input')
+  private _searchInput!: SlInput;
+
+  /**
+   * Handle global keydown for Escape to close modal.
+   */
+  private _handleKeyDown = (e: KeyboardEvent): void => {
+    if (this.open && e.key === 'Escape') {
+      // Don't close if a nested dialog is open
+      if (this._showUploadDialog || this._showDeleteDialog || this._showBatchDialog) {
+        return;
+      }
+      e.preventDefault();
+      this._close();
+    }
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
+    document.addEventListener('keydown', this._handleKeyDown);
     this._loadViewModePreference();
     this._fetchVoicebanks();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    document.removeEventListener('keydown', this._handleKeyDown);
+  }
+
+  /**
+   * Focus the search input when modal opens.
+   */
+  protected updated(changedProperties: Map<string, unknown>): void {
+    if (changedProperties.has('open') && this.open) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        this._searchInput?.focus();
+      });
+    }
+  }
+
+  /**
+   * Close the modal and emit close event.
+   */
+  private _close(): void {
+    this.dispatchEvent(new CustomEvent('uvm-sample-browser:close', {
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /**
+   * Handle backdrop click to close modal.
+   */
+  private _onBackdropClick(): void {
+    this._close();
+  }
+
+  /**
+   * Handle search input changes.
+   */
+  private _onSearchInput(e: Event): void {
+    const input = e.target as SlInput;
+    this._searchQuery = input.value;
+  }
+
+  /**
+   * Get filtered samples based on search query.
+   */
+  private _getFilteredSamples(): string[] {
+    if (!this._searchQuery.trim()) {
+      return this._samples;
+    }
+    const query = this._searchQuery.toLowerCase().trim();
+    return this._samples.filter(sample =>
+      this._displayName(sample).toLowerCase().includes(query)
+    );
   }
 
   /**
@@ -847,6 +1027,7 @@ export class UvmSampleBrowser extends LitElement {
   private _onVoicebankClick(voicebankId: string): void {
     if (this._selectedVoicebank === voicebankId) return;
     this._selectedVoicebank = voicebankId;
+    this._searchQuery = ''; // Clear search when switching voicebanks
     this._fetchSamples(voicebankId);
 
     // Emit event to notify parent of voicebank selection
@@ -932,18 +1113,19 @@ export class UvmSampleBrowser extends LitElement {
    * Navigate to next/previous sample.
    */
   private _navigateSample(direction: number): void {
-    if (this._samples.length === 0) return;
+    const filteredSamples = this._getFilteredSamples();
+    if (filteredSamples.length === 0) return;
 
     const currentIndex = this._selectedSample
-      ? this._samples.indexOf(this._selectedSample)
+      ? filteredSamples.indexOf(this._selectedSample)
       : -1;
 
     const newIndex = Math.max(
       0,
-      Math.min(this._samples.length - 1, currentIndex + direction)
+      Math.min(filteredSamples.length - 1, currentIndex + direction)
     );
 
-    const newSample = this._samples[newIndex];
+    const newSample = filteredSamples[newIndex];
     if (newSample) {
       this._selectedSample = newSample;
       this._focusSampleItem(newSample);
@@ -971,7 +1153,7 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Emit the sample-select event.
+   * Emit the sample-select event and close the modal.
    */
   private _emitSampleSelect(filename: string): void {
     if (!this._selectedVoicebank) return;
@@ -986,6 +1168,9 @@ export class UvmSampleBrowser extends LitElement {
         composed: true,
       })
     );
+
+    // Close the modal after selection
+    this._close();
   }
 
   /**
@@ -993,6 +1178,14 @@ export class UvmSampleBrowser extends LitElement {
    */
   private _displayName(filename: string): string {
     return filename.replace(/\.wav$/i, '');
+  }
+
+  /**
+   * Get configured vs total sample counts.
+   */
+  private _getSampleCounts(): { configured: number; total: number } {
+    const configured = Array.from(this._sampleOtoMap.values()).filter(Boolean).length;
+    return { configured, total: this._samples.length };
   }
 
   /**
@@ -1083,6 +1276,8 @@ export class UvmSampleBrowser extends LitElement {
    * Render the samples panel.
    */
   private _renderSamplesPanel() {
+    const filteredSamples = this._getFilteredSamples();
+
     return html`
       <div class="panel samples-panel">
         <div class="panel-header">
@@ -1122,11 +1317,13 @@ export class UvmSampleBrowser extends LitElement {
               ? this._renderSampleLoadingState()
               : this._samplesError
                 ? this._renderErrorState(this._samplesError)
-                : this._samples.length === 0
-                  ? this._renderEmptySamples()
+                : filteredSamples.length === 0
+                  ? this._searchQuery
+                    ? this._renderNoSearchResults()
+                    : this._renderEmptySamples()
                   : this._viewMode === 'grid'
-                    ? this._renderSampleChips()
-                    : this._renderSampleList()}
+                    ? this._renderSampleChips(filteredSamples)
+                    : this._renderSampleList(filteredSamples)}
         </div>
         ${this._selectedVoicebank && this._samples.length > 0
           ? html`
@@ -1164,14 +1361,14 @@ export class UvmSampleBrowser extends LitElement {
   /**
    * Render the sample chips grid, grouped by phoneme family.
    */
-  private _renderSampleChips() {
-    const groups = getNonEmptyGroups(this._samples);
+  private _renderSampleChips(samples: string[]) {
+    const groups = getNonEmptyGroups(samples);
 
     return html`
       <div class="sample-chips-container">
         <div class="phoneme-groups" role="listbox" aria-label="Samples">
-          ${groups.map(({ family, samples }) =>
-            this._renderPhonemeGroup(family, samples)
+          ${groups.map(({ family, samples: groupSamples }) =>
+            this._renderPhonemeGroup(family, groupSamples)
           )}
         </div>
       </div>
@@ -1219,9 +1416,9 @@ export class UvmSampleBrowser extends LitElement {
    * Render the sample list view (compact table format).
    * Samples are sorted alphabetically by display name for easy sequential editing.
    */
-  private _renderSampleList() {
+  private _renderSampleList(samples: string[]) {
     // Sort samples alphabetically by display name for list view
-    const sortedSamples = [...this._samples].sort((a, b) =>
+    const sortedSamples = [...samples].sort((a, b) =>
       this._displayName(a).localeCompare(this._displayName(b), undefined, { sensitivity: 'base' })
     );
 
@@ -1366,6 +1563,18 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
+   * Render no search results state.
+   */
+  private _renderNoSearchResults() {
+    return html`
+      <div class="empty-state">
+        <sl-icon name="search"></sl-icon>
+        <div class="empty-state-text">No samples match "${this._searchQuery}"</div>
+      </div>
+    `;
+  }
+
+  /**
    * Render prompt to select a voicebank.
    */
   private _renderSelectVoicebankPrompt() {
@@ -1378,9 +1587,40 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   render() {
+    if (!this.open) {
+      return nothing;
+    }
+
+    const { configured, total } = this._getSampleCounts();
+
     return html`
-      <div class="browser-container">
-        ${this._renderVoicebanksPanel()} ${this._renderSamplesPanel()}
+      <div class="backdrop" @click=${this._onBackdropClick}></div>
+      <div class="modal-container" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-header">
+          <sl-icon-button
+            name="x-lg"
+            label="Close"
+            @click=${this._close}
+          ></sl-icon-button>
+          <sl-input
+            class="search-input"
+            placeholder="Search samples..."
+            .value=${this._searchQuery}
+            @sl-input=${this._onSearchInput}
+            clearable
+          >
+            <sl-icon name="search" slot="prefix"></sl-icon>
+          </sl-input>
+        </div>
+        <div class="modal-body">
+          ${this._renderVoicebanksPanel()}
+          ${this._renderSamplesPanel()}
+        </div>
+        <div class="modal-footer">
+          ${this._selectedVoicebank && total > 0
+            ? html`${configured} configured / ${total} total`
+            : html`Select a voicebank to browse samples`}
+        </div>
       </div>
       ${this._renderUploadDialog()}
       ${this._renderDeleteDialog()}

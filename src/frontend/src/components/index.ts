@@ -35,3 +35,22 @@ export { UvmRecordingSession } from './uvm-recording-session.js';
 
 // Welcome view for first-time users
 export { UvmWelcomeView } from './uvm-welcome-view.js';
+
+// Phrase preview for demo song playback
+export { UvmPhrasePreview } from './uvm-phrase-preview.js';
+
+// First Sing button for instant voicebank validation
+export { UvmFirstSing } from './uvm-first-sing.js';
+
+// Quick Phrase Mode for text-to-singing playback
+export { UvmQuickPhrase } from './uvm-quick-phrase.js';
+
+// Value bar for displaying oto.ini marker values
+export { UvmValueBar } from './uvm-value-bar.js';
+
+// Context bar for voicebank/sample breadcrumb and actions
+export { UvmContextBar } from './uvm-context-bar.js';
+
+// Precision drawer for numeric marker value editing
+export { UvmPrecisionDrawer } from './uvm-precision-drawer.js';
+export type { PrecisionDrawerChangeDetail } from './uvm-precision-drawer.js';

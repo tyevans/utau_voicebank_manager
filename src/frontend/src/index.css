@@ -1,20 +1,88 @@
+/* Google Fonts - Inter and JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @import "tailwindcss";
 
 /* Shoelace light theme */
 @import "@shoelace-style/shoelace/dist/themes/light.css";
 
-/* Shoelace dark theme (optional, for dark mode support) */
+/* Shoelace dark theme (for dark mode support) */
 @import "@shoelace-style/shoelace/dist/themes/dark.css";
 
+/* =============================================================================
+   Design System Tokens
+   ============================================================================= */
+
 :root {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* ---------------------------------------------------------------------------
+     Typography
+     --------------------------------------------------------------------------- */
+  --uvm-font-primary: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --uvm-font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code',
+    Consolas, 'Liberation Mono', Menlo, monospace;
+
+  /* Type Scale (1.2 minor third) */
+  --uvm-text-xs: 11px;
+  --uvm-text-sm: 13px;
+  --uvm-text-base: 16px;
+  --uvm-text-md: 19px;
+  --uvm-text-lg: 23px;
+
+  /* Font Weights */
+  --uvm-weight-regular: 400;
+  --uvm-weight-medium: 500;
+
+  /* Line Heights */
+  --uvm-leading-tight: 1.25;
+  --uvm-leading-normal: 1.5;
+  --uvm-leading-relaxed: 1.625;
+
+  /* ---------------------------------------------------------------------------
+     Marker Colors (semantic, consistent across light/dark modes)
+     --------------------------------------------------------------------------- */
+  --uvm-marker-offset: #22c55e;       /* green - where playback begins */
+  --uvm-marker-consonant: #3b82f6;    /* blue - fixed region */
+  --uvm-marker-cutoff: #ef4444;       /* red - where playback ends */
+  --uvm-marker-preutterance: #a855f7; /* purple - timing anchor */
+  --uvm-marker-overlap: #f97316;      /* orange - blending zone */
+
+  /* ---------------------------------------------------------------------------
+     Grayscale Hierarchy (Light Mode)
+     --------------------------------------------------------------------------- */
+  --uvm-background: #ffffff;   /* pure white */
+  --uvm-surface: #fafafa;      /* cards, panels */
+  --uvm-border: #e5e7eb;       /* hairline divisions */
+  --uvm-secondary: #9ca3af;    /* metadata, hints */
+  --uvm-primary: #1f2937;      /* text, critical UI */
+
+  /* ---------------------------------------------------------------------------
+     State Colors
+     --------------------------------------------------------------------------- */
+  --uvm-success: #22c55e;
+  --uvm-warning: #f59e0b;
+  --uvm-danger: #ef4444;
+  --uvm-info: #3b82f6;
+
+  /* ---------------------------------------------------------------------------
+     Motion / Animation
+     --------------------------------------------------------------------------- */
+  --uvm-duration-micro: 100ms;   /* hover, focus */
+  --uvm-duration-fast: 200ms;    /* transitions */
+  --uvm-duration-normal: 300ms;  /* view changes */
+  --uvm-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ---------------------------------------------------------------------------
+     Base Styles
+     --------------------------------------------------------------------------- */
+  font-family: var(--uvm-font-primary);
+  font-size: var(--uvm-text-base);
+  font-weight: var(--uvm-weight-regular);
+  line-height: var(--uvm-leading-normal);
 
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #1a1a2e;
+  color: var(--uvm-primary);
+  background-color: var(--uvm-background);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -22,20 +90,187 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* =============================================================================
+   Dark Mode
+   Inverts grayscale hierarchy, keeps marker colors constant
+   ============================================================================= */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --uvm-background: #0f0f0f;   /* near black */
+    --uvm-surface: #1a1a1a;      /* cards, panels */
+    --uvm-border: #2e2e2e;       /* hairline divisions */
+    --uvm-secondary: #71717a;    /* metadata, hints */
+    --uvm-primary: #fafafa;      /* text, critical UI */
+
+    /* State colors slightly adjusted for dark backgrounds */
+    --uvm-success: #34d399;
+    --uvm-warning: #fbbf24;
+    --uvm-danger: #f87171;
+    --uvm-info: #60a5fa;
+  }
+}
+
+/* Manual dark mode class override */
+.dark,
+.sl-theme-dark {
+  --uvm-background: #0f0f0f;
+  --uvm-surface: #1a1a1a;
+  --uvm-border: #2e2e2e;
+  --uvm-secondary: #71717a;
+  --uvm-primary: #fafafa;
+
+  --uvm-success: #34d399;
+  --uvm-warning: #fbbf24;
+  --uvm-danger: #f87171;
+  --uvm-info: #60a5fa;
+
+  color: var(--uvm-primary);
+  background-color: var(--uvm-background);
+}
+
+/* =============================================================================
+   Base Element Styles
+   ============================================================================= */
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background-color: var(--uvm-background);
+  color: var(--uvm-primary);
 }
 
-/* Apply dark theme class to body for Shoelace dark mode */
-body.sl-theme-dark {
-  background-color: #1a1a2e;
+/* =============================================================================
+   Typography Utility Classes
+   ============================================================================= */
+
+.text-xs {
+  font-size: var(--uvm-text-xs);
+  line-height: var(--uvm-leading-tight);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
+.text-sm {
+  font-size: var(--uvm-text-sm);
+  line-height: var(--uvm-leading-normal);
+}
+
+.text-base {
+  font-size: var(--uvm-text-base);
+  line-height: var(--uvm-leading-normal);
+}
+
+.text-md {
+  font-size: var(--uvm-text-md);
+  line-height: var(--uvm-leading-tight);
+}
+
+.text-lg {
+  font-size: var(--uvm-text-lg);
+  line-height: var(--uvm-leading-tight);
+}
+
+/* Font family utilities */
+.font-sans {
+  font-family: var(--uvm-font-primary);
+}
+
+.font-mono {
+  font-family: var(--uvm-font-mono);
+}
+
+/* Font weight utilities */
+.font-regular {
+  font-weight: var(--uvm-weight-regular);
+}
+
+.font-medium {
+  font-weight: var(--uvm-weight-medium);
+}
+
+/* =============================================================================
+   Color Utility Classes
+   ============================================================================= */
+
+/* Text colors */
+.text-primary {
+  color: var(--uvm-primary);
+}
+
+.text-secondary {
+  color: var(--uvm-secondary);
+}
+
+.text-success {
+  color: var(--uvm-success);
+}
+
+.text-warning {
+  color: var(--uvm-warning);
+}
+
+.text-danger {
+  color: var(--uvm-danger);
+}
+
+.text-info {
+  color: var(--uvm-info);
+}
+
+/* Marker colors (for waveform editor, oto visualization) */
+.text-marker-offset {
+  color: var(--uvm-marker-offset);
+}
+
+.text-marker-consonant {
+  color: var(--uvm-marker-consonant);
+}
+
+.text-marker-cutoff {
+  color: var(--uvm-marker-cutoff);
+}
+
+.text-marker-preutterance {
+  color: var(--uvm-marker-preutterance);
+}
+
+.text-marker-overlap {
+  color: var(--uvm-marker-overlap);
+}
+
+/* Background colors */
+.bg-background {
+  background-color: var(--uvm-background);
+}
+
+.bg-surface {
+  background-color: var(--uvm-surface);
+}
+
+/* Border colors */
+.border-default {
+  border-color: var(--uvm-border);
+}
+
+/* =============================================================================
+   Transition Utility Classes
+   ============================================================================= */
+
+.transition-micro {
+  transition-duration: var(--uvm-duration-micro);
+  transition-timing-function: ease-out;
+}
+
+.transition-fast {
+  transition-duration: var(--uvm-duration-fast);
+  transition-timing-function: ease-out;
+}
+
+.transition-normal {
+  transition-duration: var(--uvm-duration-normal);
+  transition-timing-function: ease-out;
+}
+
+.transition-spring {
+  transition-timing-function: var(--uvm-ease-spring);
 }

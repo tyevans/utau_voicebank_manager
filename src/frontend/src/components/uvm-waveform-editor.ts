@@ -33,35 +33,35 @@ interface MarkerConfig {
 const MARKER_CONFIGS: Record<string, MarkerConfig> = {
   offset: {
     name: 'offset',
-    color: '#22c55e',
+    color: 'var(--uvm-marker-offset, #22c55e)',
     label: 'Offset',
     hint: 'Start point',
     icon: 'O',
   },
   consonant: {
     name: 'consonant',
-    color: '#3b82f6',
+    color: 'var(--uvm-marker-consonant, #3b82f6)',
     label: 'Consonant',
     hint: 'Fixed region end',
     icon: 'C',
   },
   cutoff: {
     name: 'cutoff',
-    color: '#ef4444',
+    color: 'var(--uvm-marker-cutoff, #ef4444)',
     label: 'Cutoff',
     hint: 'End point',
     icon: 'X',
   },
   preutterance: {
     name: 'preutterance',
-    color: '#a855f7',
+    color: 'var(--uvm-marker-preutterance, #a855f7)',
     label: 'Preutterance',
     hint: 'Note timing',
     icon: 'P',
   },
   overlap: {
     name: 'overlap',
-    color: '#f97316',
+    color: 'var(--uvm-marker-overlap, #f97316)',
     label: 'Overlap',
     hint: 'Crossfade',
     icon: 'V',
@@ -236,7 +236,7 @@ export class UvmWaveformEditor extends LitElement {
     .marker-line-waveform {
       width: 2px;
       opacity: 0.85;
-      transition: all 0.15s ease;
+      transition: all var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
     }
 
     .marker-line-spectrogram {
@@ -250,7 +250,7 @@ export class UvmWaveformEditor extends LitElement {
         transparent 8px
       );
       background-color: transparent !important;
-      transition: all 0.15s ease;
+      transition: all var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
     }
 
     .marker:hover .marker-line-waveform,
@@ -268,25 +268,26 @@ export class UvmWaveformEditor extends LitElement {
 
     .marker-handle {
       position: absolute;
-      top: 0;
-      width: 14px;
-      height: 22px;
-      border-radius: 0 0 4px 4px;
+      top: -8px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
       cursor: ew-resize;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 9px;
+      font-size: 10px;
       color: white;
-      font-weight: 600;
+      font-weight: 500;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-      transition: transform 0.1s ease;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      transition: transform var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+      z-index: 10;
     }
 
     .marker:hover .marker-handle,
     .marker.dragging .marker-handle {
-      transform: scale(1.1);
+      transform: scale(1.15);
     }
 
     .marker-label {
@@ -300,7 +301,7 @@ export class UvmWaveformEditor extends LitElement {
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
       opacity: 0;
-      transition: opacity 0.15s ease, transform 0.15s ease;
+      transition: opacity var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)), transform var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
       pointer-events: none;
       transform: translateY(4px);
     }
@@ -316,6 +317,37 @@ export class UvmWaveformEditor extends LitElement {
       opacity: 0.85;
       display: block;
       margin-top: 1px;
+    }
+
+    /* Region shading styles */
+    .region-shading {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .region {
+      position: absolute;
+      top: 0;
+      height: 100%;
+    }
+
+    .region-fixed {
+      background-color: rgba(59, 130, 246, 0.08);
+    }
+
+    .region-excluded {
+      background: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 4px,
+        rgba(156, 163, 175, 0.15) 4px,
+        rgba(156, 163, 175, 0.15) 8px
+      );
     }
 
     .controls {
@@ -644,6 +676,24 @@ export class UvmWaveformEditor extends LitElement {
   @state()
   private _draggingMarker: string | null = null;
 
+  /**
+   * Starting position (in ms) of marker when drag begins.
+   * Used to detect if marker actually moved before playing preview.
+   */
+  private _dragStartValue: number | null = null;
+
+  /**
+   * Track mousedown position to detect click vs drag for seek functionality.
+   */
+  private _mouseDownX: number | null = null;
+  private _mouseDownY: number | null = null;
+
+  /**
+   * Source node for marker preview playback.
+   * Separate from main playback to avoid conflicts.
+   */
+  private _previewSourceNode: AudioBufferSourceNode | null = null;
+
   @state()
   private _canvasWidth = 800;
 
@@ -684,9 +734,18 @@ export class UvmWaveformEditor extends LitElement {
     super.disconnectedCallback();
     this._resizeObserver?.disconnect();
     this._removeGlobalListeners();
+    this._removeCanvasListeners();
     this._stopPlayback();
     this._stopPreview();
+    this._stopMarkerPreview();
     this._cleanupAudioContext();
+  }
+
+  /**
+   * Remove canvas click-to-seek listeners.
+   */
+  private _removeCanvasListeners(): void {
+    document.removeEventListener('mouseup', this._onCanvasMouseUp);
   }
 
   firstUpdated(): void {
@@ -1090,9 +1149,32 @@ export class UvmWaveformEditor extends LitElement {
     e.preventDefault();
     this._draggingMarker = markerName;
 
+    // Store starting value to detect actual movement
+    this._dragStartValue = this._getMarkerValue(markerName);
+
     // Add global listeners for drag
     document.addEventListener('mousemove', this._onMouseMove);
     document.addEventListener('mouseup', this._onMouseUp);
+  }
+
+  /**
+   * Get the current value (in ms) of a marker by name.
+   */
+  private _getMarkerValue(markerName: string): number {
+    switch (markerName) {
+      case 'offset':
+        return this.offset;
+      case 'consonant':
+        return this.consonant;
+      case 'cutoff':
+        return this.cutoff;
+      case 'preutterance':
+        return this.preutterance;
+      case 'overlap':
+        return this.overlap;
+      default:
+        return 0;
+    }
   }
 
   private _onMouseMove = (e: MouseEvent): void => {
@@ -1120,7 +1202,21 @@ export class UvmWaveformEditor extends LitElement {
   };
 
   private _onMouseUp = (): void => {
+    const markerName = this._draggingMarker;
+    const startValue = this._dragStartValue;
+
+    // Check if marker actually moved before playing preview
+    if (markerName && startValue !== null) {
+      const endValue = this._getMarkerValue(markerName);
+      const moved = Math.abs(endValue - startValue) > 1; // Threshold of 1ms
+
+      if (moved) {
+        this._playMarkerPreview(markerName, endValue);
+      }
+    }
+
     this._draggingMarker = null;
+    this._dragStartValue = null;
     this._removeGlobalListeners();
   };
 
@@ -1128,6 +1224,232 @@ export class UvmWaveformEditor extends LitElement {
     document.removeEventListener('mousemove', this._onMouseMove);
     document.removeEventListener('mouseup', this._onMouseUp);
   }
+
+  // ==================== Click-to-Seek Methods ====================
+
+  /**
+   * Handle mousedown on the canvas area for click-to-seek.
+   * Records the initial position to distinguish clicks from drags.
+   */
+  private _onCanvasMouseDown = (e: MouseEvent): void => {
+    // Only track left-clicks on the background (not on markers)
+    if (e.button !== 0) return;
+
+    // Store the position for click detection
+    this._mouseDownX = e.clientX;
+    this._mouseDownY = e.clientY;
+
+    // Add listeners for click detection
+    document.addEventListener('mouseup', this._onCanvasMouseUp);
+  };
+
+  /**
+   * Handle mouseup to complete click-to-seek if it was a click (not drag).
+   */
+  private _onCanvasMouseUp = (e: MouseEvent): void => {
+    // Remove the listener
+    document.removeEventListener('mouseup', this._onCanvasMouseUp);
+
+    // If we were dragging a marker, don't seek
+    if (this._draggingMarker) {
+      this._mouseDownX = null;
+      this._mouseDownY = null;
+      return;
+    }
+
+    // Check if this was a click (minimal movement)
+    if (this._mouseDownX === null || this._mouseDownY === null) return;
+
+    const deltaX = Math.abs(e.clientX - this._mouseDownX);
+    const deltaY = Math.abs(e.clientY - this._mouseDownY);
+    const clickThreshold = 5; // pixels
+
+    if (deltaX <= clickThreshold && deltaY <= clickThreshold) {
+      // This was a click - seek to position
+      this._seekToClickPosition(e);
+    }
+
+    this._mouseDownX = null;
+    this._mouseDownY = null;
+  };
+
+  /**
+   * Seek playback to the clicked position on the waveform.
+   * Starts playback from the clicked position to the cutoff point.
+   */
+  private _seekToClickPosition(e: MouseEvent): void {
+    if (!this.audioBuffer || !this._canvasWrapper) return;
+
+    // Calculate X position relative to canvas
+    const rect = this._canvasWrapper.getBoundingClientRect();
+    const scrollLeft = this._canvasWrapper.scrollLeft;
+    const x = e.clientX - rect.left + scrollLeft;
+
+    // Clamp to canvas bounds
+    const clampedX = Math.max(0, Math.min(x, this._canvasWidth));
+
+    // Convert to milliseconds
+    const seekPositionMs = this._pixelToMs(clampedX);
+
+    // Start playback from clicked position
+    this._playFromPosition(seekPositionMs);
+  }
+
+  /**
+   * Start playback from a specific position (in ms) to the cutoff point.
+   * If already playing, stops current playback and restarts from new position.
+   */
+  private async _playFromPosition(positionMs: number): Promise<void> {
+    if (!this.audioBuffer) return;
+
+    // Stop any existing playback
+    this._stopPlayback();
+    this._stopMarkerPreview();
+
+    // Create audio context if needed
+    if (!this._audioContext) {
+      this._audioContext = new AudioContext();
+    }
+
+    // Resume context if suspended
+    if (this._audioContext.state === 'suspended') {
+      await this._audioContext.resume();
+    }
+
+    // Calculate playback range
+    const startTime = positionMs / 1000;
+    const endTime = this._getPlaybackEndTime();
+    const duration = Math.max(0, endTime - startTime);
+
+    if (duration <= 0) {
+      // Clicked position is past cutoff - play nothing
+      return;
+    }
+
+    // Create and configure source node
+    this._sourceNode = this._audioContext.createBufferSource();
+    this._sourceNode.buffer = this.audioBuffer;
+    this._sourceNode.connect(this._audioContext.destination);
+
+    // Store timing info for playhead animation
+    this._playbackStartTime = this._audioContext.currentTime;
+    this._playbackStartPosition = startTime;
+    this._playbackPosition = positionMs;
+
+    // Start playback
+    this._sourceNode.start(0, startTime, duration);
+    this._isPlaying = true;
+
+    // Handle playback end
+    this._sourceNode.onended = () => {
+      this._onPlaybackEnded();
+    };
+
+    // Start playhead animation
+    this._startPlayheadAnimation();
+  }
+
+  // ==================== End Click-to-Seek Methods ====================
+
+  // ==================== Marker Preview Methods ====================
+
+  /**
+   * Play a short audio preview centered on a marker position.
+   * Called after a marker drag is released to provide instant feedback.
+   *
+   * @param markerName - Name of the marker that was dragged
+   * @param markerValue - Current value of the marker in ms
+   */
+  private async _playMarkerPreview(markerName: string, markerValue: number): Promise<void> {
+    if (!this.audioBuffer) return;
+
+    // Stop any existing preview
+    this._stopMarkerPreview();
+
+    // Create audio context if needed
+    if (!this._audioContext) {
+      this._audioContext = new AudioContext();
+    }
+
+    // Resume context if suspended
+    if (this._audioContext.state === 'suspended') {
+      await this._audioContext.resume();
+    }
+
+    const duration = this.audioBuffer.duration * 1000; // Total duration in ms
+    const previewDuration = 500; // 500ms preview duration
+    const halfPreview = previewDuration / 2;
+
+    let startMs: number;
+    let endMs: number;
+
+    switch (markerName) {
+      case 'offset':
+      case 'preutterance':
+        // Play from marker position for ~500ms
+        startMs = Math.max(0, markerValue);
+        endMs = Math.min(duration, startMs + previewDuration);
+        break;
+
+      case 'consonant':
+        // Play the consonant region (from offset to consonant marker)
+        // If consonant region is short, extend preview a bit after
+        startMs = Math.max(0, this.offset);
+        endMs = Math.min(duration, Math.max(markerValue, this.offset + previewDuration));
+        break;
+
+      case 'cutoff':
+        // Cutoff is negative from end; play ~500ms ending at cutoff
+        // Convert cutoff to absolute position
+        const cutoffPosition = duration + markerValue; // markerValue is negative
+        endMs = Math.max(0, Math.min(duration, cutoffPosition));
+        startMs = Math.max(0, endMs - previewDuration);
+        break;
+
+      case 'overlap':
+        // Play the overlap region centered on the overlap marker
+        startMs = Math.max(0, markerValue - halfPreview);
+        endMs = Math.min(duration, markerValue + halfPreview);
+        break;
+
+      default:
+        return;
+    }
+
+    // Ensure we have valid range
+    const playDuration = (endMs - startMs) / 1000; // Convert to seconds
+    if (playDuration <= 0) return;
+
+    // Create and configure source node
+    this._previewSourceNode = this._audioContext.createBufferSource();
+    this._previewSourceNode.buffer = this.audioBuffer;
+    this._previewSourceNode.connect(this._audioContext.destination);
+
+    // Start playback
+    this._previewSourceNode.start(0, startMs / 1000, playDuration);
+
+    // Handle playback end
+    this._previewSourceNode.onended = () => {
+      this._previewSourceNode = null;
+    };
+  }
+
+  /**
+   * Stop any active marker preview playback.
+   */
+  private _stopMarkerPreview(): void {
+    if (this._previewSourceNode) {
+      try {
+        this._previewSourceNode.stop();
+      } catch {
+        // Ignore errors if already stopped
+      }
+      this._previewSourceNode.disconnect();
+      this._previewSourceNode = null;
+    }
+  }
+
+  // ==================== End Marker Preview Methods ====================
 
   private _emitMarkerChange(name: string, value: number): void {
     this.dispatchEvent(
@@ -1166,6 +1488,7 @@ export class UvmWaveformEditor extends LitElement {
         e.preventDefault();
         this._stopPlayback();
         this._stopPreview();
+        this._stopMarkerPreview();
         break;
       case 'p':
       case 'P':
@@ -1503,6 +1826,44 @@ export class UvmWaveformEditor extends LitElement {
     return this.audioBuffer ? this.audioBuffer.duration * 1000 : 0;
   }
 
+  /**
+   * Render region shading for the waveform.
+   * Shows excluded regions (before offset, after cutoff) with diagonal stripes,
+   * and the fixed region (offset to consonant) with a light blue tint.
+   */
+  private _renderRegions(): unknown {
+    if (!this.audioBuffer) return null;
+
+    const offsetPixel = this._msToPixel(this.offset);
+    const consonantPixel = this._msToPixel(this.consonant);
+    const cutoffPixel = this._getCutoffPixel();
+    const totalHeight = this.height + this._dividerHeight + this.spectrogramHeight;
+
+    return html`
+      <div class="region-shading" style="height: ${totalHeight}px;">
+        <!-- Before offset - excluded -->
+        <div
+          class="region region-excluded"
+          style="left: 0; width: ${offsetPixel}px;"
+        ></div>
+
+        <!-- Offset to Consonant - fixed region -->
+        <div
+          class="region region-fixed"
+          style="left: ${offsetPixel}px; width: ${Math.max(0, consonantPixel - offsetPixel)}px;"
+        ></div>
+
+        <!-- Consonant to Cutoff - stretchable (no shading) -->
+
+        <!-- After Cutoff - excluded -->
+        <div
+          class="region region-excluded"
+          style="left: ${cutoffPixel}px; right: 0;"
+        ></div>
+      </div>
+    `;
+  }
+
   private _renderMarker(name: string, pixelPosition: number): unknown {
     const config = MARKER_CONFIGS[name];
     if (!config) return null;
@@ -1590,7 +1951,7 @@ export class UvmWaveformEditor extends LitElement {
             </button>
           </div>
           <div class="controls-divider"></div>
-          <span class="keyboard-hint">Space play | P preview | +/- zoom</span>
+          <span class="keyboard-hint">Click to seek | Space play | P preview | +/- zoom</span>
           <span class="time-display">${this._formatTime(duration)}</span>
         </div>
 
@@ -1604,7 +1965,7 @@ export class UvmWaveformEditor extends LitElement {
           : this.audioBuffer
             ? html`
                 <div class="canvas-wrapper">
-                  <div class="canvas-area" style="width: ${this._canvasWidth}px;">
+                  <div class="canvas-area" style="width: ${this._canvasWidth}px; cursor: pointer;" @mousedown=${this._onCanvasMouseDown}>
                     <!-- Waveform Section -->
                     <div class="waveform-section">
                       <canvas class="waveform-canvas"></canvas>
@@ -1628,6 +1989,7 @@ export class UvmWaveformEditor extends LitElement {
 
                     <!-- Markers Layer spans both sections -->
                     <div class="markers-layer" style="height: ${this.height + this._dividerHeight + this.spectrogramHeight}px;">
+                      ${this._renderRegions()}
                       ${this._renderMarker('offset', this._msToPixel(this.offset))}
                       ${this._renderMarker('consonant', this._msToPixel(this.consonant))}
                       ${this._renderMarker('cutoff', this._getCutoffPixel())}

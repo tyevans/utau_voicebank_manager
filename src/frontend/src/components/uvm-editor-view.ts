@@ -24,10 +24,14 @@ import type SlDialog from '@shoelace-style/shoelace/dist/components/dialog/dialo
 import './uvm-sample-browser.js';
 import './uvm-waveform-editor.js';
 import './uvm-entry-list.js';
+import './uvm-context-bar.js';
+import './uvm-value-bar.js';
+import './uvm-precision-drawer.js';
 
 import { api, ApiError } from '../services/api.js';
-import type { EntryCreateDetail, EntryDeleteDetail, EntrySelectDetail } from './uvm-entry-list.js';
+import type { EntryCreateDetail } from './uvm-entry-list.js';
 import type { OtoEntry } from '../services/types.js';
+import type { PrecisionDrawerChangeDetail } from './uvm-precision-drawer.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
 
 /**
@@ -58,13 +62,15 @@ interface MarkerChangeDetail {
 }
 
 /**
- * Main editor view component that integrates sample browser, waveform editor,
- * and oto parameter editing into a cohesive workflow.
+ * Main editor view component with waveform-centric layout.
  *
- * Layout:
- * - Left sidebar: Sample browser (voicebanks and samples list)
- * - Main area: Waveform editor with oto markers
- * - Right sidebar: Oto parameter input panel
+ * Layout (top to bottom):
+ * - Context bar: Breadcrumb navigation + undo/redo/save actions
+ * - Entry tabs: For VCV samples with multiple aliases (hidden if 1 entry)
+ * - Waveform editor: Main editing area (fills available space)
+ * - Value bar: Read-only display of current marker values
+ * - Precision drawer: Collapsible numeric input panel
+ * - Sample browser: Modal overlay (not inline)
  *
  * @example
  * ```html
@@ -81,195 +87,85 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
 
     .editor-layout {
-      display: grid;
-      grid-template-columns: minmax(400px, 500px) 1fr minmax(260px, 300px);
-      grid-template-rows: 1fr;
-      gap: 1rem;
-      padding: 1rem 1.5rem;
-      height: calc(100vh - 120px);
-      min-height: 500px;
-      box-sizing: border-box;
-    }
-
-    @media (max-width: 1400px) {
-      .editor-layout {
-        grid-template-columns: minmax(360px, 450px) 1fr minmax(240px, 280px);
-      }
-    }
-
-    @media (max-width: 1200px) {
-      .editor-layout {
-        grid-template-columns: minmax(320px, 400px) 1fr minmax(240px, 280px);
-      }
-    }
-
-    @media (max-width: 900px) {
-      .editor-layout {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr auto;
-        height: auto;
-        padding: 0.75rem 1rem;
-      }
-    }
-
-    .main-area {
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      height: calc(100vh - 56px);
+      background: var(--uvm-background, #ffffff);
+    }
+
+    .waveform-area {
+      flex: 1;
       min-height: 0;
-      min-width: 0;
-      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 0 1.5rem;
     }
 
     .waveform-section {
-      flex: 0 0 auto;
+      flex: 1;
+      min-height: 300px;
       display: flex;
       flex-direction: column;
-      min-width: 0;
       background-color: #ffffff;
       border: 1px solid #e5e7eb;
       border-radius: 8px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
       overflow: hidden;
+      margin: 1rem 0;
     }
 
-    .params-panel {
-      background-color: #ffffff;
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-    }
-
-    .params-header {
+    /* Entry tabs for VCV samples with multiple aliases */
+    .entry-tabs {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.875rem 1rem;
-      background-color: #fafafa;
-      border-bottom: 1px solid #e5e7eb;
-    }
-
-    .params-header-title {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-weight: 600;
-      font-size: 0.8125rem;
-      color: #374151;
-    }
-
-    .params-header sl-icon {
-      font-size: 0.9375rem;
-      color: #6b7280;
-    }
-
-    .params-content {
-      padding: 1rem 1.25rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-      flex: 1;
-      overflow-y: auto;
-      min-height: 0;
-    }
-
-    .param-group {
-      display: flex;
-      flex-direction: column;
       gap: 0.25rem;
+      padding: 0 1.5rem;
+      background-color: var(--uvm-surface, #fafafa);
+      border-bottom: 1px solid var(--uvm-border, #e5e7eb);
+      overflow-x: auto;
     }
 
-    .param-label {
-      font-size: 0.75rem;
+    .entry-tab {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.625rem 1rem;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      font-family: inherit;
+      font-size: 0.8125rem;
       font-weight: 500;
-      color: #6b7280;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
+      color: var(--uvm-secondary, #6b7280);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
     }
 
-    .param-color-indicator {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
+    .entry-tab:hover {
+      color: var(--uvm-primary, #1f2937);
+      background-color: rgba(0, 0, 0, 0.03);
     }
 
-    .entry-selector {
-      margin-bottom: 0.75rem;
+    .entry-tab.active {
+      color: var(--sl-color-primary-600, #2563eb);
+      border-bottom-color: var(--sl-color-primary-600, #2563eb);
     }
 
-    .entry-selector sl-select::part(combobox) {
-      font-size: 0.875rem;
+    .entry-tab.add-tab {
+      padding: 0.625rem 0.75rem;
+      color: var(--uvm-secondary, #9ca3af);
     }
 
-    .sample-info {
-      padding: 0.75rem 1rem;
-      background-color: #fafafa;
-      border-bottom: 1px solid #e5e7eb;
+    .entry-tab.add-tab:hover {
+      color: var(--sl-color-primary-600, #2563eb);
     }
 
-    .sample-info-filename {
-      font-weight: 600;
-      font-size: 0.8125rem;
-      color: #1f2937;
-      margin-bottom: 0.125rem;
+    .entry-tab.add-tab sl-icon {
+      font-size: 1rem;
     }
 
-    .sample-info-voicebank {
-      font-size: 0.6875rem;
-      color: #9ca3af;
-    }
-
-    .loading-overlay {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-      text-align: center;
-      color: #6b7280;
-    }
-
-    .loading-overlay sl-spinner {
-      font-size: 1.75rem;
-      --indicator-color: #3b82f6;
-      margin-bottom: 0.625rem;
-    }
-
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem 1rem;
-      text-align: center;
-      flex: 1;
-      min-height: 180px;
-      background-color: #ffffff;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
-    }
-
-    .empty-state sl-icon {
-      font-size: 2rem;
-      color: #d1d5db;
-      margin-bottom: 0.625rem;
-    }
-
-    .empty-state-text {
-      font-size: 0.8125rem;
-      color: #6b7280;
-      max-width: 180px;
-      line-height: 1.5;
-    }
-
-    /* Enhanced waveform empty state */
+    /* Empty state when no sample is loaded */
     .waveform-empty-state {
       display: flex;
       flex-direction: column;
@@ -285,6 +181,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       background-size: 24px 24px;
       border: 2px dashed #d1d5db;
       border-radius: 12px;
+      margin: 1rem 1.5rem;
     }
 
     .waveform-empty-content {
@@ -299,23 +196,6 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       display: flex;
       align-items: center;
       gap: 1rem;
-    }
-
-    .waveform-empty-arrow {
-      font-size: 1.75rem;
-      color: #9ca3af;
-      animation: point-left 1.5s ease-in-out infinite;
-    }
-
-    @keyframes point-left {
-      0%, 100% {
-        transform: translateX(0);
-        opacity: 0.6;
-      }
-      50% {
-        transform: translateX(-6px);
-        opacity: 1;
-      }
     }
 
     .waveform-empty-waveform-icon {
@@ -375,53 +255,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
 
     .error-message {
-      margin-bottom: 1rem;
-    }
-
-    sl-input::part(input) {
-      font-family: monospace;
-    }
-
-    sl-input::part(base) {
-      font-size: 0.875rem;
-    }
-
-    .action-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
-      padding-top: 1rem;
-      border-top: 1px solid #e5e7eb;
-    }
-
-    .action-buttons sl-button-group {
-      width: 100%;
-    }
-
-    .action-buttons sl-button-group sl-button {
-      flex: 1;
-    }
-
-    .action-buttons sl-button-group sl-button::part(base) {
-      width: 100%;
-      padding: 0.5rem 0.75rem;
-    }
-
-    .save-hint {
-      font-size: 0.6875rem;
-      color: #9ca3af;
-      text-align: center;
-    }
-
-    .confidence-badge {
-      display: flex;
-      justify-content: center;
-      margin-top: 0.25rem;
-    }
-
-    .confidence-badge sl-badge {
-      font-size: 0.6875rem;
+      margin: 1rem 1.5rem;
     }
 
     .dialog-footer {
@@ -439,131 +273,66 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       color: #374151;
     }
 
-    .skeleton-params {
-      padding: 1rem 1.25rem;
+    /* Loading state */
+    .loading-overlay {
       display: flex;
       flex-direction: column;
-      gap: 1rem;
-    }
-
-    .skeleton-param-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-
-    .skeleton-param-group sl-skeleton {
-      --border-radius: var(--sl-border-radius-small);
-    }
-
-    .sidebar-section {
-      margin-bottom: 0.75rem;
-    }
-
-    .sidebar-section:last-child {
-      margin-bottom: 0;
-    }
-
-    /* Marker legend - visual first approach */
-    .marker-legend {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      padding: 0.875rem 1rem;
-      background: #f9fafb;
-      border-radius: 6px;
-      border: 1px solid #e5e7eb;
-    }
-
-    .marker-legend-title {
-      font-size: 0.625rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #9ca3af;
-      margin-bottom: 0.125rem;
-    }
-
-    .marker-legend-item {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-size: 0.75rem;
-      color: #6b7280;
-    }
-
-    .marker-legend-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .marker-legend-name {
-      font-weight: 500;
-      color: #374151;
-      min-width: 5rem;
-    }
-
-    .marker-legend-hint {
-      font-size: 0.6875rem;
-      color: #9ca3af;
-    }
-
-    /* Precise values toggle section */
-    .precise-values-toggle {
-      margin-top: 0.5rem;
-    }
-
-    .precise-values-toggle sl-details::part(summary) {
-      font-size: 0.75rem;
-      font-weight: 500;
-      color: #6b7280;
-      padding: 0.375rem 0;
-    }
-
-    .precise-values-toggle sl-details::part(summary-icon) {
-      color: #9ca3af;
-    }
-
-    .precise-values-toggle sl-details::part(content) {
-      padding-top: 0.5rem;
-    }
-
-    .precise-values-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.5rem;
-    }
-
-    .precise-values-grid .param-group {
-      margin-bottom: 0;
-    }
-
-    .precise-values-grid sl-input::part(base) {
-      font-size: 0.6875rem;
-    }
-
-    .precise-values-grid .param-label {
-      font-size: 0.625rem;
-    }
-
-    /* Simplified waveform hint */
-    .waveform-hint {
-      display: flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
-      padding: 0.5rem;
-      background: #f9fafb;
-      border-radius: 6px;
-      font-size: 0.6875rem;
+      padding: 2rem;
+      text-align: center;
       color: #6b7280;
     }
 
-    .waveform-hint sl-icon {
-      font-size: 0.8125rem;
-      color: #9ca3af;
+    .loading-overlay sl-spinner {
+      font-size: 1.75rem;
+      --indicator-color: #3b82f6;
+      margin-bottom: 0.625rem;
+    }
+
+    /* Status indicator */
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--uvm-secondary, #6b7280);
+      background-color: var(--uvm-surface, #fafafa);
+      border-top: 1px solid var(--uvm-border, #e5e7eb);
+    }
+
+    .status-indicator.detecting {
+      color: var(--sl-color-primary-600, #2563eb);
+    }
+
+    .status-indicator.success {
+      color: var(--sl-color-success-600, #16a34a);
+    }
+
+    .status-indicator.loading {
+      color: var(--uvm-secondary, #6b7280);
+    }
+
+    .status-indicator sl-spinner {
+      font-size: 0.875rem;
+      --indicator-color: currentColor;
+    }
+
+    .status-indicator sl-icon {
+      font-size: 0.875rem;
+    }
+
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.125rem 0.5rem;
+      font-size: 0.6875rem;
+      font-weight: 500;
+      background-color: var(--sl-color-primary-100, #dbeafe);
+      color: var(--sl-color-primary-700, #1d4ed8);
+      border-radius: 9999px;
     }
   `;
 
@@ -631,6 +400,19 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   @state()
   private _lastConfidence: number | null = null;
 
+  // New layout state
+  @state()
+  private _showBrowser = false;
+
+  @state()
+  private _showPrecision = false;
+
+  @state()
+  private _undoStack: OtoEntry[] = [];
+
+  @state()
+  private _redoStack: OtoEntry[] = [];
+
   // Original entry to detect changes and determine create vs update
   private _originalEntry: OtoEntry | null = null;
 
@@ -643,7 +425,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
 
   connectedCallback(): void {
     super.connectedCallback();
-    // Add keyboard listener for Ctrl+S / Cmd+S
+    // Add keyboard listener for shortcuts
     this._boundKeyHandler = this._onKeyDown.bind(this);
     document.addEventListener('keydown', this._boundKeyHandler);
 
@@ -669,7 +451,8 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     const voicebankMatch = path.match(/^\/editor\/([^/]+)$/);
     if (voicebankMatch) {
       this._urlVoicebankId = decodeURIComponent(voicebankMatch[1]);
-      // TODO: Could notify sample browser to select this voicebank
+      // Open browser to let user select a sample
+      this._showBrowser = true;
     }
   }
 
@@ -711,15 +494,27 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   private _boundKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   /**
-   * Handle keyboard events for save shortcut.
+   * Handle keyboard events for shortcuts.
    */
   private _onKeyDown(e: KeyboardEvent): void {
-    // Ctrl+S or Cmd+S to save
+    // Ctrl+S or Cmd+S to save (handled by context-bar, but keep for fallback)
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
       if (this._isDirty && !this._isSaving) {
         this._saveEntry();
       }
+      return;
+    }
+
+    // Toggle precision drawer with = or + key
+    if (e.key === '=' || e.key === '+') {
+      // Don't trigger if user is typing in an input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+      e.preventDefault();
+      this._showPrecision = !this._showPrecision;
     }
   }
 
@@ -755,6 +550,8 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     this._isDirty = false;
     this._originalEntry = null;
     this._lastConfidence = null;
+    this._undoStack = [];
+    this._redoStack = [];
 
     // Load audio and oto entries in parallel
     await Promise.all([
@@ -921,6 +718,9 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
 
     const { name, value } = e.detail;
 
+    // Push current state to undo stack before making changes
+    this._pushUndo();
+
     // Update the local entry state
     this._currentEntry = {
       ...this._currentEntry,
@@ -937,25 +737,6 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
    */
   private _onZoomChange(e: CustomEvent<{ zoom: number }>): void {
     this._zoom = e.detail.zoom;
-  }
-
-  /**
-   * Handle parameter input changes.
-   */
-  private _onParamChange(paramName: keyof OtoEntry, e: Event): void {
-    if (!this._currentEntry) return;
-
-    const input = e.target as HTMLInputElement;
-    const value = parseFloat(input.value) || 0;
-
-    this._currentEntry = {
-      ...this._currentEntry,
-      [paramName]: value,
-    };
-
-    // Mark as dirty
-    this._isDirty = true;
-    this._saveSuccess = false;
   }
 
   /**
@@ -1045,21 +826,22 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Handle entry selection from the entry list component.
+   * Handle entry selection from the entry list/tabs.
    */
-  private _onEntryListSelect(e: CustomEvent<EntrySelectDetail>): void {
-    const { entry } = e.detail;
-    const index = this._otoEntries.findIndex((ent) => ent.alias === entry.alias);
+  private _selectEntry(index: number): void {
+    if (index < 0 || index >= this._otoEntries.length) return;
+    if (index === this._selectedEntryIndex) return;
 
-    if (index >= 0) {
-      this._selectedEntryIndex = index;
-      this._currentEntry = { ...this._otoEntries[index] };
-      this._originalEntry = { ...this._otoEntries[index] };
-      this._isDirty = false;
-      this._saveSuccess = false;
-      this._lastConfidence = null;
-    }
+    this._selectedEntryIndex = index;
+    this._currentEntry = { ...this._otoEntries[index] };
+    this._originalEntry = { ...this._otoEntries[index] };
+    this._isDirty = false;
+    this._saveSuccess = false;
+    this._lastConfidence = null;
+    this._undoStack = [];
+    this._redoStack = [];
   }
+
 
   /**
    * Handle entry creation request from the entry list component.
@@ -1090,6 +872,8 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       this._isDirty = false;
       this._saveSuccess = false;
       this._lastConfidence = null;
+      this._undoStack = [];
+      this._redoStack = [];
     } catch (error) {
       console.error('Failed to create oto entry:', error);
       if (error instanceof ApiError) {
@@ -1105,53 +889,23 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Handle entry deletion request from the entry list component.
+   * Add a new entry (for VCV samples with multiple aliases).
    */
-  private async _onEntryDelete(e: CustomEvent<EntryDeleteDetail>): Promise<void> {
-    const { entry } = e.detail;
+  private _addEntry(): void {
+    if (!this._currentFilename) return;
 
-    if (!this._currentVoicebankId) return;
+    // Generate a unique alias
+    const baseName = this._currentFilename.replace(/\.wav$/i, '').replace(/^_/, '');
+    let alias = `- ${baseName}`;
+    let suffix = 2;
 
-    // Confirm deletion
-    if (!confirm(`Delete alias "${entry.alias}"?`)) return;
-
-    try {
-      await api.deleteOtoEntry(this._currentVoicebankId, entry.filename, entry.alias);
-      UvmToastManager.success(`Deleted alias "${entry.alias}"`);
-
-      // Remove from entries list
-      const deletedIndex = this._otoEntries.findIndex((ent) => ent.alias === entry.alias);
-      this._otoEntries = this._otoEntries.filter((ent) => ent.alias !== entry.alias);
-
-      // If the deleted entry was selected, select another entry
-      if (this._currentEntry?.alias === entry.alias) {
-        if (this._otoEntries.length > 0) {
-          // Select the previous entry, or the first one if we deleted the first
-          const newIndex = Math.max(0, deletedIndex - 1);
-          this._selectedEntryIndex = newIndex;
-          this._currentEntry = { ...this._otoEntries[newIndex] };
-          this._originalEntry = { ...this._otoEntries[newIndex] };
-        } else {
-          // No more entries, create a default one
-          this._currentEntry = this._createDefaultEntry(this._currentFilename!);
-          this._originalEntry = null;
-          this._selectedEntryIndex = 0;
-        }
-        this._isDirty = false;
-        this._saveSuccess = false;
-        this._lastConfidence = null;
-      } else if (deletedIndex < this._selectedEntryIndex) {
-        // Adjust index if we deleted an entry before the selected one
-        this._selectedEntryIndex--;
-      }
-    } catch (error) {
-      console.error('Failed to delete oto entry:', error);
-      if (error instanceof ApiError) {
-        UvmToastManager.error(error.message);
-      } else {
-        UvmToastManager.error('Failed to delete entry');
-      }
+    while (this._otoEntries.some((e) => e.alias === alias)) {
+      alias = `- ${baseName} ${suffix}`;
+      suffix++;
     }
+
+    // Trigger entry creation
+    this._onEntryCreate(new CustomEvent('entry-create', { detail: { alias } }));
   }
 
   /**
@@ -1169,6 +923,9 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
         this._currentFilename,
         { alias: this._currentEntry?.alias }
       );
+
+      // Push current state to undo stack before applying detection
+      this._pushUndo();
 
       // Apply suggested values
       this._currentEntry = {
@@ -1210,16 +967,6 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Get the badge variant based on confidence level.
-   */
-  private _getConfidenceVariant(): 'success' | 'warning' | 'danger' | 'neutral' {
-    if (this._lastConfidence === null) return 'neutral';
-    if (this._lastConfidence >= 0.8) return 'success';
-    if (this._lastConfidence >= 0.5) return 'warning';
-    return 'danger';
-  }
-
-  /**
    * Clean up audio context when component is disconnected.
    */
   private _cleanupAudioContext(): void {
@@ -1230,15 +977,98 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Render the sample browser sidebar.
+   * Get the voicebank name for display.
    */
-  private _renderSampleBrowser() {
-    return html`
-      <uvm-sample-browser
-        @sample-select=${this._onSampleSelect}
-        @voicebank-select=${this._onVoicebankSelect}
-      ></uvm-sample-browser>
-    `;
+  private _getVoicebankName(): string {
+    return this._currentVoicebankId || '';
+  }
+
+  /**
+   * Open the sample browser modal.
+   */
+  private _openBrowser(): void {
+    this._showBrowser = true;
+  }
+
+  /**
+   * Get current entry as OtoEntry object.
+   */
+  private _getCurrentEntry(): OtoEntry | null {
+    if (!this._currentFilename || !this._currentEntry) return null;
+    return { ...this._currentEntry };
+  }
+
+  /**
+   * Push current state to undo stack.
+   */
+  private _pushUndo(): void {
+    const current = this._getCurrentEntry();
+    if (current) {
+      this._undoStack = [...this._undoStack, current];
+      this._redoStack = []; // Clear redo on new action
+    }
+  }
+
+  /**
+   * Apply an entry state (used for undo/redo).
+   */
+  private _applyEntry(entry: OtoEntry): void {
+    this._currentEntry = { ...entry };
+    this._isDirty = true;
+    this._saveSuccess = false;
+  }
+
+  /**
+   * Undo the last change.
+   */
+  private _undo(): void {
+    if (this._undoStack.length === 0) return;
+
+    const current = this._getCurrentEntry();
+    if (current) {
+      this._redoStack = [...this._redoStack, current];
+    }
+
+    const previous = this._undoStack[this._undoStack.length - 1];
+    this._undoStack = this._undoStack.slice(0, -1);
+    this._applyEntry(previous);
+  }
+
+  /**
+   * Redo a previously undone change.
+   */
+  private _redo(): void {
+    if (this._redoStack.length === 0) return;
+
+    const current = this._getCurrentEntry();
+    if (current) {
+      this._undoStack = [...this._undoStack, current];
+    }
+
+    const next = this._redoStack[this._redoStack.length - 1];
+    this._redoStack = this._redoStack.slice(0, -1);
+    this._applyEntry(next);
+  }
+
+  /**
+   * Handle precision drawer value changes.
+   */
+  private _onPrecisionChange(e: CustomEvent<PrecisionDrawerChangeDetail>): void {
+    if (!this._currentEntry) return;
+
+    const { name, value } = e.detail;
+
+    // Push current state to undo stack before making changes
+    this._pushUndo();
+
+    // Update the entry
+    this._currentEntry = {
+      ...this._currentEntry,
+      [name]: value,
+    };
+
+    this._isDirty = true;
+    this._saveSuccess = false;
   }
 
   /**
@@ -1253,36 +1083,36 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Render the main waveform editing area.
+   * Render entry tabs for VCV samples with multiple aliases.
    */
-  private _renderMainArea() {
-    if (!this._currentFilename) {
-      return html`
-        <div class="waveform-empty-state">
-          <div class="waveform-empty-content">
-            <div class="waveform-empty-icon-row">
-              <sl-icon name="arrow-left" class="waveform-empty-arrow"></sl-icon>
-              <sl-icon name="soundwave" class="waveform-empty-waveform-icon"></sl-icon>
-            </div>
-            <h3 class="waveform-empty-title">No sample loaded</h3>
-            <p class="waveform-empty-description">
-              Select a sample from the browser panel on the left to start editing its oto parameters.
-            </p>
-            <div class="waveform-empty-hints">
-              <div class="waveform-empty-hint">
-                <sl-icon name="mouse"></sl-icon>
-                <span>Double-click a sample to load it</span>
-              </div>
-              <div class="waveform-empty-hint">
-                <sl-icon name="keyboard"></sl-icon>
-                <span>Or select and press <kbd>Enter</kbd></span>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
+  private _renderEntryTabs() {
+    if (!this._otoEntries || this._otoEntries.length <= 1) {
+      return null; // No tabs for single entry
     }
 
+    return html`
+      <div class="entry-tabs">
+        ${this._otoEntries.map(
+          (entry, index) => html`
+            <button
+              class="entry-tab ${index === this._selectedEntryIndex ? 'active' : ''}"
+              @click=${() => this._selectEntry(index)}
+            >
+              ${entry.alias || `Entry ${index + 1}`}
+            </button>
+          `
+        )}
+        <button class="entry-tab add-tab" @click=${this._addEntry}>
+          <sl-icon name="plus"></sl-icon>
+        </button>
+      </div>
+    `;
+  }
+
+  /**
+   * Render the main waveform editing area.
+   */
+  private _renderWaveform() {
     if (this._error && !this._loadingAudio) {
       return html`
         <sl-alert variant="danger" open class="error-message">
@@ -1309,241 +1139,28 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Render the oto parameters sidebar.
+   * Render empty state when no sample is loaded.
    */
-  private _renderParamsPanel() {
-    if (!this._currentFilename) {
-      return html`
-        <div class="params-panel">
-          <div class="params-header">
-            <div class="params-header-title">
-              <sl-icon name="sliders"></sl-icon>
-              Parameters
-            </div>
-          </div>
-          <div class="empty-state">
-            <sl-icon name="hand-index"></sl-icon>
-            <div class="empty-state-text">
-              Select a sample to edit its oto parameters.
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    if (this._loadingEntries) {
-      return html`
-        <div class="params-panel">
-          <div class="params-header">
-            <div class="params-header-title">
-              <sl-icon name="sliders"></sl-icon>
-              Parameters
-            </div>
-          </div>
-          <div class="skeleton-params">
-            <div class="skeleton-param-group">
-              <sl-skeleton effect="pulse" style="width: 30%; height: 0.75rem;"></sl-skeleton>
-              <sl-skeleton effect="pulse" style="width: 100%; height: 2rem;"></sl-skeleton>
-            </div>
-            <sl-divider></sl-divider>
-            ${[1, 2, 3, 4, 5].map(
-              () => html`
-                <div class="skeleton-param-group">
-                  <sl-skeleton effect="pulse" style="width: 50%; height: 0.75rem;"></sl-skeleton>
-                  <sl-skeleton effect="pulse" style="width: 100%; height: 2rem;"></sl-skeleton>
-                </div>
-              `
-            )}
-            <sl-divider></sl-divider>
-            <sl-skeleton effect="pulse" style="width: 100%; height: 2.5rem;"></sl-skeleton>
-          </div>
-        </div>
-      `;
-    }
-
+  private _renderEmptyState() {
     return html`
-      <div class="params-panel">
-        <div class="params-header">
-          <div class="params-header-title">
-            <sl-icon name="sliders"></sl-icon>
-            Parameters
+      <div class="waveform-empty-state">
+        <div class="waveform-empty-content">
+          <div class="waveform-empty-icon-row">
+            <sl-icon name="soundwave" class="waveform-empty-waveform-icon"></sl-icon>
           </div>
-          ${this._renderStatusBadge()}
-        </div>
-
-        ${this._currentFilename && this._currentVoicebankId
-          ? html`
-              <div class="sample-info">
-                <div class="sample-info-filename">
-                  ${this._currentFilename}${this._isDirty ? ' *' : ''}
-                </div>
-                <div class="sample-info-voicebank">${this._currentVoicebankId}</div>
-              </div>
-            `
-          : null}
-
-        <div class="params-content">
-          <div class="sidebar-section">
-            <uvm-entry-list
-              .entries=${this._otoEntries}
-              .selectedAlias=${this._currentEntry?.alias ?? null}
-              .loading=${this._loadingEntries}
-              @entry-select=${this._onEntryListSelect}
-              @entry-create=${this._onEntryCreate}
-              @entry-delete=${this._onEntryDelete}
-            ></uvm-entry-list>
-          </div>
-
-          <sl-divider></sl-divider>
-
-          <!-- Waveform-first: Visual legend instead of numeric inputs -->
-          <div class="marker-legend">
-            <div class="marker-legend-title">Drag markers on waveform</div>
-            <sl-tooltip content="Where playback starts. Drag the green marker.">
-              <div class="marker-legend-item">
-                <span class="marker-legend-dot" style="background-color: #22c55e;"></span>
-                <span class="marker-legend-name">Offset</span>
-                <span class="marker-legend-hint">Start point</span>
-              </div>
-            </sl-tooltip>
-            <sl-tooltip content="End of the consonant/fixed region. Drag the blue marker.">
-              <div class="marker-legend-item">
-                <span class="marker-legend-dot" style="background-color: #3b82f6;"></span>
-                <span class="marker-legend-name">Consonant</span>
-                <span class="marker-legend-hint">Fixed region</span>
-              </div>
-            </sl-tooltip>
-            <sl-tooltip content="Where playback ends. Drag the red marker.">
-              <div class="marker-legend-item">
-                <span class="marker-legend-dot" style="background-color: #ef4444;"></span>
-                <span class="marker-legend-name">Cutoff</span>
-                <span class="marker-legend-hint">End point</span>
-              </div>
-            </sl-tooltip>
-            <sl-tooltip content="Timing point for note alignment. Drag the purple marker.">
-              <div class="marker-legend-item">
-                <span class="marker-legend-dot" style="background-color: #a855f7;"></span>
-                <span class="marker-legend-name">Preutterance</span>
-                <span class="marker-legend-hint">Note timing</span>
-              </div>
-            </sl-tooltip>
-            <sl-tooltip content="Crossfade point with previous note. Drag the orange marker.">
-              <div class="marker-legend-item">
-                <span class="marker-legend-dot" style="background-color: #f97316;"></span>
-                <span class="marker-legend-name">Overlap</span>
-                <span class="marker-legend-hint">Crossfade</span>
-              </div>
-            </sl-tooltip>
-          </div>
-
-          <!-- Power user: Collapsible precise numeric values -->
-          <div class="precise-values-toggle">
-            <sl-details summary="Show precise values">
-              <div class="precise-values-grid">
-                <div class="param-group">
-                  <label class="param-label">
-                    <span class="param-color-indicator" style="background-color: #22c55e;"></span>
-                    Offset
-                  </label>
-                  <sl-input
-                    type="number"
-                    value=${this._currentEntry?.offset ?? 0}
-                    size="small"
-                    suffix="ms"
-                    @sl-change=${(e: Event) => this._onParamChange('offset', e)}
-                  ></sl-input>
-                </div>
-
-                <div class="param-group">
-                  <label class="param-label">
-                    <span class="param-color-indicator" style="background-color: #3b82f6;"></span>
-                    Consonant
-                  </label>
-                  <sl-input
-                    type="number"
-                    value=${this._currentEntry?.consonant ?? 0}
-                    size="small"
-                    suffix="ms"
-                    @sl-change=${(e: Event) => this._onParamChange('consonant', e)}
-                  ></sl-input>
-                </div>
-
-                <div class="param-group">
-                  <label class="param-label">
-                    <span class="param-color-indicator" style="background-color: #ef4444;"></span>
-                    Cutoff
-                  </label>
-                  <sl-input
-                    type="number"
-                    value=${this._currentEntry?.cutoff ?? 0}
-                    size="small"
-                    suffix="ms"
-                    @sl-change=${(e: Event) => this._onParamChange('cutoff', e)}
-                  ></sl-input>
-                </div>
-
-                <div class="param-group">
-                  <label class="param-label">
-                    <span class="param-color-indicator" style="background-color: #a855f7;"></span>
-                    Preutterance
-                  </label>
-                  <sl-input
-                    type="number"
-                    value=${this._currentEntry?.preutterance ?? 0}
-                    size="small"
-                    suffix="ms"
-                    @sl-change=${(e: Event) => this._onParamChange('preutterance', e)}
-                  ></sl-input>
-                </div>
-
-                <div class="param-group" style="grid-column: span 2;">
-                  <label class="param-label">
-                    <span class="param-color-indicator" style="background-color: #f97316;"></span>
-                    Overlap
-                  </label>
-                  <sl-input
-                    type="number"
-                    value=${this._currentEntry?.overlap ?? 0}
-                    size="small"
-                    suffix="ms"
-                    @sl-change=${(e: Event) => this._onParamChange('overlap', e)}
-                  ></sl-input>
-                </div>
-              </div>
-            </sl-details>
-          </div>
-
-          <div class="action-buttons">
-            <sl-button-group>
-              <sl-button
-                variant="default"
-                ?disabled=${!this._currentFilename || this._isDetecting}
-                ?loading=${this._isDetecting}
-                @click=${this._autoDetect}
-              >
-                <sl-icon slot="prefix" name="magic"></sl-icon>
-                Auto-detect
-              </sl-button>
-              <sl-button
-                variant=${this._saveSuccess ? 'success' : 'primary'}
-                ?disabled=${!this._isDirty || this._isSaving}
-                ?loading=${this._isSaving}
-                @click=${this._saveEntry}
-              >
-                <sl-icon slot="prefix" name=${this._saveSuccess ? 'check-lg' : 'floppy'}></sl-icon>
-                ${this._saveSuccess ? 'Saved' : 'Save'}
-              </sl-button>
-            </sl-button-group>
-            <span class="save-hint">Ctrl+S to save</span>
-            ${this._lastConfidence !== null ? html`
-              <div class="confidence-badge">
-                <sl-tooltip content="ML detection confidence">
-                  <sl-badge variant=${this._getConfidenceVariant()}>
-                    ${Math.round(this._lastConfidence * 100)}% confident
-                  </sl-badge>
-                </sl-tooltip>
-              </div>
-            ` : ''}
+          <h3 class="waveform-empty-title">No sample loaded</h3>
+          <p class="waveform-empty-description">
+            Click the breadcrumb above or press <kbd>/</kbd> to open the sample browser.
+          </p>
+          <div class="waveform-empty-hints">
+            <div class="waveform-empty-hint">
+              <sl-icon name="mouse"></sl-icon>
+              <span>Click the voicebank name to browse samples</span>
+            </div>
+            <div class="waveform-empty-hint">
+              <sl-icon name="keyboard"></sl-icon>
+              <span>Press <kbd>/</kbd> to quick-open browser</span>
+            </div>
           </div>
         </div>
       </div>
@@ -1551,23 +1168,61 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Render the status badge showing saved/unsaved/new state.
+   * Render status indicator showing detection/save/loading state.
    */
-  private _renderStatusBadge() {
-    // Show spinner when auto-detecting
+  private _renderStatusIndicator() {
+    // Show detecting state
     if (this._isDetecting) {
-      return html`<sl-spinner style="font-size: 1rem; --track-width: 2px;"></sl-spinner>`;
+      return html`
+        <div class="status-indicator detecting">
+          <sl-spinner></sl-spinner>
+          <span>Detecting parameters...</span>
+        </div>
+      `;
     }
+
+    // Show loading entries state
+    if (this._loadingEntries) {
+      return html`
+        <div class="status-indicator loading">
+          <sl-spinner></sl-spinner>
+          <span>Loading entries...</span>
+        </div>
+      `;
+    }
+
+    // Show save success with confidence
     if (this._saveSuccess) {
-      return html`<sl-badge variant="success" pill>saved</sl-badge>`;
+      return html`
+        <div class="status-indicator success">
+          <sl-icon name="check-circle"></sl-icon>
+          <span>Saved</span>
+          ${this._lastConfidence !== null
+            ? html`
+                <span class="confidence-badge">
+                  <sl-icon name="cpu"></sl-icon>
+                  ${Math.round(this._lastConfidence * 100)}% confidence
+                </span>
+              `
+            : null}
+        </div>
+      `;
     }
-    if (this._isDirty) {
-      return html`<sl-badge variant="warning" pill>unsaved</sl-badge>`;
+
+    // Show confidence from last detection (if available)
+    if (this._lastConfidence !== null) {
+      return html`
+        <div class="status-indicator">
+          <span class="confidence-badge">
+            <sl-icon name="cpu"></sl-icon>
+            ${Math.round(this._lastConfidence * 100)}% confidence
+          </span>
+        </div>
+      `;
     }
-    if (this._originalEntry === null) {
-      return html`<sl-badge variant="neutral" pill>new</sl-badge>`;
-    }
-    return html`<sl-badge variant="success" pill>saved</sl-badge>`;
+
+    // No status to show
+    return null;
   }
 
   /**
@@ -1595,15 +1250,60 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   render() {
     return html`
       <div class="editor-layout">
-        ${this._renderSampleBrowser()}
-        <div class="main-area">
-          <div class="waveform-section">
-            ${this._renderMainArea()}
-          </div>
-        </div>
-        ${this._renderParamsPanel()}
+        <uvm-context-bar
+          .voicebankName=${this._getVoicebankName()}
+          .sampleName=${this._currentFilename || ''}
+          .canUndo=${this._undoStack.length > 0}
+          .canRedo=${this._redoStack.length > 0}
+          .hasUnsavedChanges=${this._isDirty}
+          .saving=${this._isSaving}
+          @uvm-context-bar:browse=${this._openBrowser}
+          @uvm-context-bar:undo=${this._undo}
+          @uvm-context-bar:redo=${this._redo}
+          @uvm-context-bar:save=${this._saveEntry}
+        ></uvm-context-bar>
+
+        ${this._renderEntryTabs()}
+
+        ${this._currentFilename
+          ? html`
+              <div class="waveform-area">
+                <div class="waveform-section">
+                  ${this._renderWaveform()}
+                  ${this._renderStatusIndicator()}
+                </div>
+
+                <uvm-value-bar
+                  .offset=${this._currentEntry?.offset ?? 0}
+                  .consonant=${this._currentEntry?.consonant ?? 0}
+                  .cutoff=${this._currentEntry?.cutoff ?? 0}
+                  .preutterance=${this._currentEntry?.preutterance ?? 0}
+                  .overlap=${this._currentEntry?.overlap ?? 0}
+                ></uvm-value-bar>
+
+                <uvm-precision-drawer
+                  ?open=${this._showPrecision}
+                  .offset=${this._currentEntry?.offset ?? 0}
+                  .consonant=${this._currentEntry?.consonant ?? 0}
+                  .cutoff=${this._currentEntry?.cutoff ?? 0}
+                  .preutterance=${this._currentEntry?.preutterance ?? 0}
+                  .overlap=${this._currentEntry?.overlap ?? 0}
+                  @uvm-precision-drawer:change=${this._onPrecisionChange}
+                  @uvm-precision-drawer:close=${() => (this._showPrecision = false)}
+                ></uvm-precision-drawer>
+              </div>
+            `
+          : this._renderEmptyState()}
+
+        <uvm-sample-browser
+          ?open=${this._showBrowser}
+          @sample-select=${this._onSampleSelect}
+          @voicebank-select=${this._onVoicebankSelect}
+          @uvm-sample-browser:close=${() => (this._showBrowser = false)}
+        ></uvm-sample-browser>
+
+        ${this._renderUnsavedDialog()}
       </div>
-      ${this._renderUnsavedDialog()}
     `;
   }
 }
