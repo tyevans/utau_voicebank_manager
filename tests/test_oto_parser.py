@@ -103,18 +103,18 @@ class TestOtoEntry:
                 overlap=15.0,
             )
 
-    def test_overlap_must_be_non_negative(self) -> None:
-        """Test that overlap must be >= 0."""
-        with pytest.raises(ValueError):
-            OtoEntry(
-                filename="_ka.wav",
-                alias="- ka",
-                offset=45.0,
-                consonant=120.0,
-                cutoff=-140.0,
-                preutterance=80.0,
-                overlap=-5.0,
-            )
+    def test_overlap_can_be_negative(self) -> None:
+        """Test that overlap can be negative (creates gap instead of crossfade)."""
+        entry = OtoEntry(
+            filename="_ka.wav",
+            alias="- ka",
+            offset=45.0,
+            consonant=120.0,
+            cutoff=-140.0,
+            preutterance=80.0,
+            overlap=-20.0,
+        )
+        assert entry.overlap == -20.0
 
     def test_cutoff_can_be_negative(self) -> None:
         """Test that cutoff can be negative (from audio end)."""

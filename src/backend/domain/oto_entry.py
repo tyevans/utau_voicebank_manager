@@ -36,8 +36,7 @@ class OtoEntry(BaseModel):
         description="How early to start before the note begins (ms)",
     )
     overlap: float = Field(
-        ge=0,
-        description="Crossfade duration with previous note (ms)",
+        description="Crossfade duration with previous note (ms). Negative values create gaps.",
     )
 
     @field_validator("filename")
