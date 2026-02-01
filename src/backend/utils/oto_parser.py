@@ -55,9 +55,16 @@ def parse_oto_line(line: str) -> OtoEntry | None:
         return None
 
     try:
+        filename = match.group("filename")
+        alias = match.group("alias")
+
+        # UTAU convention: if alias is empty, use filename without extension
+        if not alias:
+            alias = filename.rsplit(".", 1)[0] if "." in filename else filename
+
         return OtoEntry(
-            filename=match.group("filename"),
-            alias=match.group("alias"),
+            filename=filename,
+            alias=alias,
             offset=float(match.group("offset")),
             consonant=float(match.group("consonant")),
             cutoff=float(match.group("cutoff")),

@@ -279,10 +279,11 @@ class TestParseOtoLine:
         assert entry.cutoff == 500.0
 
     def test_parse_line_empty_alias(self) -> None:
-        """Test parsing a line with empty alias."""
+        """Test parsing a line with empty alias uses filename as alias (UTAU convention)."""
         entry = parse_oto_line("_ka.wav=,45,120,-140,80,15")
         assert entry is not None
-        assert entry.alias == ""
+        # UTAU convention: empty alias defaults to filename without extension
+        assert entry.alias == "_ka"
 
     def test_parse_line_japanese_alias(self) -> None:
         """Test parsing a line with Japanese alias."""
