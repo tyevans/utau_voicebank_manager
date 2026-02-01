@@ -11,6 +11,9 @@ export { UvmApp } from './uvm-app.js';
 // Waveform editor for audio visualization and oto.ini parameter editing
 export { UvmWaveformEditor } from './uvm-waveform-editor.js';
 
+// Pure waveform canvas rendering component (no markers or interaction)
+export { UvmWaveformCanvas } from './uvm-waveform-canvas.js';
+
 // Sample browser for selecting voicebank samples
 export { UvmSampleBrowser } from './uvm-sample-browser.js';
 
@@ -54,3 +57,10 @@ export { UvmContextBar } from './uvm-context-bar.js';
 // Precision drawer for numeric marker value editing
 export { UvmPrecisionDrawer } from './uvm-precision-drawer.js';
 export type { PrecisionDrawerChangeDetail } from './uvm-precision-drawer.js';
+
+// Spectrogram visualization for FFT frequency analysis
+export { UvmSpectrogram } from './uvm-spectrogram.js';
+
+// Marker handle for oto.ini parameter visualization
+export { UvmMarkerHandle } from './uvm-marker-handle.js';
+export type { MarkerDragDetail } from './uvm-marker-handle.js';

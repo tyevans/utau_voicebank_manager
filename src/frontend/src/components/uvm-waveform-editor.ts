@@ -1,5 +1,4 @@
 import { LitElement, html, css } from 'lit';
-import type { PropertyValues } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 
 // Import Shoelace components
@@ -11,9 +10,15 @@ import '@shoelace-style/shoelace/dist/components/select/select.js';
 import '@shoelace-style/shoelace/dist/components/option/option.js';
 import '@shoelace-style/shoelace/dist/components/divider/divider.js';
 
+// Import extracted child components
+import './uvm-waveform-canvas.js';
+import './uvm-spectrogram.js';
+import './uvm-marker-handle.js';
+
 // Import melody preview services
 import { MelodyPlayer, MELODY_PATTERNS, getMelodyPattern } from '../services/index.js';
 import type { OtoEntry } from '../services/index.js';
+import type { MarkerDragDetail } from './uvm-marker-handle.js';
 
 /**
  * Marker configuration for oto.ini parameters.
@@ -210,10 +215,6 @@ export class UvmWaveformEditor extends LitElement {
       line-height: 1;
     }
 
-    canvas {
-      display: block;
-    }
-
     .markers-layer {
       position: absolute;
       top: 0;
@@ -221,102 +222,6 @@ export class UvmWaveformEditor extends LitElement {
       width: 100%;
       height: 100%;
       pointer-events: none;
-    }
-
-    .marker {
-      position: absolute;
-      top: 0;
-      cursor: ew-resize;
-      pointer-events: auto;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .marker-line-waveform {
-      width: 2px;
-      opacity: 0.85;
-      transition: all var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
-    }
-
-    .marker-line-spectrogram {
-      width: 1px;
-      opacity: 0.5;
-      background-image: repeating-linear-gradient(
-        to bottom,
-        currentColor 0px,
-        currentColor 4px,
-        transparent 4px,
-        transparent 8px
-      );
-      background-color: transparent !important;
-      transition: all var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
-    }
-
-    .marker:hover .marker-line-waveform,
-    .marker.dragging .marker-line-waveform {
-      opacity: 1;
-      width: 3px;
-      box-shadow: 0 0 8px currentColor;
-    }
-
-    .marker:hover .marker-line-spectrogram,
-    .marker.dragging .marker-line-spectrogram {
-      opacity: 0.7;
-      width: 2px;
-    }
-
-    .marker-handle {
-      position: absolute;
-      top: -8px;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      cursor: ew-resize;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      color: white;
-      font-weight: 500;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-      transition: transform var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
-      z-index: 10;
-    }
-
-    .marker:hover .marker-handle,
-    .marker.dragging .marker-handle {
-      transform: scale(1.15);
-    }
-
-    .marker-label {
-      position: absolute;
-      white-space: nowrap;
-      font-size: 11px;
-      font-weight: 500;
-      padding: 4px 8px;
-      border-radius: 4px;
-      color: white;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-      opacity: 0;
-      transition: opacity var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)), transform var(--uvm-duration-fast, 200ms) var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
-      pointer-events: none;
-      transform: translateY(4px);
-    }
-
-    .marker:hover .marker-label,
-    .marker.dragging .marker-label {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    .marker-label-hint {
-      font-size: 10px;
-      opacity: 0.85;
-      display: block;
-      margin-top: 1px;
     }
 
     /* Region shading styles */
@@ -522,10 +427,6 @@ export class UvmWaveformEditor extends LitElement {
       border-radius: 50%;
     }
 
-    .spectrogram-canvas {
-      display: block;
-    }
-
     .preview-controls {
       display: flex;
       align-items: center;
@@ -664,17 +565,18 @@ export class UvmWaveformEditor extends LitElement {
    */
   private readonly _dividerHeight = 2;
 
-  @query('canvas.waveform-canvas')
-  private _canvas!: HTMLCanvasElement;
-
-  @query('canvas.spectrogram-canvas')
-  private _spectrogramCanvas!: HTMLCanvasElement;
-
   @query('.canvas-wrapper')
   private _canvasWrapper!: HTMLDivElement;
 
   @state()
   private _draggingMarker: string | null = null;
+
+  /**
+   * Currently selected marker for keyboard nudging.
+   * Set when a marker is dragged, cleared when clicking elsewhere.
+   */
+  @state()
+  private _selectedMarker: string | null = null;
 
   /**
    * Starting position (in ms) of marker when drag begins.
@@ -707,9 +609,6 @@ export class UvmWaveformEditor extends LitElement {
   private _playbackPosition = 0; // Current position in ms from start of audio
 
   @state()
-  private _spectrogramData: Float32Array[] | null = null;
-
-  @state()
   private _melodyPlayer: MelodyPlayer | null = null;
 
   @state()
@@ -733,7 +632,6 @@ export class UvmWaveformEditor extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this._resizeObserver?.disconnect();
-    this._removeGlobalListeners();
     this._removeCanvasListeners();
     this._stopPlayback();
     this._stopPreview();
@@ -754,27 +652,17 @@ export class UvmWaveformEditor extends LitElement {
       this._containerWidth = this._canvasWrapper.clientWidth || 800;
     }
     this._updateCanvasWidth();
-    this._drawWaveform();
-    this._drawSpectrogram();
 
     // Add keyboard listener
     this.addEventListener('keydown', this._onKeyDown);
     this.tabIndex = 0;
   }
 
-  updated(changedProperties: PropertyValues): void {
-    if (changedProperties.has('audioBuffer')) {
-      this._computeSpectrogram();
-    }
+  updated(changedProperties: Map<string, unknown>): void {
     if (
-      changedProperties.has('audioBuffer') ||
-      changedProperties.has('zoom') ||
-      changedProperties.has('height') ||
-      changedProperties.has('spectrogramHeight')
+      changedProperties.has('zoom')
     ) {
       this._updateCanvasWidth();
-      this._drawWaveform();
-      this._drawSpectrogram();
     }
   }
 
@@ -782,8 +670,6 @@ export class UvmWaveformEditor extends LitElement {
     for (const entry of entries) {
       this._containerWidth = entry.contentRect.width;
       this._updateCanvasWidth();
-      this._drawWaveform();
-      this._drawSpectrogram();
     }
   }
 
@@ -792,325 +678,6 @@ export class UvmWaveformEditor extends LitElement {
     // At higher zoom levels, canvas extends beyond container (with scrolling)
     // Audio data is scaled to fit the canvas width
     this._canvasWidth = Math.max(1, Math.floor(this._containerWidth * this.zoom));
-  }
-
-  private _drawWaveform(): void {
-    if (!this._canvas) return;
-
-    const ctx = this._canvas.getContext('2d');
-    if (!ctx) return;
-
-    const width = this._canvasWidth;
-    const height = this.height;
-    const dpr = window.devicePixelRatio || 1;
-
-    // Set canvas size with device pixel ratio for crisp rendering
-    this._canvas.width = width * dpr;
-    this._canvas.height = height * dpr;
-    this._canvas.style.width = `${width}px`;
-    this._canvas.style.height = `${height}px`;
-    ctx.scale(dpr, dpr);
-
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
-
-    if (!this.audioBuffer) {
-      return;
-    }
-
-    // Get audio data (use first channel)
-    const channelData = this.audioBuffer.getChannelData(0);
-    const samples = channelData.length;
-
-    // Calculate samples per pixel
-    const samplesPerPixel = samples / width;
-
-    // Draw waveform
-    const centerY = height / 2;
-    const amplitude = height / 2 - 10;
-
-    // Use semi-transparent blue for waveform
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
-    ctx.beginPath();
-    ctx.moveTo(0, centerY);
-
-    // Draw upper half with power curve scaling for more dramatic waveform
-    for (let x = 0; x < width; x++) {
-      const startSample = Math.floor(x * samplesPerPixel);
-      const endSample = Math.min(Math.floor((x + 1) * samplesPerPixel), samples);
-
-      let max = 0;
-      for (let i = startSample; i < endSample; i++) {
-        const absValue = Math.abs(channelData[i]);
-        if (absValue > max) max = absValue;
-      }
-
-      // Apply power curve to boost quiet content (0.4 exponent compresses dynamic range)
-      const scaledMax = Math.pow(max, 0.4);
-      const y = centerY - scaledMax * amplitude;
-      ctx.lineTo(x, y);
-    }
-
-    // Draw lower half (mirror) with power curve scaling
-    for (let x = width - 1; x >= 0; x--) {
-      const startSample = Math.floor(x * samplesPerPixel);
-      const endSample = Math.min(Math.floor((x + 1) * samplesPerPixel), samples);
-
-      let max = 0;
-      for (let i = startSample; i < endSample; i++) {
-        const absValue = Math.abs(channelData[i]);
-        if (absValue > max) max = absValue;
-      }
-
-      // Apply power curve to boost quiet content (0.4 exponent compresses dynamic range)
-      const scaledMax = Math.pow(max, 0.4);
-      const y = centerY + scaledMax * amplitude;
-      ctx.lineTo(x, y);
-    }
-
-    ctx.closePath();
-    ctx.fill();
-
-    // Draw center line
-    ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, centerY);
-    ctx.lineTo(width, centerY);
-    ctx.stroke();
-  }
-
-  /**
-   * White to blue gradient for spectrogram coloring.
-   * Maps a value from 0-1 to an RGB color string matching the waveform color.
-   * t=0 -> white (255, 255, 255)
-   * t=1 -> blue (59, 130, 246) - matches waveform color
-   */
-  private _spectrogramColor(t: number): string {
-    // Clamp to [0, 1]
-    t = Math.max(0, Math.min(1, t));
-
-    // White to blue gradient matching waveform
-    const r = Math.round(255 - t * (255 - 59));
-    const g = Math.round(255 - t * (255 - 130));
-    const b = Math.round(255 - t * (255 - 246));
-
-    return `rgb(${r},${g},${b})`;
-  }
-
-  /**
-   * Compute spectrogram data from audio buffer using FFT.
-   * This is called when audioBuffer changes.
-   */
-  private _computeSpectrogram(): void {
-    if (!this.audioBuffer) {
-      this._spectrogramData = null;
-      return;
-    }
-
-    const channelData = this.audioBuffer.getChannelData(0);
-    const sampleRate = this.audioBuffer.sampleRate;
-    const fftSize = 2048;
-    const hopSize = Math.floor(fftSize / 4); // 75% overlap
-
-    // Number of frequency bins we care about (up to ~8kHz for voice)
-    const maxFreq = 8000;
-    const nyquist = sampleRate / 2;
-    const numBins = Math.min(fftSize / 2, Math.floor((maxFreq / nyquist) * (fftSize / 2)));
-
-    // Number of time frames
-    const numFrames = Math.floor((channelData.length - fftSize) / hopSize) + 1;
-
-    if (numFrames <= 0) {
-      this._spectrogramData = null;
-      return;
-    }
-
-    // Pre-compute Hanning window
-    const window = new Float32Array(fftSize);
-    for (let i = 0; i < fftSize; i++) {
-      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (fftSize - 1)));
-    }
-
-    // Compute FFT for each frame
-    const spectrogramData: Float32Array[] = [];
-
-    for (let frame = 0; frame < numFrames; frame++) {
-      const startSample = frame * hopSize;
-
-      // Extract and window the frame
-      const real = new Float32Array(fftSize);
-      const imag = new Float32Array(fftSize);
-
-      for (let i = 0; i < fftSize; i++) {
-        real[i] = channelData[startSample + i] * window[i];
-        imag[i] = 0;
-      }
-
-      // In-place FFT
-      this._fft(real, imag);
-
-      // Compute magnitude spectrum (only positive frequencies)
-      const magnitudes = new Float32Array(numBins);
-      for (let i = 0; i < numBins; i++) {
-        const mag = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
-        // Convert to dB scale with some normalization
-        magnitudes[i] = 20 * Math.log10(Math.max(mag, 1e-10));
-      }
-
-      spectrogramData.push(magnitudes);
-    }
-
-    // Normalize spectrogram data to 0-1 range
-    let minVal = Infinity;
-    let maxVal = -Infinity;
-
-    for (const frame of spectrogramData) {
-      for (let i = 0; i < frame.length; i++) {
-        if (frame[i] < minVal) minVal = frame[i];
-        if (frame[i] > maxVal) maxVal = frame[i];
-      }
-    }
-
-    const range = maxVal - minVal || 1;
-
-    for (const frame of spectrogramData) {
-      for (let i = 0; i < frame.length; i++) {
-        frame[i] = (frame[i] - minVal) / range;
-      }
-    }
-
-    this._spectrogramData = spectrogramData;
-  }
-
-  /**
-   * Simple in-place Cooley-Tukey FFT implementation.
-   * Operates on real and imaginary arrays of power-of-2 length.
-   */
-  private _fft(real: Float32Array, imag: Float32Array): void {
-    const n = real.length;
-
-    if (n <= 1) return;
-
-    // Bit-reversal permutation
-    let j = 0;
-    for (let i = 0; i < n - 1; i++) {
-      if (i < j) {
-        // Swap real[i] and real[j]
-        let temp = real[i];
-        real[i] = real[j];
-        real[j] = temp;
-        // Swap imag[i] and imag[j]
-        temp = imag[i];
-        imag[i] = imag[j];
-        imag[j] = temp;
-      }
-      let k = n >> 1;
-      while (k <= j) {
-        j -= k;
-        k >>= 1;
-      }
-      j += k;
-    }
-
-    // Cooley-Tukey iterative FFT
-    for (let len = 2; len <= n; len <<= 1) {
-      const halfLen = len >> 1;
-      const angle = -2 * Math.PI / len;
-      const wReal = Math.cos(angle);
-      const wImag = Math.sin(angle);
-
-      for (let i = 0; i < n; i += len) {
-        let curReal = 1;
-        let curImag = 0;
-
-        for (let k = 0; k < halfLen; k++) {
-          const evenIdx = i + k;
-          const oddIdx = i + k + halfLen;
-
-          const tReal = curReal * real[oddIdx] - curImag * imag[oddIdx];
-          const tImag = curReal * imag[oddIdx] + curImag * real[oddIdx];
-
-          real[oddIdx] = real[evenIdx] - tReal;
-          imag[oddIdx] = imag[evenIdx] - tImag;
-          real[evenIdx] = real[evenIdx] + tReal;
-          imag[evenIdx] = imag[evenIdx] + tImag;
-
-          // Update twiddle factor
-          const newReal = curReal * wReal - curImag * wImag;
-          const newImag = curReal * wImag + curImag * wReal;
-          curReal = newReal;
-          curImag = newImag;
-        }
-      }
-    }
-  }
-
-  /**
-   * Draw the spectrogram visualization.
-   * Uses power curve and noise floor for better visual contrast.
-   */
-  private _drawSpectrogram(): void {
-    if (!this._spectrogramCanvas) return;
-
-    const ctx = this._spectrogramCanvas.getContext('2d');
-    if (!ctx) return;
-
-    const width = this._canvasWidth;
-    const height = this.spectrogramHeight;
-    const dpr = window.devicePixelRatio || 1;
-
-    // Set canvas size with device pixel ratio
-    this._spectrogramCanvas.width = width * dpr;
-    this._spectrogramCanvas.height = height * dpr;
-    this._spectrogramCanvas.style.width = `${width}px`;
-    this._spectrogramCanvas.style.height = `${height}px`;
-    ctx.scale(dpr, dpr);
-
-    // Fill with white background (low intensity = white)
-    ctx.fillStyle = this._spectrogramColor(0);
-    ctx.fillRect(0, 0, width, height);
-
-    if (!this._spectrogramData || this._spectrogramData.length === 0) {
-      return;
-    }
-
-    const numFrames = this._spectrogramData.length;
-    const numBins = this._spectrogramData[0].length;
-
-    // Calculate pixel dimensions for each cell
-    const cellWidth = width / numFrames;
-    const cellHeight = height / numBins;
-
-    // Noise floor threshold - values below this map to darkest color
-    const noiseFloor = 0.15;
-    // Power curve exponent - lower values boost mid-range visibility
-    const powerCurve = 0.45;
-
-    // Draw spectrogram cells
-    for (let frame = 0; frame < numFrames; frame++) {
-      const x = frame * cellWidth;
-      const frameData = this._spectrogramData[frame];
-
-      for (let bin = 0; bin < numBins; bin++) {
-        // Flip y-axis so low frequencies are at bottom
-        const y = height - (bin + 1) * cellHeight;
-        let value = frameData[bin];
-
-        // Apply noise floor cutoff
-        if (value < noiseFloor) {
-          value = 0;
-        } else {
-          // Rescale above noise floor to 0-1 range
-          value = (value - noiseFloor) / (1 - noiseFloor);
-          // Apply power curve to boost mid-range values (sqrt-like effect)
-          value = Math.pow(value, powerCurve);
-        }
-
-        ctx.fillStyle = this._spectrogramColor(value);
-        ctx.fillRect(x, y, Math.ceil(cellWidth), Math.ceil(cellHeight));
-      }
-    }
   }
 
   /**
@@ -1145,18 +712,6 @@ export class UvmWaveformEditor extends LitElement {
     return this._msToPixel(effectiveMs);
   }
 
-  private _onMarkerMouseDown(e: MouseEvent, markerName: string): void {
-    e.preventDefault();
-    this._draggingMarker = markerName;
-
-    // Store starting value to detect actual movement
-    this._dragStartValue = this._getMarkerValue(markerName);
-
-    // Add global listeners for drag
-    document.addEventListener('mousemove', this._onMouseMove);
-    document.addEventListener('mouseup', this._onMouseUp);
-  }
-
   /**
    * Get the current value (in ms) of a marker by name.
    */
@@ -1177,12 +732,25 @@ export class UvmWaveformEditor extends LitElement {
     }
   }
 
-  private _onMouseMove = (e: MouseEvent): void => {
-    if (!this._draggingMarker || !this._canvasWrapper) return;
+  // ==================== Marker Drag Event Handlers ====================
+
+  /**
+   * Handle marker drag start event from uvm-marker-handle.
+   */
+  private _onMarkerDragStart(e: CustomEvent<MarkerDragDetail>): void {
+    this._draggingMarker = e.detail.name;
+    this._dragStartValue = this._getMarkerValue(e.detail.name);
+  }
+
+  /**
+   * Handle marker drag event from uvm-marker-handle.
+   */
+  private _onMarkerDrag(e: CustomEvent<MarkerDragDetail>): void {
+    if (!this._draggingMarker || !this._canvasWrapper || e.detail.clientX === undefined) return;
 
     const rect = this._canvasWrapper.getBoundingClientRect();
     const scrollLeft = this._canvasWrapper.scrollLeft;
-    const x = e.clientX - rect.left + scrollLeft;
+    const x = e.detail.clientX - rect.left + scrollLeft;
 
     // Clamp to canvas bounds
     const clampedX = Math.max(0, Math.min(x, this._canvasWidth));
@@ -1194,14 +762,19 @@ export class UvmWaveformEditor extends LitElement {
       const duration = this.audioBuffer.duration * 1000;
       const msFromStart = this._pixelToMs(clampedX);
       newValue = Math.round(msFromStart - duration);
+      // Clamp cutoff to valid range
+      newValue = Math.min(0, Math.max(-duration, newValue));
     } else {
-      newValue = this._pixelToMs(clampedX);
+      newValue = Math.round(Math.max(0, this._pixelToMs(clampedX)));
     }
 
     this._emitMarkerChange(this._draggingMarker, newValue);
-  };
+  }
 
-  private _onMouseUp = (): void => {
+  /**
+   * Handle marker drag end event from uvm-marker-handle.
+   */
+  private _onMarkerDragEnd(_e: CustomEvent<MarkerDragDetail>): void {
     const markerName = this._draggingMarker;
     const startValue = this._dragStartValue;
 
@@ -1213,16 +786,13 @@ export class UvmWaveformEditor extends LitElement {
       if (moved) {
         this._playMarkerPreview(markerName, endValue);
       }
+
+      // Select this marker for keyboard nudging
+      this._selectedMarker = markerName;
     }
 
     this._draggingMarker = null;
     this._dragStartValue = null;
-    this._removeGlobalListeners();
-  };
-
-  private _removeGlobalListeners(): void {
-    document.removeEventListener('mousemove', this._onMouseMove);
-    document.removeEventListener('mouseup', this._onMouseUp);
   }
 
   // ==================== Click-to-Seek Methods ====================
@@ -1276,9 +846,13 @@ export class UvmWaveformEditor extends LitElement {
   /**
    * Seek playback to the clicked position on the waveform.
    * Starts playback from the clicked position to the cutoff point.
+   * Also clears any selected marker.
    */
   private _seekToClickPosition(e: MouseEvent): void {
     if (!this.audioBuffer || !this._canvasWrapper) return;
+
+    // Clear selected marker when clicking on the waveform background
+    this._selectedMarker = null;
 
     // Calculate X position relative to canvas
     const rect = this._canvasWrapper.getBoundingClientRect();
@@ -1473,12 +1047,26 @@ export class UvmWaveformEditor extends LitElement {
         this._zoomOut();
         break;
       case 'ArrowLeft':
-        e.preventDefault();
-        this._panLeft();
-        break;
       case 'ArrowRight':
         e.preventDefault();
-        this._panRight();
+        // If a marker is selected, nudge it; otherwise pan
+        if (this._selectedMarker) {
+          this._nudgeSelectedMarker(e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey);
+        } else {
+          if (e.key === 'ArrowLeft') {
+            this._panLeft();
+          } else {
+            this._panRight();
+          }
+        }
+        break;
+      case 'ArrowUp':
+      case 'ArrowDown':
+        // Cycle through markers when one is selected
+        if (this._selectedMarker) {
+          e.preventDefault();
+          this._cycleSelectedMarker(e.key === 'ArrowUp' ? -1 : 1);
+        }
         break;
       case ' ':
         e.preventDefault();
@@ -1489,11 +1077,20 @@ export class UvmWaveformEditor extends LitElement {
         this._stopPlayback();
         this._stopPreview();
         this._stopMarkerPreview();
+        // Also deselect marker on Escape
+        this._selectedMarker = null;
         break;
       case 'p':
       case 'P':
         e.preventDefault();
         this._togglePreview();
+        break;
+      case 'Tab':
+        // Allow Tab to cycle through markers without preventing default navigation
+        if (this.audioBuffer) {
+          e.preventDefault();
+          this._cycleSelectedMarker(e.shiftKey ? -1 : 1);
+        }
         break;
     }
   };
@@ -1528,6 +1125,67 @@ export class UvmWaveformEditor extends LitElement {
     if (this._canvasWrapper) {
       this._canvasWrapper.scrollLeft += 50;
     }
+  }
+
+  /**
+   * List of marker names in order for cycling.
+   */
+  private readonly _markerOrder = ['offset', 'overlap', 'preutterance', 'consonant', 'cutoff'];
+
+  /**
+   * Nudge the selected marker by a delta amount.
+   * @param direction - Direction to nudge (-1 for left, +1 for right)
+   * @param large - Whether to use large step (10ms) or small step (1ms)
+   */
+  private _nudgeSelectedMarker(direction: number, large: boolean): void {
+    if (!this._selectedMarker || !this.audioBuffer) return;
+
+    const step = large ? 10 : 1;
+    const delta = direction * step;
+    const currentValue = this._getMarkerValue(this._selectedMarker);
+    const duration = this.audioBuffer.duration * 1000;
+
+    let newValue: number;
+
+    if (this._selectedMarker === 'cutoff') {
+      // Cutoff is negative from end
+      newValue = currentValue + delta;
+      // Clamp cutoff to valid range (must be negative or zero)
+      newValue = Math.min(0, Math.max(-duration, newValue));
+    } else {
+      // Other markers are positive from start
+      newValue = currentValue + delta;
+      // Clamp to valid range
+      newValue = Math.max(0, Math.min(duration, newValue));
+    }
+
+    // Only emit if value changed
+    if (newValue !== currentValue) {
+      this._emitMarkerChange(this._selectedMarker, Math.round(newValue));
+    }
+  }
+
+  /**
+   * Cycle to the next or previous marker.
+   * @param direction - Direction to cycle (-1 for previous, +1 for next)
+   */
+  private _cycleSelectedMarker(direction: number): void {
+    if (!this.audioBuffer) return;
+
+    const currentIndex = this._selectedMarker
+      ? this._markerOrder.indexOf(this._selectedMarker)
+      : -1;
+
+    let nextIndex: number;
+    if (currentIndex === -1) {
+      // No marker selected, start with first or last
+      nextIndex = direction > 0 ? 0 : this._markerOrder.length - 1;
+    } else {
+      // Cycle to next/previous
+      nextIndex = (currentIndex + direction + this._markerOrder.length) % this._markerOrder.length;
+    }
+
+    this._selectedMarker = this._markerOrder[nextIndex];
   }
 
   // ==================== Playback Methods ====================
@@ -1864,45 +1522,52 @@ export class UvmWaveformEditor extends LitElement {
     `;
   }
 
-  private _renderMarker(name: string, pixelPosition: number): unknown {
-    const config = MARKER_CONFIGS[name];
-    if (!config) return null;
+  /**
+   * Render all 5 oto.ini markers using uvm-marker-handle components.
+   */
+  private _renderMarkers(): unknown {
+    if (!this.audioBuffer) return null;
 
-    const value = name === 'cutoff' ? this.cutoff : (this as unknown as Record<string, number>)[name];
-    const isDragging = this._draggingMarker === name;
-    const waveformHeight = this.height;
-    const spectrogramHeight = this.spectrogramHeight;
-    const totalHeight = waveformHeight + this._dividerHeight + spectrogramHeight;
-    // Position label in the middle of waveform section
-    const labelBottom = spectrogramHeight + this._dividerHeight + 8;
+    const markers = [
+      { name: 'offset', position: this._msToPixel(this.offset), value: this.offset },
+      { name: 'consonant', position: this._msToPixel(this.consonant), value: this.consonant },
+      { name: 'cutoff', position: this._getCutoffPixel(), value: this.cutoff },
+      { name: 'preutterance', position: this._msToPixel(this.preutterance), value: this.preutterance },
+      { name: 'overlap', position: this._msToPixel(this.overlap), value: this.overlap },
+    ];
 
-    return html`
-      <div
-        class="marker ${isDragging ? 'dragging' : ''}"
-        style="left: ${pixelPosition}px; transform: translateX(-50%); color: ${config.color}; height: ${totalHeight}px;"
-        @mousedown=${(e: MouseEvent) => this._onMarkerMouseDown(e, name)}
-      >
-        <!-- Waveform section: solid line -->
-        <div
-          class="marker-line-waveform"
-          style="background-color: ${config.color}; height: ${waveformHeight}px;"
-        ></div>
-        <!-- Spectrogram section: dashed/transparent line -->
-        <div
-          class="marker-line-spectrogram"
-          style="color: ${config.color}; height: ${spectrogramHeight + this._dividerHeight}px;"
-        ></div>
-        <!-- Handle at top of waveform only -->
-        <div class="marker-handle" style="background-color: ${config.color};">
-          ${config.icon}
-        </div>
-        <!-- Label positioned in waveform area -->
-        <div class="marker-label" style="background-color: ${config.color}; bottom: ${labelBottom}px;">
-          ${config.label}: ${this._formatTime(value)}
-          <span class="marker-label-hint">${config.hint}</span>
-        </div>
-      </div>
-    `;
+    return markers.map((m) => {
+      const config = MARKER_CONFIGS[m.name];
+      const isSelected = this._selectedMarker === m.name;
+      const isDragging = this._draggingMarker === m.name;
+      return html`
+        <uvm-marker-handle
+          name=${m.name}
+          label=${config.label}
+          icon=${config.icon}
+          hint=${isSelected ? 'Arrow keys to nudge' : config.hint}
+          color=${config.color}
+          .position=${m.position}
+          .value=${m.value}
+          .waveformHeight=${this.height}
+          .spectrogramHeight=${this.spectrogramHeight}
+          .dividerHeight=${this._dividerHeight}
+          ?dragging=${isDragging}
+          ?selected=${isSelected}
+          @uvm-marker:dragstart=${this._onMarkerDragStart}
+          @uvm-marker:drag=${this._onMarkerDrag}
+          @uvm-marker:dragend=${this._onMarkerDragEnd}
+        ></uvm-marker-handle>
+      `;
+    });
+  }
+
+  /**
+   * Render the playhead indicator.
+   */
+  private _renderPlayhead(): unknown {
+    if (!this._isPlaying) return null;
+    return html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`;
   }
 
   render() {
@@ -1951,7 +1616,9 @@ export class UvmWaveformEditor extends LitElement {
             </button>
           </div>
           <div class="controls-divider"></div>
-          <span class="keyboard-hint">Click to seek | Space play | P preview | +/- zoom</span>
+          <span class="keyboard-hint">${this._selectedMarker
+            ? `${MARKER_CONFIGS[this._selectedMarker].label}: Arrow nudge | Shift+Arrow 10ms | Tab next`
+            : 'Click to seek | Space play | P preview | Tab select marker'}</span>
           <span class="time-display">${this._formatTime(duration)}</span>
         </div>
 
@@ -1967,8 +1634,12 @@ export class UvmWaveformEditor extends LitElement {
                 <div class="canvas-wrapper">
                   <div class="canvas-area" style="width: ${this._canvasWidth}px; cursor: pointer;" @mousedown=${this._onCanvasMouseDown}>
                     <!-- Waveform Section -->
-                    <div class="waveform-section">
-                      <canvas class="waveform-canvas"></canvas>
+                    <div class="waveform-section" style="height: ${this.height}px;">
+                      <uvm-waveform-canvas
+                        .audioBuffer=${this.audioBuffer}
+                        .width=${this._canvasWidth}
+                        .height=${this.height}
+                      ></uvm-waveform-canvas>
                     </div>
 
                     <!-- Section Divider -->
@@ -1977,8 +1648,12 @@ export class UvmWaveformEditor extends LitElement {
                     </div>
 
                     <!-- Spectrogram Section -->
-                    <div class="spectrogram-section">
-                      <canvas class="spectrogram-canvas"></canvas>
+                    <div class="spectrogram-section" style="height: ${this.spectrogramHeight}px;">
+                      <uvm-spectrogram
+                        .audioBuffer=${this.audioBuffer}
+                        .width=${this._canvasWidth}
+                        .height=${this.spectrogramHeight}
+                      ></uvm-spectrogram>
                       <!-- Frequency axis labels -->
                       <div class="freq-axis">
                         <span class="freq-label">8k</span>
@@ -1990,14 +1665,8 @@ export class UvmWaveformEditor extends LitElement {
                     <!-- Markers Layer spans both sections -->
                     <div class="markers-layer" style="height: ${this.height + this._dividerHeight + this.spectrogramHeight}px;">
                       ${this._renderRegions()}
-                      ${this._renderMarker('offset', this._msToPixel(this.offset))}
-                      ${this._renderMarker('consonant', this._msToPixel(this.consonant))}
-                      ${this._renderMarker('cutoff', this._getCutoffPixel())}
-                      ${this._renderMarker('preutterance', this._msToPixel(this.preutterance))}
-                      ${this._renderMarker('overlap', this._msToPixel(this.overlap))}
-                      ${this._isPlaying
-                        ? html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`
-                        : null}
+                      ${this._renderMarkers()}
+                      ${this._renderPlayhead()}
                     </div>
                   </div>
                 </div>
