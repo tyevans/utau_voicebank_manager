@@ -412,6 +412,14 @@ export class UvmRecordingPrompter extends LitElement {
       text-align: center;
     }
 
+    .fallback-message code {
+      background-color: var(--sl-color-neutral-200, #e2e8f0);
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+    }
+
     /* Notes: Removed during recording to reduce cognitive load */
     .notes-section {
       display: none;
@@ -525,6 +533,9 @@ export class UvmRecordingPrompter extends LitElement {
   private _speechSupported = true;
 
   @state()
+  private _isFirefox = false;
+
+  @state()
   private _micPermissionGranted = false;
 
   @state()
@@ -584,9 +595,12 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
-   * Check if Web Speech API is supported.
+   * Check if Web Speech API is supported and detect Firefox.
    */
   private _checkSpeechSupport(): void {
+    // Detect Firefox browser
+    this._isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
+
     const SpeechRecognitionClass =
       (window as unknown as { SpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition ||
       (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition;
@@ -1651,7 +1665,17 @@ export class UvmRecordingPrompter extends LitElement {
         ${!this._speechSupported && html`
           <div class="fallback-message">
             <sl-icon name="exclamation-triangle"></sl-icon>
-            Web Speech API is not supported. Word tracking will not be available, but recording will still work.
+            ${this._isFirefox ? html`
+              <span>
+                <strong>Firefox detected:</strong> Speech recognition requires experimental flags.
+                Go to <code>about:config</code> and enable
+                <code>media.webspeech.recognition.enable</code> and
+                <code>media.webspeech.recognition.force_enable</code>, then reload.
+                Recording still works without it.
+              </span>
+            ` : html`
+              <span>Web Speech API is not supported. Word tracking will not be available, but recording will still work.</span>
+            `}
           </div>
         `}
 
