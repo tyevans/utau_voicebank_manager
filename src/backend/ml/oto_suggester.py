@@ -188,7 +188,7 @@ class OtoSuggester:
             consonant_end = self._estimate_consonant_end(segments, classification)
             preutterance = self._estimate_preutterance(segments, classification)
             cutoff = self._estimate_cutoff(audio_duration_ms, segments)
-            overlap = self._estimate_overlap(preutterance)
+            overlap = self._estimate_overlap(offset, preutterance)
         else:
             # Use reasonable defaults
             logger.info(
@@ -413,17 +413,17 @@ class OtoSuggester:
         segments: list[PhonemeSegment],
         classification: dict[str, list[PhonemeSegment]],
     ) -> float:
-        """Estimate preutterance value (consonant duration).
+        """Estimate preutterance position (absolute position from audio start).
 
-        Preutterance defines how early to start the sample before the note begins.
-        Typically corresponds to the consonant duration.
+        Preutterance is the absolute position where the note timing aligns,
+        typically at or near the consonant-vowel boundary.
 
         Args:
             segments: List of detected phoneme segments
             classification: Phoneme classification result
 
         Returns:
-            Estimated preutterance in milliseconds
+            Estimated preutterance position in milliseconds (from audio start)
         """
         if not segments:
             return DEFAULT_PREUTTERANCE_MS
@@ -431,51 +431,59 @@ class OtoSuggester:
         consonants = classification.get("consonants", [])
         vowels = classification.get("vowels", [])
 
-        # Standard case: preutterance = duration of initial consonant(s)
+        # Standard case: preutterance = position at consonant-vowel boundary
         if consonants and vowels:
             first_vowel = min(vowels, key=lambda s: s.start_ms)
 
-            # Sum up consonants before the first vowel
-            consonant_duration = 0.0
-            for c in consonants:
-                if c.end_ms <= first_vowel.start_ms:
-                    consonant_duration += c.duration_ms
+            # Find last consonant before the first vowel
+            consonants_before_vowel = [
+                c for c in consonants if c.end_ms <= first_vowel.start_ms
+            ]
 
-            if consonant_duration > 0:
-                return consonant_duration
+            if consonants_before_vowel:
+                # Preutterance is at the end of the last consonant (CV boundary)
+                last_consonant = max(consonants_before_vowel, key=lambda s: s.end_ms)
+                return last_consonant.end_ms
 
-            # Consonants might overlap with or follow vowel
-            # Use first segment end as preutterance
-            return segments[0].end_ms - segments[0].start_ms
+            # No consonant before vowel - preutterance at vowel start
+            return first_vowel.start_ms
 
         elif consonants:
-            # Only consonants - use total consonant duration
-            total = sum(c.duration_ms for c in consonants)
-            return min(total, 200)  # Cap at reasonable value
+            # Only consonants - preutterance at end of last consonant
+            last_consonant = max(consonants, key=lambda s: s.end_ms)
+            return last_consonant.end_ms
 
         elif vowels:
-            # Only vowels - use a small default
-            return DEFAULT_PREUTTERANCE_MS / 2
+            # Only vowels - preutterance at first vowel start
+            first_vowel = min(vowels, key=lambda s: s.start_ms)
+            return first_vowel.start_ms
 
-        # Fallback
-        return DEFAULT_PREUTTERANCE_MS
+        # Fallback: use first segment end
+        return segments[0].end_ms if segments else DEFAULT_PREUTTERANCE_MS
 
-    def _estimate_overlap(self, preutterance: float) -> float:
-        """Estimate overlap value based on preutterance.
+    def _estimate_overlap(self, offset: float, preutterance: float) -> float:
+        """Estimate overlap position (absolute position from audio start).
 
-        Overlap defines the crossfade duration with the previous note.
-        Typically a fraction of preutterance.
+        Overlap is the position where crossfade with the previous note occurs,
+        typically positioned between offset and preutterance.
 
         Args:
-            preutterance: Estimated preutterance value
+            offset: Estimated offset position (from audio start)
+            preutterance: Estimated preutterance position (from audio start)
 
         Returns:
-            Estimated overlap in milliseconds
+            Estimated overlap position in milliseconds (from audio start)
         """
-        overlap = preutterance * OVERLAP_RATIO
+        # Overlap is typically positioned between offset and preutterance
+        # Use OVERLAP_RATIO to position it partway between them
+        if preutterance <= offset:
+            # Edge case: preutterance at or before offset
+            return offset
 
-        # Ensure reasonable bounds
-        return max(10, min(overlap, 80))
+        # Position overlap at OVERLAP_RATIO of the way from offset to preutterance
+        overlap = offset + (preutterance - offset) * OVERLAP_RATIO
+
+        return overlap
 
     def _estimate_cutoff(
         self, audio_duration_ms: float, segments: list[PhonemeSegment]

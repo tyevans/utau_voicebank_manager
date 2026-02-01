@@ -204,8 +204,8 @@ class TestParameterEstimation:
 
         preutterance = suggester._estimate_preutterance(segments, classification)
 
-        # Should be consonant duration: 60 - 20 = 40
-        assert preutterance == 40.0
+        # Should be absolute position at consonant-vowel boundary: 60.0
+        assert preutterance == 60.0
 
     def test_estimate_preutterance_empty(self, suggester: OtoSuggester) -> None:
         """Test preutterance estimation with no segments."""
@@ -214,21 +214,23 @@ class TestParameterEstimation:
         assert preutterance == DEFAULT_PREUTTERANCE_MS
 
     def test_estimate_overlap(self, suggester: OtoSuggester) -> None:
-        """Test overlap estimation from preutterance."""
-        overlap = suggester._estimate_overlap(100.0)
+        """Test overlap estimation as position between offset and preutterance."""
+        # offset=20, preutterance=100
+        overlap = suggester._estimate_overlap(20.0, 100.0)
 
-        # Should be 40% of preutterance
-        assert overlap == 40.0
+        # Should be positioned 40% of the way from offset to preutterance
+        # 20 + (100 - 20) * 0.4 = 20 + 32 = 52
+        assert overlap == 52.0
 
-    def test_estimate_overlap_bounds(self, suggester: OtoSuggester) -> None:
-        """Test overlap has minimum and maximum bounds."""
-        # Very small preutterance
-        overlap_min = suggester._estimate_overlap(10.0)
-        assert overlap_min >= 10  # Minimum bound
+    def test_estimate_overlap_position(self, suggester: OtoSuggester) -> None:
+        """Test overlap is always positioned between offset and preutterance."""
+        # Normal case
+        overlap = suggester._estimate_overlap(10.0, 100.0)
+        assert 10.0 <= overlap <= 100.0
 
-        # Very large preutterance
-        overlap_max = suggester._estimate_overlap(500.0)
-        assert overlap_max <= 80  # Maximum bound
+        # Edge case: preutterance at offset
+        overlap_edge = suggester._estimate_overlap(50.0, 50.0)
+        assert overlap_edge == 50.0
 
     def test_estimate_cutoff(self, suggester: OtoSuggester) -> None:
         """Test cutoff estimation finds end of sound."""
