@@ -1,15 +1,24 @@
 import { LitElement, html, css } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, state, query } from 'lit/decorators.js';
 
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/card/card.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
+import '@shoelace-style/shoelace/dist/components/skeleton/skeleton.js';
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/divider/divider.js';
+import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
+import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
+import '@shoelace-style/shoelace/dist/components/input/input.js';
+import '@shoelace-style/shoelace/dist/components/button/button.js';
+import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 
-import { api } from '../services/api.js';
+import { api, ApiError } from '../services/api.js';
 import type { VoicebankSummary } from '../services/types.js';
+import './uvm-upload-zone.js';
+import type { UvmUploadZone } from './uvm-upload-zone.js';
+import { UvmToastManager } from './uvm-toast-manager.js';
 
 /**
  * Sample browser component for selecting voicebank samples.
@@ -193,6 +202,32 @@ export class UvmSampleBrowser extends LitElement {
       color: var(--sl-color-neutral-500, #64748b);
     }
 
+    .skeleton-list {
+      padding: 0.5rem 0;
+    }
+
+    .skeleton-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.625rem 1rem;
+    }
+
+    .skeleton-icon {
+      flex-shrink: 0;
+    }
+
+    .skeleton-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .skeleton-item sl-skeleton {
+      --border-radius: var(--sl-border-radius-small);
+    }
+
     .error-state {
       display: flex;
       flex-direction: column;
@@ -239,6 +274,34 @@ export class UvmSampleBrowser extends LitElement {
       background-color: var(--sl-color-neutral-50, #f8fafc);
       border-top: 1px solid var(--sl-color-neutral-200, #e2e8f0);
     }
+
+    .panel-header-actions {
+      margin-left: auto;
+    }
+
+    .panel-header-actions sl-icon-button {
+      font-size: 1rem;
+    }
+
+    .panel-header-actions sl-icon-button::part(base) {
+      padding: 0.25rem;
+    }
+
+    .upload-dialog-body {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .upload-dialog-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+    }
+
+    .upload-alert {
+      margin-bottom: 1rem;
+    }
   `;
 
   @state()
@@ -268,6 +331,24 @@ export class UvmSampleBrowser extends LitElement {
   @state()
   private _sampleOtoMap: Map<string, boolean> = new Map();
 
+  @state()
+  private _showUploadDialog = false;
+
+  @state()
+  private _uploadName = '';
+
+  @state()
+  private _uploadFiles: File[] = [];
+
+  @state()
+  private _isUploading = false;
+
+  @state()
+  private _uploadError: string | null = null;
+
+  @query('uvm-upload-zone')
+  private _uploadZone!: UvmUploadZone;
+
   connectedCallback(): void {
     super.connectedCallback();
     this._fetchVoicebanks();
@@ -283,8 +364,10 @@ export class UvmSampleBrowser extends LitElement {
     try {
       this._voicebanks = await api.listVoicebanks();
     } catch (error) {
-      this._voicebanksError =
+      const errorMessage =
         error instanceof Error ? error.message : 'Failed to load voicebanks';
+      this._voicebanksError = errorMessage;
+      UvmToastManager.error('Failed to load voicebanks');
     } finally {
       this._loadingVoicebanks = false;
     }
@@ -317,8 +400,10 @@ export class UvmSampleBrowser extends LitElement {
       }
       this._sampleOtoMap = newOtoMap;
     } catch (error) {
-      this._samplesError =
+      const errorMessage =
         error instanceof Error ? error.message : 'Failed to load samples';
+      this._samplesError = errorMessage;
+      UvmToastManager.error('Failed to load samples');
     } finally {
       this._loadingSamples = false;
     }
@@ -478,6 +563,13 @@ export class UvmSampleBrowser extends LitElement {
         <div class="panel-header">
           <sl-icon name="folder2"></sl-icon>
           Voicebanks
+          <div class="panel-header-actions">
+            <sl-icon-button
+              name="plus-lg"
+              label="Upload voicebank"
+              @click=${this._openUploadDialog}
+            ></sl-icon-button>
+          </div>
         </div>
         <div class="panel-content">
           ${this._loadingVoicebanks
@@ -612,13 +704,22 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Render loading state.
+   * Render loading state with skeleton placeholders.
    */
-  private _renderLoadingState(message: string) {
+  private _renderLoadingState(_message: string) {
     return html`
-      <div class="loading-state">
-        <sl-spinner></sl-spinner>
-        <div class="loading-state-text">${message}</div>
+      <div class="skeleton-list">
+        ${[1, 2, 3, 4, 5].map(
+          () => html`
+            <div class="skeleton-item">
+              <sl-skeleton class="skeleton-icon" effect="pulse" style="width: 1.25rem; height: 1.25rem;"></sl-skeleton>
+              <div class="skeleton-content">
+                <sl-skeleton effect="pulse" style="width: 80%; height: 0.875rem;"></sl-skeleton>
+                <sl-skeleton effect="pulse" style="width: 40%; height: 0.75rem;"></sl-skeleton>
+              </div>
+            </div>
+          `
+        )}
       </div>
     `;
   }
@@ -678,7 +779,169 @@ export class UvmSampleBrowser extends LitElement {
       <div class="browser-container">
         ${this._renderVoicebanksPanel()} ${this._renderSamplesPanel()}
       </div>
+      ${this._renderUploadDialog()}
     `;
+  }
+
+  /**
+   * Render the upload dialog.
+   */
+  private _renderUploadDialog() {
+    return html`
+      <sl-dialog
+        label="Upload Voicebank"
+        ?open=${this._showUploadDialog}
+        @sl-request-close=${this._onUploadDialogClose}
+      >
+        <div class="upload-dialog-body">
+          ${this._uploadError
+            ? html`
+                <sl-alert class="upload-alert" variant="danger" open>
+                  <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
+                  ${this._uploadError}
+                </sl-alert>
+              `
+            : null}
+
+          <sl-input
+            label="Voicebank Name"
+            placeholder="My Voicebank"
+            .value=${this._uploadName}
+            @sl-input=${this._onUploadNameChange}
+            ?disabled=${this._isUploading}
+            required
+          ></sl-input>
+
+          <uvm-upload-zone
+            accept=".zip"
+            ?disabled=${this._isUploading}
+            ?uploading=${this._isUploading}
+            @files-selected=${this._onFilesSelected}
+          ></uvm-upload-zone>
+        </div>
+
+        <div slot="footer" class="upload-dialog-footer">
+          <sl-button
+            @click=${this._closeUploadDialog}
+            ?disabled=${this._isUploading}
+          >
+            Cancel
+          </sl-button>
+          <sl-button
+            variant="primary"
+            ?disabled=${!this._canUpload}
+            ?loading=${this._isUploading}
+            @click=${this._uploadVoicebank}
+          >
+            Upload
+          </sl-button>
+        </div>
+      </sl-dialog>
+    `;
+  }
+
+  /**
+   * Check if upload can proceed (name and files selected).
+   */
+  private get _canUpload(): boolean {
+    return (
+      this._uploadName.trim().length > 0 &&
+      this._uploadFiles.length > 0 &&
+      !this._isUploading
+    );
+  }
+
+  /**
+   * Open the upload dialog.
+   */
+  private _openUploadDialog(): void {
+    this._showUploadDialog = true;
+    this._uploadName = '';
+    this._uploadFiles = [];
+    this._uploadError = null;
+  }
+
+  /**
+   * Close the upload dialog.
+   */
+  private _closeUploadDialog(): void {
+    if (this._isUploading) return;
+    this._showUploadDialog = false;
+    this._uploadName = '';
+    this._uploadFiles = [];
+    this._uploadError = null;
+    this._uploadZone?.clearSelection();
+  }
+
+  /**
+   * Handle dialog close request (e.g., clicking overlay or pressing Escape).
+   */
+  private _onUploadDialogClose(e: Event): void {
+    if (this._isUploading) {
+      e.preventDefault();
+      return;
+    }
+    this._closeUploadDialog();
+  }
+
+  /**
+   * Handle upload name input change.
+   */
+  private _onUploadNameChange(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    this._uploadName = input.value;
+  }
+
+  /**
+   * Handle files selected from upload zone.
+   */
+  private _onFilesSelected(e: CustomEvent<{ files: FileList }>): void {
+    this._uploadFiles = Array.from(e.detail.files);
+    this._uploadError = null;
+  }
+
+  /**
+   * Upload the voicebank.
+   */
+  private async _uploadVoicebank(): Promise<void> {
+    if (!this._canUpload) return;
+
+    this._isUploading = true;
+    this._uploadError = null;
+
+    try {
+      const voicebank = await api.createVoicebank(this._uploadName.trim(), this._uploadFiles);
+
+      // Refresh voicebank list
+      await this._fetchVoicebanks();
+
+      // Close dialog and reset
+      this._showUploadDialog = false;
+      this._uploadName = '';
+      this._uploadFiles = [];
+      this._uploadZone?.clearSelection();
+
+      // Show success toast
+      UvmToastManager.success(`Voicebank "${voicebank.name}" uploaded successfully`);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.isConflict()) {
+          this._uploadError = 'A voicebank with this name already exists.';
+          UvmToastManager.error('A voicebank with this name already exists');
+        } else if (error.isValidationError()) {
+          this._uploadError = error.message || 'Invalid upload. Please check your file.';
+          UvmToastManager.error('Invalid upload. Please check your file.');
+        } else {
+          this._uploadError = error.message || 'Upload failed. Please try again.';
+          UvmToastManager.error(`Upload failed: ${error.message}`);
+        }
+      } else {
+        this._uploadError = 'An unexpected error occurred. Please try again.';
+        UvmToastManager.error('Upload failed unexpectedly');
+      }
+    } finally {
+      this._isUploading = false;
+    }
   }
 }
 

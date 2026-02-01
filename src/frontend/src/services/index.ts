@@ -14,6 +14,7 @@ export type {
   OtoEntry,
   OtoEntryCreate,
   OtoEntryUpdate,
+  OtoSuggestion,
   PhonemeSegment,
   Voicebank,
   VoicebankSummary,

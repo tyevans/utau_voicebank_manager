@@ -3,10 +3,17 @@ import { customElement, state } from 'lit/decorators.js';
 
 // Import Shoelace components used in this file
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
+import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
 
 // Set Shoelace base path for assets (icons, etc.)
 import { setBasePath } from '@shoelace-style/shoelace/dist/utilities/base-path.js';
 setBasePath('/node_modules/@shoelace-style/shoelace/dist');
+
+// Import the editor view component
+import './uvm-editor-view.js';
+
+// Import the toast manager for notifications
+import './uvm-toast-manager.js';
 
 /**
  * Root application component for UTAU Voicebank Manager.
@@ -32,7 +39,7 @@ export class UvmApp extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 1rem 2rem;
+      padding: 0.75rem 1.5rem;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -40,43 +47,32 @@ export class UvmApp extends LitElement {
 
     .app-title {
       margin: 0;
-      font-size: 1.5rem;
+      font-size: 1.25rem;
       font-weight: 600;
       display: flex;
       align-items: center;
       gap: 0.5rem;
     }
 
+    .app-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .app-header-actions sl-icon-button::part(base) {
+      color: white;
+      opacity: 0.8;
+    }
+
+    .app-header-actions sl-icon-button::part(base):hover {
+      opacity: 1;
+    }
+
     .app-main {
       flex: 1;
-      padding: 2rem;
-    }
-
-    .placeholder {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      min-height: 400px;
-      text-align: center;
-      color: #64748b;
-    }
-
-    .placeholder-icon {
-      font-size: 4rem;
-      margin-bottom: 1rem;
-      opacity: 0.5;
-    }
-
-    .placeholder-text {
-      font-size: 1.25rem;
-      margin-bottom: 0.5rem;
-    }
-
-    .placeholder-subtext {
-      font-size: 0.875rem;
-      opacity: 0.7;
+      padding: 1rem;
+      overflow: auto;
     }
   `;
 
@@ -96,23 +92,20 @@ export class UvmApp extends LitElement {
             <sl-icon name="music-note-beamed"></sl-icon>
             UTAU Voicebank Manager
           </h1>
+          <div class="app-header-actions">
+            <sl-icon-button
+              name="gear"
+              label="Settings"
+            ></sl-icon-button>
+          </div>
         </header>
 
         <main class="app-main">
           ${this._initialized
-            ? html`
-                <div class="placeholder">
-                  <div class="placeholder-icon">
-                    <sl-icon name="folder-plus"></sl-icon>
-                  </div>
-                  <p class="placeholder-text">Welcome to UTAU Voicebank Manager</p>
-                  <p class="placeholder-subtext">
-                    Create and manage voicebanks for UTAU and OpenUTAU synthesizers
-                  </p>
-                </div>
-              `
+            ? html`<uvm-editor-view></uvm-editor-view>`
             : html`<p>Loading...</p>`}
         </main>
+        <uvm-toast-manager></uvm-toast-manager>
       </div>
     `;
   }

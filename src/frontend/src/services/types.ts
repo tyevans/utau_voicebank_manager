@@ -117,3 +117,32 @@ export interface MlStatus {
   /** Name of the ML model being used */
   model?: string;
 }
+
+/**
+ * ML-suggested oto.ini parameters for a sample.
+ *
+ * Contains ML-suggested values for all oto parameters along with
+ * the detected phonemes used to generate the suggestions.
+ */
+export interface OtoSuggestion {
+  /** WAV filename (e.g., "_ka.wav") */
+  filename: string;
+  /** Phoneme alias (e.g., "- ka" for CV, "a ka" for VCV) */
+  alias: string;
+  /** Suggested playback start position in milliseconds */
+  offset: number;
+  /** Suggested fixed region end in milliseconds */
+  consonant: number;
+  /** Suggested playback end position (negative = from audio end) */
+  cutoff: number;
+  /** Suggested preutterance value in milliseconds */
+  preutterance: number;
+  /** Suggested overlap/crossfade duration in milliseconds */
+  overlap: number;
+  /** Overall confidence in the suggestion (0-1) */
+  confidence: number;
+  /** Phonemes detected in the audio (for transparency/debugging) */
+  phonemes_detected: PhonemeSegment[];
+  /** Total audio duration in milliseconds */
+  audio_duration_ms: number;
+}

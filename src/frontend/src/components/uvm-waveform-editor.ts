@@ -5,6 +5,7 @@ import { customElement, property, state, query } from 'lit/decorators.js';
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
+import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 
 /**
  * Marker configuration for oto.ini parameters.
@@ -227,6 +228,25 @@ export class UvmWaveformEditor extends LitElement {
       font-size: 0.875rem;
     }
 
+    .loading-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 150px;
+      gap: 0.75rem;
+      color: var(--sl-color-neutral-500, #64748b);
+    }
+
+    .loading-state sl-spinner {
+      font-size: 2rem;
+      --indicator-color: var(--sl-color-primary-500, #3b82f6);
+    }
+
+    .loading-state-text {
+      font-size: 0.875rem;
+    }
+
     .keyboard-hint {
       font-size: 0.75rem;
       color: var(--sl-color-neutral-400, #94a3b8);
@@ -339,6 +359,12 @@ export class UvmWaveformEditor extends LitElement {
    */
   @property({ type: Number })
   height = 150;
+
+  /**
+   * Whether the audio is currently loading.
+   */
+  @property({ type: Boolean })
+  loading = false;
 
   @query('canvas')
   private _canvas!: HTMLCanvasElement;
@@ -891,25 +917,32 @@ export class UvmWaveformEditor extends LitElement {
           <span class="time-display">Duration: ${this._formatTime(duration)}</span>
         </div>
 
-        ${this.audioBuffer
+        ${this.loading
           ? html`
-              <div class="canvas-wrapper">
-                <canvas></canvas>
-                <div class="markers-layer">
-                  ${this._renderMarker('offset', this._msToPixel(this.offset))}
-                  ${this._renderMarker('consonant', this._msToPixel(this.consonant))}
-                  ${this._renderMarker('cutoff', this._getCutoffPixel())}
-                  ${this._renderMarker('preutterance', this._msToPixel(this.preutterance))}
-                  ${this._renderMarker('overlap', this._msToPixel(this.overlap))}
-                  ${this._isPlaying
-                    ? html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`
-                    : null}
-                </div>
+              <div class="loading-state">
+                <sl-spinner></sl-spinner>
+                <span class="loading-state-text">Loading audio...</span>
               </div>
             `
-          : html`
-              <div class="empty-state">No audio loaded. Load an audio file to view the waveform.</div>
-            `}
+          : this.audioBuffer
+            ? html`
+                <div class="canvas-wrapper">
+                  <canvas></canvas>
+                  <div class="markers-layer">
+                    ${this._renderMarker('offset', this._msToPixel(this.offset))}
+                    ${this._renderMarker('consonant', this._msToPixel(this.consonant))}
+                    ${this._renderMarker('cutoff', this._getCutoffPixel())}
+                    ${this._renderMarker('preutterance', this._msToPixel(this.preutterance))}
+                    ${this._renderMarker('overlap', this._msToPixel(this.overlap))}
+                    ${this._isPlaying
+                      ? html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`
+                      : null}
+                  </div>
+                </div>
+              `
+            : html`
+                <div class="empty-state">No audio loaded. Load an audio file to view the waveform.</div>
+              `}
       </div>
     `;
   }

@@ -10,6 +10,7 @@ import type {
   OtoEntry,
   OtoEntryCreate,
   OtoEntryUpdate,
+  OtoSuggestion,
   PhonemeSegment,
   Voicebank,
   VoicebankSummary,
@@ -449,6 +450,38 @@ export class ApiClient {
    */
   async getMlStatus(): Promise<MlStatus> {
     return this.request<MlStatus>('/ml/status');
+  }
+
+  /**
+   * Get ML-suggested oto parameters for a sample.
+   *
+   * Uses phoneme detection to suggest appropriate timing parameters
+   * for the given audio file. The confidence score indicates how
+   * reliable the suggestions are.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @param filename - WAV filename within the voicebank
+   * @param alias - Optional alias override (auto-generated if not provided)
+   * @returns Suggested oto parameters with confidence score
+   * @throws {ApiError} 404 if voicebank or sample not found
+   * @throws {ApiError} 503 if ML model is not available
+   */
+  async suggestOto(
+    voicebankId: string,
+    filename: string,
+    alias?: string
+  ): Promise<OtoSuggestion> {
+    const params = new URLSearchParams({
+      voicebank_id: voicebankId,
+      filename,
+    });
+    if (alias) {
+      params.append('alias', alias);
+    }
+
+    return this.request<OtoSuggestion>(`/ml/oto/suggest?${params}`, {
+      method: 'POST',
+    });
   }
 }
 
