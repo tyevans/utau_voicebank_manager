@@ -11,7 +11,8 @@ import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
  *
  * A minimal top bar that provides:
  * - Breadcrumb navigation: voicebank name > sample name
- * - Quick actions: undo, redo, save
+ * - Quick actions: undo, redo, save, auto-advance toggle
+ * - Progress indicator showing configured samples
  * - Keyboard shortcuts for all actions
  *
  * The breadcrumb is clickable to open the sample browser overlay.
@@ -20,6 +21,7 @@ import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
  * @fires uvm-context-bar:undo - Fired when user clicks undo or presses Cmd/Ctrl+Z
  * @fires uvm-context-bar:redo - Fired when user clicks redo or presses Cmd/Ctrl+Shift+Z
  * @fires uvm-context-bar:save - Fired when user clicks save or presses Cmd/Ctrl+S
+ * @fires uvm-context-bar:auto-advance-toggle - Fired when user toggles auto-advance
  *
  * @example
  * ```html
@@ -29,8 +31,12 @@ import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
  *   .canUndo=${true}
  *   .canRedo=${false}
  *   .hasUnsavedChanges=${true}
+ *   .autoAdvance=${false}
+ *   .progressConfigured=${25}
+ *   .progressTotal=${100}
  *   @uvm-context-bar:browse=${this._openBrowser}
  *   @uvm-context-bar:save=${this._handleSave}
+ *   @uvm-context-bar:auto-advance-toggle=${this._toggleAutoAdvance}
  * ></uvm-context-bar>
  * ```
  */
@@ -162,6 +168,56 @@ export class UvmContextBar extends LitElement {
     .action-button:focus .keyboard-hint {
       opacity: 1;
     }
+
+    /* Auto-advance toggle */
+    .auto-advance-btn::part(base) {
+      color: var(--uvm-secondary, #9ca3af);
+      transition: color var(--uvm-duration-micro, 100ms) ease-out;
+    }
+
+    .auto-advance-btn::part(base):hover {
+      color: var(--uvm-primary, #1f2937);
+    }
+
+    .auto-advance-btn.active::part(base) {
+      color: var(--sl-color-success-600, #16a34a);
+    }
+
+    /* Progress indicator */
+    .progress-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0 0.75rem;
+      font-size: 0.75rem;
+      color: var(--uvm-secondary, #9ca3af);
+    }
+
+    .progress-bar {
+      width: 60px;
+      height: 4px;
+      background-color: var(--uvm-border, #e5e7eb);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background-color: var(--sl-color-success-600, #16a34a);
+      transition: width var(--uvm-duration-normal, 300ms) ease-out;
+    }
+
+    .progress-text {
+      white-space: nowrap;
+    }
+
+    /* Divider between sections */
+    .action-divider {
+      width: 1px;
+      height: 20px;
+      background-color: var(--uvm-border, #e5e7eb);
+      margin: 0 4px;
+    }
   `;
 
   /**
@@ -199,6 +255,24 @@ export class UvmContextBar extends LitElement {
    */
   @property({ type: Boolean })
   saving = false;
+
+  /**
+   * Whether auto-advance is enabled.
+   */
+  @property({ type: Boolean })
+  autoAdvance = false;
+
+  /**
+   * Number of configured samples (for progress display).
+   */
+  @property({ type: Number })
+  progressConfigured = 0;
+
+  /**
+   * Total number of samples (for progress display).
+   */
+  @property({ type: Number })
+  progressTotal = 0;
 
   /**
    * Bound keyboard handler for cleanup.
@@ -333,6 +407,18 @@ export class UvmContextBar extends LitElement {
   }
 
   /**
+   * Dispatch auto-advance toggle event.
+   */
+  private _dispatchAutoAdvanceToggle(): void {
+    this.dispatchEvent(
+      new CustomEvent('uvm-context-bar:auto-advance-toggle', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  /**
    * Render the breadcrumb section.
    */
   private _renderBreadcrumb() {
@@ -400,12 +486,43 @@ export class UvmContextBar extends LitElement {
     `;
   }
 
+  /**
+   * Render the progress indicator.
+   */
+  private _renderProgressIndicator() {
+    if (this.progressTotal === 0) return null;
+
+    const percent = Math.round((this.progressConfigured / this.progressTotal) * 100);
+
+    return html`
+      <div class="progress-indicator">
+        <div class="progress-bar">
+          <div class="progress-bar-fill" style="width: ${percent}%"></div>
+        </div>
+        <span class="progress-text">${this.progressConfigured}/${this.progressTotal}</span>
+      </div>
+    `;
+  }
+
   render() {
     return html`
       <div class="context-bar" role="navigation" aria-label="Context navigation">
         ${this._renderBreadcrumb()}
 
         <div class="actions" role="toolbar" aria-label="Actions">
+          ${this._renderProgressIndicator()}
+
+          ${this.progressTotal > 0 ? html`<div class="action-divider"></div>` : null}
+
+          <sl-icon-button
+            class="action-button auto-advance-btn ${this.autoAdvance ? 'active' : ''}"
+            name="skip-forward"
+            label="Auto-advance ${this.autoAdvance ? '(on)' : '(off)'}"
+            @click=${this._dispatchAutoAdvanceToggle}
+          ></sl-icon-button>
+
+          <div class="action-divider"></div>
+
           <sl-icon-button
             class="action-button"
             name="arrow-counterclockwise"

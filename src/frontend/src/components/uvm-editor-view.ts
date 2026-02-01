@@ -27,8 +27,11 @@ import './uvm-entry-list.js';
 import './uvm-context-bar.js';
 import './uvm-value-bar.js';
 import './uvm-precision-drawer.js';
+import './uvm-shortcut-overlay.js';
+import './uvm-batch-review.js';
 
 import { api, ApiError } from '../services/api.js';
+import type { BatchSampleResult } from './uvm-batch-review.js';
 import type { EntryCreateDetail } from './uvm-entry-list.js';
 import type { OtoEntry } from '../services/types.js';
 import type { PrecisionDrawerChangeDetail } from './uvm-precision-drawer.js';
@@ -408,6 +411,18 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   private _showPrecision = false;
 
   @state()
+  private _showShortcuts = false;
+
+  @state()
+  private _autoAdvance = false;
+
+  @state()
+  private _showBatchReview = false;
+
+  @state()
+  private _batchResults: BatchSampleResult[] = [];
+
+  @state()
   private _undoStack: OtoEntry[] = [];
 
   @state()
@@ -529,6 +544,23 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     if (e.key === '=' || e.key === '+') {
       e.preventDefault();
       this._showPrecision = !this._showPrecision;
+      return;
+    }
+
+    // D key for auto-detect
+    if (e.key === 'd' || e.key === 'D') {
+      e.preventDefault();
+      if (!this._isDetecting && this._currentFilename) {
+        this._autoDetect();
+      }
+      return;
+    }
+
+    // ? key for shortcut overlay
+    if (e.key === '?') {
+      e.preventDefault();
+      this._showShortcuts = true;
+      return;
     }
   }
 
@@ -900,6 +932,14 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       setTimeout(() => {
         this._saveSuccess = false;
       }, 2000);
+
+      // Auto-advance to next sample if enabled
+      if (this._autoAdvance) {
+        // Small delay to let user see save confirmation
+        setTimeout(() => {
+          this._navigateToNextSample();
+        }, 300);
+      }
     } catch (error) {
       console.error('Failed to save oto entry:', error);
       if (error instanceof ApiError) {
@@ -1178,6 +1218,53 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
+   * Handle auto-advance toggle from context bar.
+   */
+  private _onAutoAdvanceToggle(): void {
+    this._autoAdvance = !this._autoAdvance;
+    const status = this._autoAdvance ? 'enabled' : 'disabled';
+    UvmToastManager.info(`Auto-advance ${status}`);
+  }
+
+  /**
+   * Handle batch review completion.
+   */
+  private _onBatchReviewComplete(e: CustomEvent<{ accepted: BatchSampleResult[]; skipped: BatchSampleResult[] }>): void {
+    const { accepted } = e.detail;
+    this._showBatchReview = false;
+    this._batchResults = [];
+
+    if (accepted.length > 0) {
+      UvmToastManager.success(`Accepted ${accepted.length} samples`);
+    }
+  }
+
+  /**
+   * Handle request to adjust a sample from batch review.
+   */
+  private _onBatchReviewAdjust(e: CustomEvent<{ sample: BatchSampleResult }>): void {
+    const { sample } = e.detail;
+    this._showBatchReview = false;
+
+    // Navigate to the sample for manual adjustment
+    if (this._currentVoicebankId) {
+      this._loadSample(this._currentVoicebankId, sample.filename);
+    }
+  }
+
+  /**
+   * Get progress counts for the current voicebank.
+   */
+  private _getProgressCounts(): { configured: number; total: number } {
+    // For now, use samples list length as total
+    // In a real implementation, we'd track which samples have oto entries
+    const total = this._samplesList.length;
+    // This is a placeholder - in production we'd track actual configured count
+    const configured = this._otoEntries.length > 0 ? 1 : 0;
+    return { configured, total };
+  }
+
+  /**
    * Render entry tabs for VCV samples with multiple aliases.
    */
   private _renderEntryTabs() {
@@ -1347,6 +1434,8 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   render() {
+    const progress = this._getProgressCounts();
+
     return html`
       <div class="editor-layout">
         <uvm-context-bar
@@ -1356,10 +1445,14 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
           .canRedo=${this._redoStack.length > 0}
           .hasUnsavedChanges=${this._isDirty}
           .saving=${this._isSaving}
+          .autoAdvance=${this._autoAdvance}
+          .progressConfigured=${progress.configured}
+          .progressTotal=${progress.total}
           @uvm-context-bar:browse=${this._openBrowser}
           @uvm-context-bar:undo=${this._undo}
           @uvm-context-bar:redo=${this._redo}
           @uvm-context-bar:save=${this._saveEntry}
+          @uvm-context-bar:auto-advance-toggle=${this._onAutoAdvanceToggle}
         ></uvm-context-bar>
 
         ${this._renderEntryTabs()}
@@ -1400,6 +1493,20 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
           @voicebank-select=${this._onVoicebankSelect}
           @uvm-sample-browser:close=${() => (this._showBrowser = false)}
         ></uvm-sample-browser>
+
+        <uvm-shortcut-overlay
+          ?open=${this._showShortcuts}
+          @uvm-shortcut-overlay:close=${() => (this._showShortcuts = false)}
+        ></uvm-shortcut-overlay>
+
+        <uvm-batch-review
+          ?open=${this._showBatchReview}
+          .samples=${this._batchResults}
+          voicebankId=${this._currentVoicebankId || ''}
+          @uvm-batch-review:complete=${this._onBatchReviewComplete}
+          @uvm-batch-review:adjust=${this._onBatchReviewAdjust}
+          @uvm-batch-review:close=${() => (this._showBatchReview = false)}
+        ></uvm-batch-review>
 
         ${this._renderUnsavedDialog()}
       </div>

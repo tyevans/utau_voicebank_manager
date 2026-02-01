@@ -67,3 +67,13 @@ export { UvmSpectrogram } from './uvm-spectrogram.js';
 // Marker handle for oto.ini parameter visualization
 export { UvmMarkerHandle } from './uvm-marker-handle.js';
 export type { MarkerDragDetail } from './uvm-marker-handle.js';
+
+// Keyboard shortcut overlay
+export { UvmShortcutOverlay } from './uvm-shortcut-overlay.js';
+
+// Batch review modal for reviewing auto-detected samples
+export { UvmBatchReview } from './uvm-batch-review.js';
+export type { BatchSampleResult, BatchReviewCompleteDetail } from './uvm-batch-review.js';
+
+// Validation view for reviewing and exporting oto.ini
+export { UvmValidationView } from './uvm-validation-view.js';
