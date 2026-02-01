@@ -15,32 +15,66 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _is_valid_espeak_dir(path: Path) -> bool:
+    """Check if a directory contains a valid eSpeak NG installation."""
+    if not path.exists():
+        return False
+    espeak_exe = path / "espeak-ng.exe"
+    espeak_dll = path / "libespeak-ng.dll"
+    return espeak_exe.exists() or espeak_dll.exists()
+
+
 def _find_espeak_windows() -> Path | None:
     """Search for eSpeak NG installation on Windows.
+
+    Searches in order:
+    1. ESPEAK_PATH environment variable (manual override)
+    2. Standard Program Files locations on C:
+    3. Program Files on other drives (D:, E:, etc.)
+    4. Directories in PATH
 
     Returns:
         Path to eSpeak NG installation directory, or None if not found.
     """
-    # Common installation paths
+    # 1. Check for manual override via environment variable
+    custom_path = os.environ.get("ESPEAK_PATH")
+    if custom_path:
+        custom = Path(custom_path)
+        if _is_valid_espeak_dir(custom):
+            logger.debug(f"Using ESPEAK_PATH override: {custom}")
+            return custom
+
+    # 2. Standard installation paths on C:
     search_paths = [
         Path(os.environ.get("ProgramFiles", "C:\\Program Files")) / "eSpeak NG",
         Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"))
         / "eSpeak NG",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "eSpeak NG",
-        # User might have it in a custom location via PATH
     ]
 
     for path in search_paths:
-        if path.exists():
-            # Verify it's a valid installation by checking for key files
-            espeak_exe = path / "espeak-ng.exe"
-            espeak_dll = path / "libespeak-ng.dll"
-            if espeak_exe.exists() or espeak_dll.exists():
-                return path
+        if _is_valid_espeak_dir(path):
+            return path
 
-    # Try to find via PATH
+    # 3. Search other drives (D:, E:, etc.) - common for custom installs
+    # Check for both "eSpeak NG" and "eSpeak" folder names
+    folder_names = ["eSpeak NG", "eSpeak", "espeak-ng", "espeak"]
+    for drive_letter in "DEFGHIJ":
+        drive = Path(f"{drive_letter}:\\")
+        if not drive.exists():
+            continue
+        for prog_folder in ["Program Files", "Program Files (x86)", "Programs"]:
+            for folder_name in folder_names:
+                candidate = drive / prog_folder / folder_name
+                if _is_valid_espeak_dir(candidate):
+                    logger.debug(f"Found eSpeak on alternate drive: {candidate}")
+                    return candidate
+
+    # 4. Try to find via PATH
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     for dir_str in path_dirs:
+        if not dir_str:
+            continue
         dir_path = Path(dir_str)
         if (dir_path / "espeak-ng.exe").exists():
             return dir_path
@@ -71,7 +105,8 @@ def configure_espeak() -> bool:
         logger.warning(
             "eSpeak NG not found on Windows. "
             "AI phoneme detection may not work. "
-            "Install from: https://github.com/espeak-ng/espeak-ng/releases"
+            "Install from: https://github.com/espeak-ng/espeak-ng/releases "
+            "or set ESPEAK_PATH environment variable to your installation folder."
         )
         return False
 
