@@ -161,13 +161,34 @@ utau_voicebank_manager/
 | `script/server` | Start dev servers |
 | `script/test` | Run tests |
 | `script/cibuild` | Full CI build |
+| `script/models` | Download ML models |
 | `script/console` | Python REPL |
 
 ### Tech Stack
 
 **Backend:** Python 3.11+, FastAPI, Pydantic, PyTorch
 **Frontend:** TypeScript, Lit, Shoelace, Tailwind CSS
-**ML:** Wav2Vec2, WhisperX (optional)
+**ML:** Wav2Vec2, WhisperX (optional), SOFA (optional)
+
+### ML Model Setup
+
+The app uses AI models for phoneme detection. Basic models download automatically on first use, but you can pre-download them:
+
+```bash
+./script/models
+```
+
+**Optional: SOFA for Singing Voice**
+
+[SOFA (Singing-Oriented Forced Aligner)](https://github.com/qiuqiao/SOFA) provides better detection for sustained vowels in singing samples. Setup requires manual steps:
+
+1. Clone SOFA: `git clone https://github.com/qiuqiao/SOFA`
+2. Download models from [SOFA GitHub Discussions](https://github.com/qiuqiao/SOFA/discussions/categories/pretrained-model-sharing)
+3. Place checkpoints in `models/sofa/checkpoints/`
+4. Place dictionaries in `models/sofa/dictionary/`
+5. Set environment variable: `export SOFA_PATH=/path/to/SOFA`
+
+Run `./script/models` for detailed setup instructions.
 
 ### Running Tests
 
