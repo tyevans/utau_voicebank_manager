@@ -1,6 +1,7 @@
 """FastAPI application entry point for UTAU Voicebank Manager."""
 
 import logging
+from pathlib import Path
 
 # Configure logging before importing modules
 logging.basicConfig(
@@ -28,10 +29,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS middleware for local development
+# CORS middleware for local development and Docker
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:8989",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +45,20 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(api_router, prefix="/api/v1")
+
+# Serve static frontend in production (when built files exist)
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    @app.get("/")
+    async def serve_index():
+        """Serve the frontend index.html."""
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+    # Mount static assets (must be after specific routes)
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="static")
 
 
 @app.get("/health")

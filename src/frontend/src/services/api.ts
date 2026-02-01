@@ -5,6 +5,24 @@
  * proper error handling and response parsing.
  */
 
+/**
+ * Detect the API base URL based on the current environment.
+ * - In development (Vite dev server on port 5173), use localhost:8000
+ * - In production (served from same origin), use relative /api/v1
+ */
+export function getDefaultApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    const port = window.location.port;
+    // Vite dev server ports
+    if (port === '5173' || port === '5174' || port === '5175') {
+      return 'http://localhost:8000/api/v1';
+    }
+    // Production or Docker: same origin
+    return '/api/v1';
+  }
+  return 'http://localhost:8000/api/v1';
+}
+
 import type {
   BatchOtoResult,
   MlStatus,
@@ -85,7 +103,7 @@ export class ApiError extends Error {
 export class ApiClient {
   private readonly baseUrl: string;
 
-  constructor(baseUrl = 'http://localhost:8000/api/v1') {
+  constructor(baseUrl = getDefaultApiUrl()) {
     this.baseUrl = baseUrl;
   }
 

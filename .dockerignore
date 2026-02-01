@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+.mypy_cache
+.ruff_cache
+.pytest_cache
+*.egg-info
+
+# Node
+node_modules
+src/frontend/node_modules
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+dist
+build
+*.egg
+
+# Models (download at runtime or mount as volume)
+models/
+
+# Data (mount as volume)
+data/
+
+# Testing
+.coverage
+htmlcov
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Beads task management
+.beads/
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker

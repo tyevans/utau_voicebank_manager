@@ -6,7 +6,7 @@
  */
 
 import type { PhonemePrompt } from '../components/uvm-recording-prompter.js';
-import { ApiError } from './api.js';
+import { ApiError, getDefaultApiUrl } from './api.js';
 
 /**
  * Recording session status.
@@ -257,7 +257,7 @@ const JAPANESE_VCV_PROMPTS: PhonemePrompt[] = [
 export class RecordingApiService {
   private readonly baseUrl: string;
 
-  constructor(baseUrl = 'http://localhost:8000/api/v1') {
+  constructor(baseUrl = getDefaultApiUrl()) {
     this.baseUrl = baseUrl;
   }
 
