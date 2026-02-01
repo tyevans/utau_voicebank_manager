@@ -113,12 +113,15 @@ export class UvmEditorView extends LitElement {
       flex-direction: column;
       gap: 1rem;
       min-height: 0;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .waveform-section {
       flex: 0 0 auto;
       display: flex;
       flex-direction: column;
+      min-width: 0;
       background-color: #ffffff;
       border: 1px solid #e5e7eb;
       border-radius: 8px;

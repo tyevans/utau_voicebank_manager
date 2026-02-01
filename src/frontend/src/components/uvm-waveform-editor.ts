@@ -88,11 +88,14 @@ export class UvmWaveformEditor extends LitElement {
     :host {
       display: block;
       width: 100%;
+      max-width: 100%;
+      overflow: hidden;
     }
 
     .waveform-container {
       position: relative;
       width: 100%;
+      max-width: 100%;
       background-color: white;
       border-radius: var(--sl-border-radius-large, 0.5rem);
       overflow: hidden;
@@ -109,8 +112,94 @@ export class UvmWaveformEditor extends LitElement {
     .canvas-wrapper {
       position: relative;
       width: 100%;
+      max-width: 100%;
       overflow-x: auto;
       overflow-y: hidden;
+    }
+
+    .canvas-area {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      /* Width set dynamically via inline style based on zoom level */
+      min-width: 100%;
+    }
+
+    .waveform-section {
+      position: relative;
+      background: linear-gradient(to bottom, rgba(248, 250, 252, 0.5) 0%, rgba(241, 245, 249, 0.3) 100%);
+    }
+
+    :host([theme='dark']) .waveform-section {
+      background: linear-gradient(to bottom, rgba(30, 41, 59, 0.5) 0%, rgba(51, 65, 85, 0.3) 100%);
+    }
+
+    .spectrogram-section {
+      position: relative;
+      background-color: #ffffff;
+    }
+
+    .section-divider {
+      height: 2px;
+      background: linear-gradient(to right,
+        transparent 0%,
+        var(--sl-color-neutral-400, #94a3b8) 10%,
+        var(--sl-color-neutral-400, #94a3b8) 90%,
+        transparent 100%
+      );
+      position: relative;
+    }
+
+    :host([theme='dark']) .section-divider {
+      background: linear-gradient(to right,
+        transparent 0%,
+        var(--sl-color-neutral-500, #64748b) 10%,
+        var(--sl-color-neutral-500, #64748b) 90%,
+        transparent 100%
+      );
+    }
+
+    .section-label {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      background-color: white;
+      padding: 0 6px;
+      z-index: 1;
+    }
+
+    :host([theme='dark']) .section-label {
+      color: var(--sl-color-neutral-400, #94a3b8);
+      background-color: var(--sl-color-neutral-900, #1e293b);
+    }
+
+    .freq-axis {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 36px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 4px 0;
+      pointer-events: none;
+      z-index: 5;
+      background: linear-gradient(to right, rgba(255, 255, 255, 0.9) 0%, transparent 100%);
+    }
+
+    .freq-label {
+      font-size: 9px;
+      font-family: monospace;
+      color: rgba(71, 85, 105, 0.9);
+      padding-left: 4px;
+      line-height: 1;
     }
 
     canvas {
@@ -129,7 +218,6 @@ export class UvmWaveformEditor extends LitElement {
     .marker {
       position: absolute;
       top: 0;
-      height: 100%;
       cursor: ew-resize;
       pointer-events: auto;
       display: flex;
@@ -137,18 +225,37 @@ export class UvmWaveformEditor extends LitElement {
       align-items: center;
     }
 
-    .marker-line {
+    .marker-line-waveform {
       width: 2px;
-      height: 100%;
-      opacity: 0.7;
+      opacity: 0.85;
       transition: all 0.15s ease;
     }
 
-    .marker:hover .marker-line,
-    .marker.dragging .marker-line {
+    .marker-line-spectrogram {
+      width: 1px;
+      opacity: 0.5;
+      background-image: repeating-linear-gradient(
+        to bottom,
+        currentColor 0px,
+        currentColor 4px,
+        transparent 4px,
+        transparent 8px
+      );
+      background-color: transparent !important;
+      transition: all 0.15s ease;
+    }
+
+    .marker:hover .marker-line-waveform,
+    .marker.dragging .marker-line-waveform {
       opacity: 1;
       width: 3px;
       box-shadow: 0 0 8px currentColor;
+    }
+
+    .marker:hover .marker-line-spectrogram,
+    .marker.dragging .marker-line-spectrogram {
+      opacity: 0.7;
+      width: 2px;
     }
 
     .marker-handle {
@@ -176,7 +283,6 @@ export class UvmWaveformEditor extends LitElement {
 
     .marker-label {
       position: absolute;
-      bottom: 8px;
       white-space: nowrap;
       font-size: 11px;
       font-weight: 500;
@@ -375,6 +481,10 @@ export class UvmWaveformEditor extends LitElement {
       background-color: #fbbf24;
       border-radius: 50%;
     }
+
+    .spectrogram-canvas {
+      display: block;
+    }
   `;
 
   /**
@@ -423,7 +533,7 @@ export class UvmWaveformEditor extends LitElement {
    * Height of the waveform canvas in pixels.
    */
   @property({ type: Number })
-  height = 150;
+  height = 195;
 
   /**
    * Whether the audio is currently loading.
@@ -431,8 +541,22 @@ export class UvmWaveformEditor extends LitElement {
   @property({ type: Boolean })
   loading = false;
 
-  @query('canvas')
+  /**
+   * Height of the spectrogram panel in pixels.
+   */
+  @property({ type: Number })
+  spectrogramHeight = 270;
+
+  /**
+   * Height of the section divider in pixels.
+   */
+  private readonly _dividerHeight = 2;
+
+  @query('canvas.waveform-canvas')
   private _canvas!: HTMLCanvasElement;
+
+  @query('canvas.spectrogram-canvas')
+  private _spectrogramCanvas!: HTMLCanvasElement;
 
   @query('.canvas-wrapper')
   private _canvasWrapper!: HTMLDivElement;
@@ -451,6 +575,9 @@ export class UvmWaveformEditor extends LitElement {
 
   @state()
   private _playbackPosition = 0; // Current position in ms from start of audio
+
+  @state()
+  private _spectrogramData: Float32Array[] | null = null;
 
   private _resizeObserver: ResizeObserver | null = null;
   private _audioContext: AudioContext | null = null;
@@ -479,6 +606,7 @@ export class UvmWaveformEditor extends LitElement {
     }
     this._updateCanvasWidth();
     this._drawWaveform();
+    this._drawSpectrogram();
 
     // Add keyboard listener
     this.addEventListener('keydown', this._onKeyDown);
@@ -486,13 +614,18 @@ export class UvmWaveformEditor extends LitElement {
   }
 
   updated(changedProperties: PropertyValues): void {
+    if (changedProperties.has('audioBuffer')) {
+      this._computeSpectrogram();
+    }
     if (
       changedProperties.has('audioBuffer') ||
       changedProperties.has('zoom') ||
-      changedProperties.has('height')
+      changedProperties.has('height') ||
+      changedProperties.has('spectrogramHeight')
     ) {
       this._updateCanvasWidth();
       this._drawWaveform();
+      this._drawSpectrogram();
     }
   }
 
@@ -501,16 +634,15 @@ export class UvmWaveformEditor extends LitElement {
       this._containerWidth = entry.contentRect.width;
       this._updateCanvasWidth();
       this._drawWaveform();
+      this._drawSpectrogram();
     }
   }
 
   private _updateCanvasWidth(): void {
-    if (!this.audioBuffer) {
-      this._canvasWidth = this._containerWidth;
-      return;
-    }
-    // Base width is container width, scaled by zoom
-    this._canvasWidth = Math.max(this._containerWidth, this._containerWidth * this.zoom);
+    // At 1x zoom, canvas fills container width exactly
+    // At higher zoom levels, canvas extends beyond container (with scrolling)
+    // Audio data is scaled to fit the canvas width
+    this._canvasWidth = Math.max(1, Math.floor(this._containerWidth * this.zoom));
   }
 
   private _drawWaveform(): void {
@@ -553,7 +685,7 @@ export class UvmWaveformEditor extends LitElement {
     ctx.beginPath();
     ctx.moveTo(0, centerY);
 
-    // Draw upper half
+    // Draw upper half with power curve scaling for more dramatic waveform
     for (let x = 0; x < width; x++) {
       const startSample = Math.floor(x * samplesPerPixel);
       const endSample = Math.min(Math.floor((x + 1) * samplesPerPixel), samples);
@@ -564,11 +696,13 @@ export class UvmWaveformEditor extends LitElement {
         if (absValue > max) max = absValue;
       }
 
-      const y = centerY - max * amplitude;
+      // Apply power curve to boost quiet content (0.4 exponent compresses dynamic range)
+      const scaledMax = Math.pow(max, 0.4);
+      const y = centerY - scaledMax * amplitude;
       ctx.lineTo(x, y);
     }
 
-    // Draw lower half (mirror)
+    // Draw lower half (mirror) with power curve scaling
     for (let x = width - 1; x >= 0; x--) {
       const startSample = Math.floor(x * samplesPerPixel);
       const endSample = Math.min(Math.floor((x + 1) * samplesPerPixel), samples);
@@ -579,7 +713,9 @@ export class UvmWaveformEditor extends LitElement {
         if (absValue > max) max = absValue;
       }
 
-      const y = centerY + max * amplitude;
+      // Apply power curve to boost quiet content (0.4 exponent compresses dynamic range)
+      const scaledMax = Math.pow(max, 0.4);
+      const y = centerY + scaledMax * amplitude;
       ctx.lineTo(x, y);
     }
 
@@ -593,6 +729,239 @@ export class UvmWaveformEditor extends LitElement {
     ctx.moveTo(0, centerY);
     ctx.lineTo(width, centerY);
     ctx.stroke();
+  }
+
+  /**
+   * White to blue gradient for spectrogram coloring.
+   * Maps a value from 0-1 to an RGB color string matching the waveform color.
+   * t=0 -> white (255, 255, 255)
+   * t=1 -> blue (59, 130, 246) - matches waveform color
+   */
+  private _spectrogramColor(t: number): string {
+    // Clamp to [0, 1]
+    t = Math.max(0, Math.min(1, t));
+
+    // White to blue gradient matching waveform
+    const r = Math.round(255 - t * (255 - 59));
+    const g = Math.round(255 - t * (255 - 130));
+    const b = Math.round(255 - t * (255 - 246));
+
+    return `rgb(${r},${g},${b})`;
+  }
+
+  /**
+   * Compute spectrogram data from audio buffer using FFT.
+   * This is called when audioBuffer changes.
+   */
+  private _computeSpectrogram(): void {
+    if (!this.audioBuffer) {
+      this._spectrogramData = null;
+      return;
+    }
+
+    const channelData = this.audioBuffer.getChannelData(0);
+    const sampleRate = this.audioBuffer.sampleRate;
+    const fftSize = 2048;
+    const hopSize = Math.floor(fftSize / 4); // 75% overlap
+
+    // Number of frequency bins we care about (up to ~8kHz for voice)
+    const maxFreq = 8000;
+    const nyquist = sampleRate / 2;
+    const numBins = Math.min(fftSize / 2, Math.floor((maxFreq / nyquist) * (fftSize / 2)));
+
+    // Number of time frames
+    const numFrames = Math.floor((channelData.length - fftSize) / hopSize) + 1;
+
+    if (numFrames <= 0) {
+      this._spectrogramData = null;
+      return;
+    }
+
+    // Pre-compute Hanning window
+    const window = new Float32Array(fftSize);
+    for (let i = 0; i < fftSize; i++) {
+      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (fftSize - 1)));
+    }
+
+    // Compute FFT for each frame
+    const spectrogramData: Float32Array[] = [];
+
+    for (let frame = 0; frame < numFrames; frame++) {
+      const startSample = frame * hopSize;
+
+      // Extract and window the frame
+      const real = new Float32Array(fftSize);
+      const imag = new Float32Array(fftSize);
+
+      for (let i = 0; i < fftSize; i++) {
+        real[i] = channelData[startSample + i] * window[i];
+        imag[i] = 0;
+      }
+
+      // In-place FFT
+      this._fft(real, imag);
+
+      // Compute magnitude spectrum (only positive frequencies)
+      const magnitudes = new Float32Array(numBins);
+      for (let i = 0; i < numBins; i++) {
+        const mag = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+        // Convert to dB scale with some normalization
+        magnitudes[i] = 20 * Math.log10(Math.max(mag, 1e-10));
+      }
+
+      spectrogramData.push(magnitudes);
+    }
+
+    // Normalize spectrogram data to 0-1 range
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+
+    for (const frame of spectrogramData) {
+      for (let i = 0; i < frame.length; i++) {
+        if (frame[i] < minVal) minVal = frame[i];
+        if (frame[i] > maxVal) maxVal = frame[i];
+      }
+    }
+
+    const range = maxVal - minVal || 1;
+
+    for (const frame of spectrogramData) {
+      for (let i = 0; i < frame.length; i++) {
+        frame[i] = (frame[i] - minVal) / range;
+      }
+    }
+
+    this._spectrogramData = spectrogramData;
+  }
+
+  /**
+   * Simple in-place Cooley-Tukey FFT implementation.
+   * Operates on real and imaginary arrays of power-of-2 length.
+   */
+  private _fft(real: Float32Array, imag: Float32Array): void {
+    const n = real.length;
+
+    if (n <= 1) return;
+
+    // Bit-reversal permutation
+    let j = 0;
+    for (let i = 0; i < n - 1; i++) {
+      if (i < j) {
+        // Swap real[i] and real[j]
+        let temp = real[i];
+        real[i] = real[j];
+        real[j] = temp;
+        // Swap imag[i] and imag[j]
+        temp = imag[i];
+        imag[i] = imag[j];
+        imag[j] = temp;
+      }
+      let k = n >> 1;
+      while (k <= j) {
+        j -= k;
+        k >>= 1;
+      }
+      j += k;
+    }
+
+    // Cooley-Tukey iterative FFT
+    for (let len = 2; len <= n; len <<= 1) {
+      const halfLen = len >> 1;
+      const angle = -2 * Math.PI / len;
+      const wReal = Math.cos(angle);
+      const wImag = Math.sin(angle);
+
+      for (let i = 0; i < n; i += len) {
+        let curReal = 1;
+        let curImag = 0;
+
+        for (let k = 0; k < halfLen; k++) {
+          const evenIdx = i + k;
+          const oddIdx = i + k + halfLen;
+
+          const tReal = curReal * real[oddIdx] - curImag * imag[oddIdx];
+          const tImag = curReal * imag[oddIdx] + curImag * real[oddIdx];
+
+          real[oddIdx] = real[evenIdx] - tReal;
+          imag[oddIdx] = imag[evenIdx] - tImag;
+          real[evenIdx] = real[evenIdx] + tReal;
+          imag[evenIdx] = imag[evenIdx] + tImag;
+
+          // Update twiddle factor
+          const newReal = curReal * wReal - curImag * wImag;
+          const newImag = curReal * wImag + curImag * wReal;
+          curReal = newReal;
+          curImag = newImag;
+        }
+      }
+    }
+  }
+
+  /**
+   * Draw the spectrogram visualization.
+   * Uses power curve and noise floor for better visual contrast.
+   */
+  private _drawSpectrogram(): void {
+    if (!this._spectrogramCanvas) return;
+
+    const ctx = this._spectrogramCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = this._canvasWidth;
+    const height = this.spectrogramHeight;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Set canvas size with device pixel ratio
+    this._spectrogramCanvas.width = width * dpr;
+    this._spectrogramCanvas.height = height * dpr;
+    this._spectrogramCanvas.style.width = `${width}px`;
+    this._spectrogramCanvas.style.height = `${height}px`;
+    ctx.scale(dpr, dpr);
+
+    // Fill with white background (low intensity = white)
+    ctx.fillStyle = this._spectrogramColor(0);
+    ctx.fillRect(0, 0, width, height);
+
+    if (!this._spectrogramData || this._spectrogramData.length === 0) {
+      return;
+    }
+
+    const numFrames = this._spectrogramData.length;
+    const numBins = this._spectrogramData[0].length;
+
+    // Calculate pixel dimensions for each cell
+    const cellWidth = width / numFrames;
+    const cellHeight = height / numBins;
+
+    // Noise floor threshold - values below this map to darkest color
+    const noiseFloor = 0.15;
+    // Power curve exponent - lower values boost mid-range visibility
+    const powerCurve = 0.45;
+
+    // Draw spectrogram cells
+    for (let frame = 0; frame < numFrames; frame++) {
+      const x = frame * cellWidth;
+      const frameData = this._spectrogramData[frame];
+
+      for (let bin = 0; bin < numBins; bin++) {
+        // Flip y-axis so low frequencies are at bottom
+        const y = height - (bin + 1) * cellHeight;
+        let value = frameData[bin];
+
+        // Apply noise floor cutoff
+        if (value < noiseFloor) {
+          value = 0;
+        } else {
+          // Rescale above noise floor to 0-1 range
+          value = (value - noiseFloor) / (1 - noiseFloor);
+          // Apply power curve to boost mid-range values (sqrt-like effect)
+          value = Math.pow(value, powerCurve);
+        }
+
+        ctx.fillStyle = this._spectrogramColor(value);
+        ctx.fillRect(x, y, Math.ceil(cellWidth), Math.ceil(cellHeight));
+      }
+    }
   }
 
   /**
@@ -938,18 +1307,34 @@ export class UvmWaveformEditor extends LitElement {
 
     const value = name === 'cutoff' ? this.cutoff : (this as unknown as Record<string, number>)[name];
     const isDragging = this._draggingMarker === name;
+    const waveformHeight = this.height;
+    const spectrogramHeight = this.spectrogramHeight;
+    const totalHeight = waveformHeight + this._dividerHeight + spectrogramHeight;
+    // Position label in the middle of waveform section
+    const labelBottom = spectrogramHeight + this._dividerHeight + 8;
 
     return html`
       <div
         class="marker ${isDragging ? 'dragging' : ''}"
-        style="left: ${pixelPosition}px; transform: translateX(-50%); color: ${config.color};"
+        style="left: ${pixelPosition}px; transform: translateX(-50%); color: ${config.color}; height: ${totalHeight}px;"
         @mousedown=${(e: MouseEvent) => this._onMarkerMouseDown(e, name)}
       >
-        <div class="marker-line" style="background-color: ${config.color};"></div>
+        <!-- Waveform section: solid line -->
+        <div
+          class="marker-line-waveform"
+          style="background-color: ${config.color}; height: ${waveformHeight}px;"
+        ></div>
+        <!-- Spectrogram section: dashed/transparent line -->
+        <div
+          class="marker-line-spectrogram"
+          style="color: ${config.color}; height: ${spectrogramHeight + this._dividerHeight}px;"
+        ></div>
+        <!-- Handle at top of waveform only -->
         <div class="marker-handle" style="background-color: ${config.color};">
           ${config.icon}
         </div>
-        <div class="marker-label" style="background-color: ${config.color};">
+        <!-- Label positioned in waveform area -->
+        <div class="marker-label" style="background-color: ${config.color}; bottom: ${labelBottom}px;">
           ${config.label}: ${this._formatTime(value)}
           <span class="marker-label-hint">${config.hint}</span>
         </div>
@@ -995,16 +1380,39 @@ export class UvmWaveformEditor extends LitElement {
           : this.audioBuffer
             ? html`
                 <div class="canvas-wrapper">
-                  <canvas></canvas>
-                  <div class="markers-layer">
-                    ${this._renderMarker('offset', this._msToPixel(this.offset))}
-                    ${this._renderMarker('consonant', this._msToPixel(this.consonant))}
-                    ${this._renderMarker('cutoff', this._getCutoffPixel())}
-                    ${this._renderMarker('preutterance', this._msToPixel(this.preutterance))}
-                    ${this._renderMarker('overlap', this._msToPixel(this.overlap))}
-                    ${this._isPlaying
-                      ? html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`
-                      : null}
+                  <div class="canvas-area" style="width: ${this._canvasWidth}px;">
+                    <!-- Waveform Section -->
+                    <div class="waveform-section">
+                      <canvas class="waveform-canvas"></canvas>
+                    </div>
+
+                    <!-- Section Divider -->
+                    <div class="section-divider">
+                      <span class="section-label">Spectrogram</span>
+                    </div>
+
+                    <!-- Spectrogram Section -->
+                    <div class="spectrogram-section">
+                      <canvas class="spectrogram-canvas"></canvas>
+                      <!-- Frequency axis labels -->
+                      <div class="freq-axis">
+                        <span class="freq-label">8k</span>
+                        <span class="freq-label">4k</span>
+                        <span class="freq-label">0</span>
+                      </div>
+                    </div>
+
+                    <!-- Markers Layer spans both sections -->
+                    <div class="markers-layer" style="height: ${this.height + this._dividerHeight + this.spectrogramHeight}px;">
+                      ${this._renderMarker('offset', this._msToPixel(this.offset))}
+                      ${this._renderMarker('consonant', this._msToPixel(this.consonant))}
+                      ${this._renderMarker('cutoff', this._getCutoffPixel())}
+                      ${this._renderMarker('preutterance', this._msToPixel(this.preutterance))}
+                      ${this._renderMarker('overlap', this._msToPixel(this.overlap))}
+                      ${this._isPlaying
+                        ? html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`
+                        : null}
+                    </div>
                   </div>
                 </div>
               `
