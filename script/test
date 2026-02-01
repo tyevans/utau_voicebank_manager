@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# script/test: Run test suite
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Running backend tests..."
+uv run pytest "$@"
+
+echo "==> Running frontend lint..."
+cd src/frontend && npm run lint
+
+echo "==> All tests passed!"

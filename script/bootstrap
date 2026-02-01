@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# script/bootstrap: Resolve all dependencies for the application
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Installing Python dependencies..."
+uv sync
+
+echo "==> Installing frontend dependencies..."
+cd src/frontend && npm install && cd ../..
+
+echo "==> Bootstrap complete!"

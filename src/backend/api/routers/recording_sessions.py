@@ -8,6 +8,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
+from src.backend.domain.generated_voicebank import (
+    GeneratedVoicebank,
+    GenerateVoicebankRequest,
+)
 from src.backend.domain.recording_session import (
     RecordingSegment,
     RecordingSession,
@@ -16,16 +20,23 @@ from src.backend.domain.recording_session import (
     SegmentUpload,
     SessionProgress,
 )
+from src.backend.ml.oto_suggester import get_oto_suggester
 from src.backend.repositories.recording_session_repository import (
     RecordingSessionRepository,
 )
 from src.backend.repositories.voicebank_repository import VoicebankRepository
+from src.backend.services.alignment_service import AlignmentService
 from src.backend.services.recording_session_service import (
     RecordingSessionService,
     SessionNotFoundError,
     SessionStateError,
     SessionValidationError,
     VoicebankNotFoundError,
+)
+from src.backend.services.voicebank_generator import (
+    NoAlignedSegmentsError,
+    VoicebankGenerator,
+    VoicebankGeneratorError,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +46,7 @@ router = APIRouter(prefix="/sessions", tags=["recording-sessions"])
 # Storage paths
 VOICEBANKS_BASE_PATH = Path("data/voicebanks")
 SESSIONS_BASE_PATH = Path("data/sessions")
+GENERATED_BASE_PATH = Path("data/generated")
 
 # Maximum segment audio size (10MB)
 MAX_SEGMENT_SIZE = 10 * 1024 * 1024
@@ -58,6 +70,27 @@ def get_session_service(
 ) -> RecordingSessionService:
     """Dependency provider for RecordingSessionService."""
     return RecordingSessionService(session_repo, voicebank_repo)
+
+
+def get_alignment_service(
+    session_service: Annotated[RecordingSessionService, Depends(get_session_service)],
+) -> AlignmentService:
+    """Dependency provider for AlignmentService."""
+    return AlignmentService(session_service, prefer_mfa=True)
+
+
+def get_voicebank_generator(
+    session_service: Annotated[RecordingSessionService, Depends(get_session_service)],
+    alignment_service: Annotated[AlignmentService, Depends(get_alignment_service)],
+) -> VoicebankGenerator:
+    """Dependency provider for VoicebankGenerator."""
+    oto_suggester = get_oto_suggester()
+    return VoicebankGenerator(
+        session_service=session_service,
+        alignment_service=alignment_service,
+        oto_suggester=oto_suggester,
+        output_base_path=GENERATED_BASE_PATH,
+    )
 
 
 @router.post("", response_model=RecordingSession, status_code=status.HTTP_201_CREATED)
@@ -440,4 +473,72 @@ async def delete_session(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
+        ) from e
+
+
+@router.post(
+    "/{session_id}/generate-voicebank",
+    response_model=GeneratedVoicebank,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_voicebank_from_session(
+    session_id: UUID,
+    request: GenerateVoicebankRequest,
+    generator: Annotated[VoicebankGenerator, Depends(get_voicebank_generator)],
+) -> GeneratedVoicebank:
+    """Generate a complete UTAU voicebank from a recording session.
+
+    This endpoint processes all aligned segments in the session, slices
+    audio at phoneme boundaries, generates oto.ini parameters using ML,
+    and creates a complete voicebank folder structure.
+
+    The generated voicebank includes:
+    - All sliced WAV samples
+    - Generated oto.ini with timing parameters
+    - Optional character.txt metadata file
+
+    Args:
+        session_id: UUID of the recording session to process
+        request: Generation parameters including voicebank name
+
+    Returns:
+        GeneratedVoicebank with generation statistics and output path
+
+    Raises:
+        HTTPException 404: If session not found
+        HTTPException 400: If no segments could be aligned
+        HTTPException 500: If generation fails
+    """
+    try:
+        output_path = Path(request.output_path) if request.output_path else None
+
+        result = await generator.generate_from_session(
+            session_id=session_id,
+            voicebank_name=request.voicebank_name,
+            output_path=output_path,
+            include_character_txt=request.include_character_txt,
+            encoding=request.encoding,
+        )
+
+        logger.info(
+            f"Generated voicebank '{request.voicebank_name}' from session {session_id}: "
+            f"{result.sample_count} samples, {result.oto_entries} oto entries"
+        )
+
+        return result
+
+    except SessionNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except NoAlignedSegmentsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except VoicebankGeneratorError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Voicebank generation failed: {e}",
         ) from e

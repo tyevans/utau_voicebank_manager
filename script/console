@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# script/console: Open interactive console with project loaded
+
+set -e
+cd "$(dirname "$0")/.."
+
+uv run python -i -c "
+from src.backend.services import *
+from src.backend.domain import *
+print('Loaded: services, domain models')
+print('Example: vs = VoicebankService()')
+"

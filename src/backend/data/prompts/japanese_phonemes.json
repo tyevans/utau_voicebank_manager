@@ -1,0 +1,1327 @@
+{
+  "language": "ja",
+  "language_name": "Japanese",
+  "styles": ["cv", "vcv"],
+  "prompts": [
+    {
+      "id": "ja-cv-001",
+      "text": "あいうえお",
+      "romaji": "a i u e o",
+      "phonemes": ["a", "i", "u", "e", "o"],
+      "style": "cv",
+      "category": "vowels",
+      "difficulty": "basic",
+      "notes": "Sustain each vowel clearly, 2-3 seconds each"
+    },
+    {
+      "id": "ja-cv-002",
+      "text": "かきくけこ",
+      "romaji": "ka ki ku ke ko",
+      "phonemes": ["k", "a", "k", "i", "k", "u", "k", "e", "k", "o"],
+      "style": "cv",
+      "category": "k-row",
+      "difficulty": "basic",
+      "notes": "Clear, crisp k consonant"
+    },
+    {
+      "id": "ja-cv-003",
+      "text": "さしすせそ",
+      "romaji": "sa shi su se so",
+      "phonemes": ["s", "a", "sh", "i", "s", "u", "s", "e", "s", "o"],
+      "style": "cv",
+      "category": "s-row",
+      "difficulty": "basic",
+      "notes": "Note: shi uses sh sound, not si"
+    },
+    {
+      "id": "ja-cv-004",
+      "text": "たちつてと",
+      "romaji": "ta chi tsu te to",
+      "phonemes": ["t", "a", "ch", "i", "ts", "u", "t", "e", "t", "o"],
+      "style": "cv",
+      "category": "t-row",
+      "difficulty": "basic",
+      "notes": "Chi and tsu have different consonants than ta/te/to"
+    },
+    {
+      "id": "ja-cv-005",
+      "text": "なにぬねの",
+      "romaji": "na ni nu ne no",
+      "phonemes": ["n", "a", "n", "i", "n", "u", "n", "e", "n", "o"],
+      "style": "cv",
+      "category": "n-row",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-006",
+      "text": "はひふへほ",
+      "romaji": "ha hi fu he ho",
+      "phonemes": ["h", "a", "h", "i", "f", "u", "h", "e", "h", "o"],
+      "style": "cv",
+      "category": "h-row",
+      "difficulty": "basic",
+      "notes": "Fu uses a bilabial f, not labiodental"
+    },
+    {
+      "id": "ja-cv-007",
+      "text": "まみむめも",
+      "romaji": "ma mi mu me mo",
+      "phonemes": ["m", "a", "m", "i", "m", "u", "m", "e", "m", "o"],
+      "style": "cv",
+      "category": "m-row",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-008",
+      "text": "やゆよ",
+      "romaji": "ya yu yo",
+      "phonemes": ["y", "a", "y", "u", "y", "o"],
+      "style": "cv",
+      "category": "y-row",
+      "difficulty": "basic",
+      "notes": "Only three morae in y-row"
+    },
+    {
+      "id": "ja-cv-009",
+      "text": "らりるれろ",
+      "romaji": "ra ri ru re ro",
+      "phonemes": ["r", "a", "r", "i", "r", "u", "r", "e", "r", "o"],
+      "style": "cv",
+      "category": "r-row",
+      "difficulty": "basic",
+      "notes": "Japanese r is a tap/flap, between English r and l"
+    },
+    {
+      "id": "ja-cv-010",
+      "text": "わをん",
+      "romaji": "wa wo n",
+      "phonemes": ["w", "a", "w", "o", "N"],
+      "style": "cv",
+      "category": "w-row",
+      "difficulty": "basic",
+      "notes": "N (syllabic n) should be sustained"
+    },
+    {
+      "id": "ja-cv-011",
+      "text": "がぎぐげご",
+      "romaji": "ga gi gu ge go",
+      "phonemes": ["g", "a", "g", "i", "g", "u", "g", "e", "g", "o"],
+      "style": "cv",
+      "category": "g-row",
+      "difficulty": "basic",
+      "notes": "Voiced version of k-row"
+    },
+    {
+      "id": "ja-cv-012",
+      "text": "ざじずぜぞ",
+      "romaji": "za ji zu ze zo",
+      "phonemes": ["z", "a", "j", "i", "z", "u", "z", "e", "z", "o"],
+      "style": "cv",
+      "category": "z-row",
+      "difficulty": "basic",
+      "notes": "Ji uses j sound (voiced sh)"
+    },
+    {
+      "id": "ja-cv-013",
+      "text": "だぢづでど",
+      "romaji": "da di du de do",
+      "phonemes": ["d", "a", "d", "i", "d", "u", "d", "e", "d", "o"],
+      "style": "cv",
+      "category": "d-row",
+      "difficulty": "basic",
+      "notes": "Di and du are rare in modern Japanese"
+    },
+    {
+      "id": "ja-cv-014",
+      "text": "ばびぶべぼ",
+      "romaji": "ba bi bu be bo",
+      "phonemes": ["b", "a", "b", "i", "b", "u", "b", "e", "b", "o"],
+      "style": "cv",
+      "category": "b-row",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-015",
+      "text": "ぱぴぷぺぽ",
+      "romaji": "pa pi pu pe po",
+      "phonemes": ["p", "a", "p", "i", "p", "u", "p", "e", "p", "o"],
+      "style": "cv",
+      "category": "p-row",
+      "difficulty": "basic",
+      "notes": "Half-voiced (handakuon) consonants"
+    },
+    {
+      "id": "ja-cv-016",
+      "text": "きゃきゅきょ",
+      "romaji": "kya kyu kyo",
+      "phonemes": ["ky", "a", "ky", "u", "ky", "o"],
+      "style": "cv",
+      "category": "ky-combination",
+      "difficulty": "intermediate",
+      "notes": "Palatalized k consonant"
+    },
+    {
+      "id": "ja-cv-017",
+      "text": "しゃしゅしょ",
+      "romaji": "sha shu sho",
+      "phonemes": ["sh", "a", "sh", "u", "sh", "o"],
+      "style": "cv",
+      "category": "sh-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-018",
+      "text": "ちゃちゅちょ",
+      "romaji": "cha chu cho",
+      "phonemes": ["ch", "a", "ch", "u", "ch", "o"],
+      "style": "cv",
+      "category": "ch-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-019",
+      "text": "にゃにゅにょ",
+      "romaji": "nya nyu nyo",
+      "phonemes": ["ny", "a", "ny", "u", "ny", "o"],
+      "style": "cv",
+      "category": "ny-combination",
+      "difficulty": "intermediate",
+      "notes": "Palatalized n consonant"
+    },
+    {
+      "id": "ja-cv-020",
+      "text": "ひゃひゅひょ",
+      "romaji": "hya hyu hyo",
+      "phonemes": ["hy", "a", "hy", "u", "hy", "o"],
+      "style": "cv",
+      "category": "hy-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-021",
+      "text": "みゃみゅみょ",
+      "romaji": "mya myu myo",
+      "phonemes": ["my", "a", "my", "u", "my", "o"],
+      "style": "cv",
+      "category": "my-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-022",
+      "text": "りゃりゅりょ",
+      "romaji": "rya ryu ryo",
+      "phonemes": ["ry", "a", "ry", "u", "ry", "o"],
+      "style": "cv",
+      "category": "ry-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-023",
+      "text": "ぎゃぎゅぎょ",
+      "romaji": "gya gyu gyo",
+      "phonemes": ["gy", "a", "gy", "u", "gy", "o"],
+      "style": "cv",
+      "category": "gy-combination",
+      "difficulty": "intermediate",
+      "notes": "Voiced palatalized g"
+    },
+    {
+      "id": "ja-cv-024",
+      "text": "じゃじゅじょ",
+      "romaji": "ja ju jo",
+      "phonemes": ["j", "a", "j", "u", "j", "o"],
+      "style": "cv",
+      "category": "j-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-025",
+      "text": "びゃびゅびょ",
+      "romaji": "bya byu byo",
+      "phonemes": ["by", "a", "by", "u", "by", "o"],
+      "style": "cv",
+      "category": "by-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-026",
+      "text": "ぴゃぴゅぴょ",
+      "romaji": "pya pyu pyo",
+      "phonemes": ["py", "a", "py", "u", "py", "o"],
+      "style": "cv",
+      "category": "py-combination",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-027",
+      "text": "っか っき っく っけ っこ",
+      "romaji": "kka kki kku kke kko",
+      "phonemes": ["cl", "k", "a", "cl", "k", "i", "cl", "k", "u", "cl", "k", "e", "cl", "k", "o"],
+      "style": "cv",
+      "category": "geminate-k",
+      "difficulty": "intermediate",
+      "notes": "Geminate (double) consonants - hold the closure"
+    },
+    {
+      "id": "ja-cv-028",
+      "text": "っさ っし っす っせ っそ",
+      "romaji": "ssa sshi ssu sse sso",
+      "phonemes": ["cl", "s", "a", "cl", "sh", "i", "cl", "s", "u", "cl", "s", "e", "cl", "s", "o"],
+      "style": "cv",
+      "category": "geminate-s",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-029",
+      "text": "った っち っつ って っと",
+      "romaji": "tta cchi ttsu tte tto",
+      "phonemes": ["cl", "t", "a", "cl", "ch", "i", "cl", "ts", "u", "cl", "t", "e", "cl", "t", "o"],
+      "style": "cv",
+      "category": "geminate-t",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-030",
+      "text": "っぱ っぴ っぷ っぺ っぽ",
+      "romaji": "ppa ppi ppu ppe ppo",
+      "phonemes": ["cl", "p", "a", "cl", "p", "i", "cl", "p", "u", "cl", "p", "e", "cl", "p", "o"],
+      "style": "cv",
+      "category": "geminate-p",
+      "difficulty": "intermediate",
+      "notes": null
+    },
+    {
+      "id": "ja-cv-031",
+      "text": "ふぁふぃふぇふぉ",
+      "romaji": "fa fi fe fo",
+      "phonemes": ["f", "a", "f", "i", "f", "e", "f", "o"],
+      "style": "cv",
+      "category": "extended-f",
+      "difficulty": "advanced",
+      "notes": "Extended kana for foreign words"
+    },
+    {
+      "id": "ja-cv-032",
+      "text": "てぃでぃ",
+      "romaji": "ti di",
+      "phonemes": ["t", "i", "d", "i"],
+      "style": "cv",
+      "category": "extended-td",
+      "difficulty": "advanced",
+      "notes": "ti/di sounds for loanwords"
+    },
+    {
+      "id": "ja-cv-033",
+      "text": "とぅどぅ",
+      "romaji": "tu du",
+      "phonemes": ["t", "u", "d", "u"],
+      "style": "cv",
+      "category": "extended-td",
+      "difficulty": "advanced",
+      "notes": "tu/du sounds for loanwords"
+    },
+    {
+      "id": "ja-cv-034",
+      "text": "ゔぁゔぃゔゔぇゔぉ",
+      "romaji": "va vi vu ve vo",
+      "phonemes": ["v", "a", "v", "i", "v", "u", "v", "e", "v", "o"],
+      "style": "cv",
+      "category": "extended-v",
+      "difficulty": "advanced",
+      "notes": "V sounds for foreign words (optional)"
+    },
+    {
+      "id": "ja-cv-035",
+      "text": "つぁつぃつぇつぉ",
+      "romaji": "tsa tsi tse tso",
+      "phonemes": ["ts", "a", "ts", "i", "ts", "e", "ts", "o"],
+      "style": "cv",
+      "category": "extended-ts",
+      "difficulty": "advanced",
+      "notes": "Extended ts combinations"
+    },
+    {
+      "id": "ja-cv-036",
+      "text": "うぃうぇうぉ",
+      "romaji": "wi we wo",
+      "phonemes": ["w", "i", "w", "e", "w", "o"],
+      "style": "cv",
+      "category": "extended-w",
+      "difficulty": "advanced",
+      "notes": "Extended w sounds"
+    },
+    {
+      "id": "ja-vcv-001",
+      "text": "あかあ",
+      "romaji": "a ka a",
+      "phonemes": ["a", "k", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": "Vowel-to-ka transition, capture a ka alias"
+    },
+    {
+      "id": "ja-vcv-002",
+      "text": "あさあ",
+      "romaji": "a sa a",
+      "phonemes": ["a", "s", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-003",
+      "text": "あたあ",
+      "romaji": "a ta a",
+      "phonemes": ["a", "t", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-004",
+      "text": "あなあ",
+      "romaji": "a na a",
+      "phonemes": ["a", "n", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-005",
+      "text": "あはあ",
+      "romaji": "a ha a",
+      "phonemes": ["a", "h", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-006",
+      "text": "あまあ",
+      "romaji": "a ma a",
+      "phonemes": ["a", "m", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-007",
+      "text": "あやあ",
+      "romaji": "a ya a",
+      "phonemes": ["a", "y", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-008",
+      "text": "あらあ",
+      "romaji": "a ra a",
+      "phonemes": ["a", "r", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-009",
+      "text": "あわあ",
+      "romaji": "a wa a",
+      "phonemes": ["a", "w", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-010",
+      "text": "あがあ",
+      "romaji": "a ga a",
+      "phonemes": ["a", "g", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-011",
+      "text": "あざあ",
+      "romaji": "a za a",
+      "phonemes": ["a", "z", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-012",
+      "text": "あだあ",
+      "romaji": "a da a",
+      "phonemes": ["a", "d", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-013",
+      "text": "あばあ",
+      "romaji": "a ba a",
+      "phonemes": ["a", "b", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-014",
+      "text": "あぱあ",
+      "romaji": "a pa a",
+      "phonemes": ["a", "p", "a", "a"],
+      "style": "vcv",
+      "category": "a-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-015",
+      "text": "いきい",
+      "romaji": "i ki i",
+      "phonemes": ["i", "k", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-016",
+      "text": "いしい",
+      "romaji": "i shi i",
+      "phonemes": ["i", "sh", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-017",
+      "text": "いちい",
+      "romaji": "i chi i",
+      "phonemes": ["i", "ch", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-018",
+      "text": "いにい",
+      "romaji": "i ni i",
+      "phonemes": ["i", "n", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-019",
+      "text": "いひい",
+      "romaji": "i hi i",
+      "phonemes": ["i", "h", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-020",
+      "text": "いみい",
+      "romaji": "i mi i",
+      "phonemes": ["i", "m", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-021",
+      "text": "いりい",
+      "romaji": "i ri i",
+      "phonemes": ["i", "r", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-022",
+      "text": "いぎい",
+      "romaji": "i gi i",
+      "phonemes": ["i", "g", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-023",
+      "text": "いじい",
+      "romaji": "i ji i",
+      "phonemes": ["i", "j", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-024",
+      "text": "いびい",
+      "romaji": "i bi i",
+      "phonemes": ["i", "b", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-025",
+      "text": "いぴい",
+      "romaji": "i pi i",
+      "phonemes": ["i", "p", "i", "i"],
+      "style": "vcv",
+      "category": "i-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-026",
+      "text": "うくう",
+      "romaji": "u ku u",
+      "phonemes": ["u", "k", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-027",
+      "text": "うすう",
+      "romaji": "u su u",
+      "phonemes": ["u", "s", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-028",
+      "text": "うつう",
+      "romaji": "u tsu u",
+      "phonemes": ["u", "ts", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-029",
+      "text": "うぬう",
+      "romaji": "u nu u",
+      "phonemes": ["u", "n", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-030",
+      "text": "うふう",
+      "romaji": "u fu u",
+      "phonemes": ["u", "f", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-031",
+      "text": "うむう",
+      "romaji": "u mu u",
+      "phonemes": ["u", "m", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-032",
+      "text": "うゆう",
+      "romaji": "u yu u",
+      "phonemes": ["u", "y", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-033",
+      "text": "うるう",
+      "romaji": "u ru u",
+      "phonemes": ["u", "r", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-034",
+      "text": "うぐう",
+      "romaji": "u gu u",
+      "phonemes": ["u", "g", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-035",
+      "text": "うずう",
+      "romaji": "u zu u",
+      "phonemes": ["u", "z", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-036",
+      "text": "うぶう",
+      "romaji": "u bu u",
+      "phonemes": ["u", "b", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-037",
+      "text": "うぷう",
+      "romaji": "u pu u",
+      "phonemes": ["u", "p", "u", "u"],
+      "style": "vcv",
+      "category": "u-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-038",
+      "text": "えけえ",
+      "romaji": "e ke e",
+      "phonemes": ["e", "k", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-039",
+      "text": "えせえ",
+      "romaji": "e se e",
+      "phonemes": ["e", "s", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-040",
+      "text": "えてえ",
+      "romaji": "e te e",
+      "phonemes": ["e", "t", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-041",
+      "text": "えねえ",
+      "romaji": "e ne e",
+      "phonemes": ["e", "n", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-042",
+      "text": "えへえ",
+      "romaji": "e he e",
+      "phonemes": ["e", "h", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-043",
+      "text": "えめえ",
+      "romaji": "e me e",
+      "phonemes": ["e", "m", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-044",
+      "text": "えれえ",
+      "romaji": "e re e",
+      "phonemes": ["e", "r", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-045",
+      "text": "えげえ",
+      "romaji": "e ge e",
+      "phonemes": ["e", "g", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-046",
+      "text": "えぜえ",
+      "romaji": "e ze e",
+      "phonemes": ["e", "z", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-047",
+      "text": "えでえ",
+      "romaji": "e de e",
+      "phonemes": ["e", "d", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-048",
+      "text": "えべえ",
+      "romaji": "e be e",
+      "phonemes": ["e", "b", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-049",
+      "text": "えぺえ",
+      "romaji": "e pe e",
+      "phonemes": ["e", "p", "e", "e"],
+      "style": "vcv",
+      "category": "e-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-050",
+      "text": "おこお",
+      "romaji": "o ko o",
+      "phonemes": ["o", "k", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-051",
+      "text": "おそお",
+      "romaji": "o so o",
+      "phonemes": ["o", "s", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-052",
+      "text": "おとお",
+      "romaji": "o to o",
+      "phonemes": ["o", "t", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-053",
+      "text": "おのお",
+      "romaji": "o no o",
+      "phonemes": ["o", "n", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-054",
+      "text": "おほお",
+      "romaji": "o ho o",
+      "phonemes": ["o", "h", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-055",
+      "text": "おもお",
+      "romaji": "o mo o",
+      "phonemes": ["o", "m", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-056",
+      "text": "およお",
+      "romaji": "o yo o",
+      "phonemes": ["o", "y", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-057",
+      "text": "おろお",
+      "romaji": "o ro o",
+      "phonemes": ["o", "r", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-058",
+      "text": "おごお",
+      "romaji": "o go o",
+      "phonemes": ["o", "g", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-059",
+      "text": "おぞお",
+      "romaji": "o zo o",
+      "phonemes": ["o", "z", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-060",
+      "text": "おどお",
+      "romaji": "o do o",
+      "phonemes": ["o", "d", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-061",
+      "text": "おぼお",
+      "romaji": "o bo o",
+      "phonemes": ["o", "b", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-062",
+      "text": "おぽお",
+      "romaji": "o po o",
+      "phonemes": ["o", "p", "o", "o"],
+      "style": "vcv",
+      "category": "o-transitions",
+      "difficulty": "basic",
+      "notes": null
+    },
+    {
+      "id": "ja-vcv-063",
+      "text": "あきあ いかい うくう えけえ おこお",
+      "romaji": "a ki a, i ka i, u ku u, e ke e, o ko o",
+      "phonemes": ["a", "k", "i", "a", "i", "k", "a", "i", "u", "k", "u", "u", "e", "k", "e", "e", "o", "k", "o", "o"],
+      "style": "vcv",
+      "category": "cross-vowel-k",
+      "difficulty": "intermediate",
+      "notes": "Cross-vowel transitions for k consonant"
+    },
+    {
+      "id": "ja-vcv-064",
+      "text": "あしあ いさい うすう えせえ おそお",
+      "romaji": "a shi a, i sa i, u su u, e se e, o so o",
+      "phonemes": ["a", "sh", "i", "a", "i", "s", "a", "i", "u", "s", "u", "u", "e", "s", "e", "e", "o", "s", "o", "o"],
+      "style": "vcv",
+      "category": "cross-vowel-s",
+      "difficulty": "intermediate",
+      "notes": "Cross-vowel transitions for s/sh consonant"
+    },
+    {
+      "id": "ja-vcv-065",
+      "text": "あんあ いんい うんう えんえ おんお",
+      "romaji": "a n a, i n i, u n u, e n e, o n o",
+      "phonemes": ["a", "N", "a", "i", "N", "i", "u", "N", "u", "e", "N", "e", "o", "N", "o"],
+      "style": "vcv",
+      "category": "syllabic-n-transitions",
+      "difficulty": "intermediate",
+      "notes": "Syllabic n transitions for all vowels"
+    },
+    {
+      "id": "ja-vcv-066",
+      "text": "あきゃあ あきゅあ あきょあ",
+      "romaji": "a kya a, a kyu a, a kyo a",
+      "phonemes": ["a", "ky", "a", "a", "a", "ky", "u", "a", "a", "ky", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized k transitions"
+    },
+    {
+      "id": "ja-vcv-067",
+      "text": "あしゃあ あしゅあ あしょあ",
+      "romaji": "a sha a, a shu a, a sho a",
+      "phonemes": ["a", "sh", "a", "a", "a", "sh", "u", "a", "a", "sh", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "sh combination transitions"
+    },
+    {
+      "id": "ja-vcv-068",
+      "text": "あちゃあ あちゅあ あちょあ",
+      "romaji": "a cha a, a chu a, a cho a",
+      "phonemes": ["a", "ch", "a", "a", "a", "ch", "u", "a", "a", "ch", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "ch combination transitions"
+    },
+    {
+      "id": "ja-vcv-069",
+      "text": "あにゃあ あにゅあ あにょあ",
+      "romaji": "a nya a, a nyu a, a nyo a",
+      "phonemes": ["a", "ny", "a", "a", "a", "ny", "u", "a", "a", "ny", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized n transitions"
+    },
+    {
+      "id": "ja-vcv-070",
+      "text": "あひゃあ あひゅあ あひょあ",
+      "romaji": "a hya a, a hyu a, a hyo a",
+      "phonemes": ["a", "hy", "a", "a", "a", "hy", "u", "a", "a", "hy", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized h transitions"
+    },
+    {
+      "id": "ja-vcv-071",
+      "text": "あみゃあ あみゅあ あみょあ",
+      "romaji": "a mya a, a myu a, a myo a",
+      "phonemes": ["a", "my", "a", "a", "a", "my", "u", "a", "a", "my", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized m transitions"
+    },
+    {
+      "id": "ja-vcv-072",
+      "text": "ありゃあ ありゅあ ありょあ",
+      "romaji": "a rya a, a ryu a, a ryo a",
+      "phonemes": ["a", "ry", "a", "a", "a", "ry", "u", "a", "a", "ry", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized r transitions"
+    },
+    {
+      "id": "ja-vcv-073",
+      "text": "あぎゃあ あぎゅあ あぎょあ",
+      "romaji": "a gya a, a gyu a, a gyo a",
+      "phonemes": ["a", "gy", "a", "a", "a", "gy", "u", "a", "a", "gy", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Voiced palatalized g transitions"
+    },
+    {
+      "id": "ja-vcv-074",
+      "text": "あじゃあ あじゅあ あじょあ",
+      "romaji": "a ja a, a ju a, a jo a",
+      "phonemes": ["a", "j", "a", "a", "a", "j", "u", "a", "a", "j", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "j sound transitions"
+    },
+    {
+      "id": "ja-vcv-075",
+      "text": "あびゃあ あびゅあ あびょあ",
+      "romaji": "a bya a, a byu a, a byo a",
+      "phonemes": ["a", "by", "a", "a", "a", "by", "u", "a", "a", "by", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized b transitions"
+    },
+    {
+      "id": "ja-vcv-076",
+      "text": "あぴゃあ あぴゅあ あぴょあ",
+      "romaji": "a pya a, a pyu a, a pyo a",
+      "phonemes": ["a", "py", "a", "a", "a", "py", "u", "a", "a", "py", "o", "a"],
+      "style": "vcv",
+      "category": "palatalized-transitions",
+      "difficulty": "intermediate",
+      "notes": "Palatalized p transitions"
+    },
+    {
+      "id": "ja-sent-001",
+      "text": "すもももももももものうち",
+      "romaji": "sumomo mo momo mo momo no uchi",
+      "phonemes": ["s", "u", "m", "o", "m", "o", "m", "o", "m", "o", "m", "o", "m", "o", "n", "o", "u", "ch", "i"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "advanced",
+      "notes": "Famous tongue twister: Both plums and peaches are fruits. Good for m/o sounds"
+    },
+    {
+      "id": "ja-sent-002",
+      "text": "となりのきゃくはよくかきくうきゃくだ",
+      "romaji": "tonari no kyaku wa yoku kaki kuu kyaku da",
+      "phonemes": ["t", "o", "n", "a", "r", "i", "n", "o", "ky", "a", "k", "u", "w", "a", "y", "o", "k", "u", "k", "a", "k", "i", "k", "u", "u", "ky", "a", "k", "u", "d", "a"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "advanced",
+      "notes": "The neighbor is a guest who eats lots of persimmons. Good for k sounds"
+    },
+    {
+      "id": "ja-sent-003",
+      "text": "あかまきがみあおまきがみきまきがみ",
+      "romaji": "aka makigami ao makigami ki makigami",
+      "phonemes": ["a", "k", "a", "m", "a", "k", "i", "g", "a", "m", "i", "a", "o", "m", "a", "k", "i", "g", "a", "m", "i", "k", "i", "m", "a", "k", "i", "g", "a", "m", "i"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "advanced",
+      "notes": "Red scroll, blue scroll, yellow scroll. Good for k/m/g transitions"
+    },
+    {
+      "id": "ja-sent-004",
+      "text": "にわにはにわにわとりがいる",
+      "romaji": "niwa ni wa niwa niwatori ga iru",
+      "phonemes": ["n", "i", "w", "a", "n", "i", "w", "a", "n", "i", "w", "a", "n", "i", "w", "a", "t", "o", "r", "i", "g", "a", "i", "r", "u"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "intermediate",
+      "notes": "There are two chickens in the garden. Good for n/w sounds"
+    },
+    {
+      "id": "ja-sent-005",
+      "text": "きょうのよるはひじょうにさむくなるでしょう",
+      "romaji": "kyou no yoru wa hijou ni samuku naru deshou",
+      "phonemes": ["ky", "o", "u", "n", "o", "y", "o", "r", "u", "w", "a", "h", "i", "j", "o", "u", "n", "i", "s", "a", "m", "u", "k", "u", "n", "a", "r", "u", "d", "e", "sh", "o", "u"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "intermediate",
+      "notes": "Tonight will be extremely cold. Natural sentence with varied phonemes"
+    },
+    {
+      "id": "ja-sent-006",
+      "text": "さくらのはなびらがかぜにちりゆく",
+      "romaji": "sakura no hanabira ga kaze ni chiri yuku",
+      "phonemes": ["s", "a", "k", "u", "r", "a", "n", "o", "h", "a", "n", "a", "b", "i", "r", "a", "g", "a", "k", "a", "z", "e", "n", "i", "ch", "i", "r", "i", "y", "u", "k", "u"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "intermediate",
+      "notes": "Cherry blossom petals scatter in the wind. Poetic, natural phoneme distribution"
+    },
+    {
+      "id": "ja-sent-007",
+      "text": "ぶたがぶたをぶったらぶたれたぶたがぶったぶたをぶった",
+      "romaji": "buta ga buta wo buttara butareta buta ga butta buta wo butta",
+      "phonemes": ["b", "u", "t", "a", "g", "a", "b", "u", "t", "a", "w", "o", "b", "u", "cl", "t", "a", "r", "a", "b", "u", "t", "a", "r", "e", "t", "a", "b", "u", "t", "a", "g", "a", "b", "u", "cl", "t", "a", "b", "u", "t", "a", "w", "o", "b", "u", "cl", "t", "a"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "advanced",
+      "notes": "Pig tongue twister. Excellent for b/t sounds and geminate practice"
+    },
+    {
+      "id": "ja-sent-008",
+      "text": "しょじょしびょうふぜいしきにちょしゃしゃしんしゅうしゅう",
+      "romaji": "shojo shibyou fuzei shiki ni chosha shashin shuushuu",
+      "phonemes": ["sh", "o", "j", "o", "sh", "i", "by", "o", "u", "f", "u", "z", "e", "i", "sh", "i", "k", "i", "n", "i", "ch", "o", "sh", "a", "sh", "a", "sh", "i", "N", "sh", "u", "u", "sh", "u", "u"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "advanced",
+      "notes": "Sibilant-heavy sentence for sh/j/ch practice"
+    },
+    {
+      "id": "ja-sent-009",
+      "text": "ばらばらにちらばったからふるなはなびらをひろいあつめた",
+      "romaji": "barabara ni chirabatta karafuru na hanabira wo hiroi atsumeta",
+      "phonemes": ["b", "a", "r", "a", "b", "a", "r", "a", "n", "i", "ch", "i", "r", "a", "b", "a", "cl", "t", "a", "k", "a", "r", "a", "f", "u", "r", "u", "n", "a", "h", "a", "n", "a", "b", "i", "r", "a", "w", "o", "h", "i", "r", "o", "i", "a", "ts", "u", "m", "e", "t", "a"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "advanced",
+      "notes": "I gathered the scattered colorful petals. Good overall phoneme coverage"
+    },
+    {
+      "id": "ja-sent-010",
+      "text": "パピプペポはいんしょうてきなおんせつです",
+      "romaji": "pa pi pu pe po wa inshou teki na onsetsu desu",
+      "phonemes": ["p", "a", "p", "i", "p", "u", "p", "e", "p", "o", "w", "a", "i", "N", "sh", "o", "u", "t", "e", "k", "i", "n", "a", "o", "N", "s", "e", "ts", "u", "d", "e", "s", "u"],
+      "style": "cv",
+      "category": "sentences",
+      "difficulty": "intermediate",
+      "notes": "Pa-pi-pu-pe-po are impressive syllables. Covers p-row and common sounds"
+    },
+    {
+      "id": "ja-breath-001",
+      "text": "あー",
+      "romaji": "aa",
+      "phonemes": ["a", "-"],
+      "style": "cv",
+      "category": "breath-sounds",
+      "difficulty": "basic",
+      "notes": "Sustained a vowel for breath sample"
+    },
+    {
+      "id": "ja-breath-002",
+      "text": "いー",
+      "romaji": "ii",
+      "phonemes": ["i", "-"],
+      "style": "cv",
+      "category": "breath-sounds",
+      "difficulty": "basic",
+      "notes": "Sustained i vowel for breath sample"
+    },
+    {
+      "id": "ja-breath-003",
+      "text": "うー",
+      "romaji": "uu",
+      "phonemes": ["u", "-"],
+      "style": "cv",
+      "category": "breath-sounds",
+      "difficulty": "basic",
+      "notes": "Sustained u vowel for breath sample"
+    },
+    {
+      "id": "ja-breath-004",
+      "text": "えー",
+      "romaji": "ee",
+      "phonemes": ["e", "-"],
+      "style": "cv",
+      "category": "breath-sounds",
+      "difficulty": "basic",
+      "notes": "Sustained e vowel for breath sample"
+    },
+    {
+      "id": "ja-breath-005",
+      "text": "おー",
+      "romaji": "oo",
+      "phonemes": ["o", "-"],
+      "style": "cv",
+      "category": "breath-sounds",
+      "difficulty": "basic",
+      "notes": "Sustained o vowel for breath sample"
+    },
+    {
+      "id": "ja-breath-006",
+      "text": "んー",
+      "romaji": "nn",
+      "phonemes": ["N", "-"],
+      "style": "cv",
+      "category": "breath-sounds",
+      "difficulty": "basic",
+      "notes": "Sustained syllabic n for breath sample"
+    }
+  ],
+  "coverage": {
+    "cv": {
+      "vowels": ["a", "i", "u", "e", "o"],
+      "consonants": [
+        "k", "s", "sh", "t", "ch", "ts", "n", "h", "f", "m", "y", "r", "w",
+        "g", "z", "j", "d", "b", "p",
+        "ky", "sh", "ch", "ny", "hy", "my", "ry",
+        "gy", "j", "by", "py",
+        "v"
+      ],
+      "special": ["N", "cl", "-"]
+    },
+    "vcv": {
+      "transitions": [
+        "a_ka", "a_sa", "a_ta", "a_na", "a_ha", "a_ma", "a_ya", "a_ra", "a_wa",
+        "a_ga", "a_za", "a_da", "a_ba", "a_pa",
+        "i_ki", "i_shi", "i_chi", "i_ni", "i_hi", "i_mi", "i_ri",
+        "i_gi", "i_ji", "i_bi", "i_pi",
+        "u_ku", "u_su", "u_tsu", "u_nu", "u_fu", "u_mu", "u_yu", "u_ru",
+        "u_gu", "u_zu", "u_bu", "u_pu",
+        "e_ke", "e_se", "e_te", "e_ne", "e_he", "e_me", "e_re",
+        "e_ge", "e_ze", "e_de", "e_be", "e_pe",
+        "o_ko", "o_so", "o_to", "o_no", "o_ho", "o_mo", "o_yo", "o_ro",
+        "o_go", "o_zo", "o_do", "o_bo", "o_po",
+        "a_ki", "i_ka", "u_ku", "e_ke", "o_ko",
+        "a_N", "i_N", "u_N", "e_N", "o_N",
+        "a_kya", "a_kyu", "a_kyo",
+        "a_sha", "a_shu", "a_sho",
+        "a_cha", "a_chu", "a_cho",
+        "a_nya", "a_nyu", "a_nyo",
+        "a_hya", "a_hyu", "a_hyo",
+        "a_mya", "a_myu", "a_myo",
+        "a_rya", "a_ryu", "a_ryo",
+        "a_gya", "a_gyu", "a_gyo",
+        "a_ja", "a_ju", "a_jo",
+        "a_bya", "a_byu", "a_byo",
+        "a_pya", "a_pyu", "a_pyo"
+      ]
+    }
+  }
+}

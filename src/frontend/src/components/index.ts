@@ -25,3 +25,10 @@ export { UvmUploadZone } from './uvm-upload-zone.js';
 
 // Toast notification manager for user feedback
 export { UvmToastManager } from './uvm-toast-manager.js';
+
+// Recording prompter for guided recording sessions
+export { UvmRecordingPrompter } from './uvm-recording-prompter.js';
+export type { PhonemePrompt } from './uvm-recording-prompter.js';
+
+// Recording session for guided voicebank creation flow
+export { UvmRecordingSession } from './uvm-recording-session.js';

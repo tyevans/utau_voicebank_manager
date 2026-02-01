@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# script/server: Start development servers
+
+set -e
+cd "$(dirname "$0")/.."
+
+# Use trap to kill both processes on exit
+trap 'kill 0' EXIT
+
+echo "==> Starting backend on :8000..."
+uv run fastapi dev src/backend/main.py &
+
+echo "==> Starting frontend on :5173..."
+cd src/frontend && npm run dev &
+
+wait

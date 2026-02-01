@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# script/update: Update application dependencies
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Updating Python dependencies..."
+uv sync --upgrade
+
+echo "==> Updating frontend dependencies..."
+cd src/frontend && npm update
+
+echo "==> Update complete!"

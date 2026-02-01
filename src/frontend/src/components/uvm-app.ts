@@ -4,6 +4,7 @@ import { customElement, state } from 'lit/decorators.js';
 // Import Shoelace components used in this file
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
+import '@shoelace-style/shoelace/dist/components/button/button.js';
 
 // Set Shoelace base path for assets (icons, etc.)
 import { setBasePath } from '@shoelace-style/shoelace/dist/utilities/base-path.js';
@@ -12,8 +13,16 @@ setBasePath('/node_modules/@shoelace-style/shoelace/dist');
 // Import the editor view component
 import './uvm-editor-view.js';
 
+// Import the recording session component
+import './uvm-recording-session.js';
+
 // Import the toast manager for notifications
 import './uvm-toast-manager.js';
+
+/**
+ * Application view type.
+ */
+type AppView = 'editor' | 'recording';
 
 /**
  * Root application component for UTAU Voicebank Manager.
@@ -69,6 +78,28 @@ export class UvmApp extends LitElement {
       opacity: 1;
     }
 
+    .app-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .app-nav sl-button::part(base) {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: white;
+    }
+
+    .app-nav sl-button::part(base):hover {
+      background: rgba(255, 255, 255, 0.25);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .app-nav sl-button[data-active]::part(base) {
+      background: rgba(255, 255, 255, 0.3);
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
     .app-main {
       flex: 1;
       padding: 1rem;
@@ -79,9 +110,56 @@ export class UvmApp extends LitElement {
   @state()
   private _initialized = false;
 
+  @state()
+  private _currentView: AppView = 'editor';
+
   connectedCallback(): void {
     super.connectedCallback();
     this._initialized = true;
+  }
+
+  /**
+   * Switch to the editor view.
+   */
+  private _showEditor(): void {
+    this._currentView = 'editor';
+  }
+
+  /**
+   * Switch to the recording session view.
+   */
+  private _showRecording(): void {
+    this._currentView = 'recording';
+  }
+
+  /**
+   * Handle session complete event from recording view.
+   */
+  private _onSessionComplete(): void {
+    // Switch back to editor to see the new voicebank
+    this._currentView = 'editor';
+  }
+
+  /**
+   * Render the current view content.
+   */
+  private _renderContent() {
+    if (!this._initialized) {
+      return html`<p>Loading...</p>`;
+    }
+
+    switch (this._currentView) {
+      case 'recording':
+        return html`
+          <uvm-recording-session
+            @session-complete=${this._onSessionComplete}
+            @session-cancelled=${this._showEditor}
+          ></uvm-recording-session>
+        `;
+      case 'editor':
+      default:
+        return html`<uvm-editor-view></uvm-editor-view>`;
+    }
   }
 
   render() {
@@ -92,6 +170,24 @@ export class UvmApp extends LitElement {
             <sl-icon name="music-note-beamed"></sl-icon>
             UTAU Voicebank Manager
           </h1>
+          <nav class="app-nav">
+            <sl-button
+              size="small"
+              ?data-active=${this._currentView === 'editor'}
+              @click=${this._showEditor}
+            >
+              <sl-icon slot="prefix" name="pencil-square"></sl-icon>
+              Editor
+            </sl-button>
+            <sl-button
+              size="small"
+              ?data-active=${this._currentView === 'recording'}
+              @click=${this._showRecording}
+            >
+              <sl-icon slot="prefix" name="mic-fill"></sl-icon>
+              Create Voicebank
+            </sl-button>
+          </nav>
           <div class="app-header-actions">
             <sl-icon-button
               name="gear"
@@ -101,9 +197,7 @@ export class UvmApp extends LitElement {
         </header>
 
         <main class="app-main">
-          ${this._initialized
-            ? html`<uvm-editor-view></uvm-editor-view>`
-            : html`<p>Loading...</p>`}
+          ${this._renderContent()}
         </main>
         <uvm-toast-manager></uvm-toast-manager>
       </div>

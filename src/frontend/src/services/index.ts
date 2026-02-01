@@ -8,6 +8,22 @@
 // API client
 export { api, ApiClient, ApiError } from './api.js';
 
+// Recording session API client
+export {
+  recordingApi,
+  RecordingApiService,
+} from './recording-api.js';
+
+// Recording API types
+export type {
+  GeneratedVoicebank,
+  RecordingSegment,
+  RecordingSession,
+  SessionConfig,
+  SessionProgress,
+  SessionStatus,
+} from './recording-api.js';
+
 // Type definitions
 export type {
   MlStatus,

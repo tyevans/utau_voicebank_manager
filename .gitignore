@@ -54,16 +54,19 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-# Audio samples and user data
-data/
-voicebanks/
-samples/
+# Audio samples and user data (root level only)
+/data/
+/voicebanks/
+/samples/
 *.wav
 *.mp3
 
 # Claude Code local settings
-.claude/settings.local.json
+.claude/
 CLAUDE.local.md
+
+# Beads task tracking (local)
+.beads/
 
 # Logs
 logs/

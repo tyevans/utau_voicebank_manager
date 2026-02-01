@@ -4,6 +4,13 @@ from src.backend.domain.batch_oto import BatchOtoRequest, BatchOtoResult
 from src.backend.domain.oto_entry import OtoEntry
 from src.backend.domain.oto_suggestion import OtoSuggestion, OtoSuggestionRequest
 from src.backend.domain.phoneme import PhonemeDetectionResult, PhonemeSegment
+from src.backend.domain.prompt import (
+    CVCoverage,
+    PhonemeCoverage,
+    PhonemePrompt,
+    PromptLibrary,
+    VCVCoverage,
+)
 from src.backend.domain.recording_session import (
     RecordingSegment,
     RecordingSession,
@@ -18,11 +25,15 @@ from src.backend.domain.voicebank import Voicebank, VoicebankCreate, VoicebankSu
 __all__ = [
     "BatchOtoRequest",
     "BatchOtoResult",
+    "CVCoverage",
     "OtoEntry",
     "OtoSuggestion",
     "OtoSuggestionRequest",
+    "PhonemeCoverage",
     "PhonemeDetectionResult",
+    "PhonemePrompt",
     "PhonemeSegment",
+    "PromptLibrary",
     "RecordingSegment",
     "RecordingSession",
     "RecordingSessionCreate",
@@ -30,6 +41,7 @@ __all__ = [
     "SegmentUpload",
     "SessionProgress",
     "SessionStatus",
+    "VCVCoverage",
     "Voicebank",
     "VoicebankCreate",
     "VoicebankSummary",

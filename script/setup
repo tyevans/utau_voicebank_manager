@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# script/setup: Set up application for the first time after cloning
+
+set -e
+cd "$(dirname "$0")/.."
+
+script/bootstrap
+
+echo "==> Creating data directories..."
+mkdir -p data/voicebanks data/sessions models
+
+echo "==> Setup complete!"
+echo "    Run 'script/server' to start development servers"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# script/models: Download ML models for phoneme detection
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Downloading ML models..."
+uv run python -m src.backend.ml.download_models
+
+echo "==> Models downloaded to models/"
