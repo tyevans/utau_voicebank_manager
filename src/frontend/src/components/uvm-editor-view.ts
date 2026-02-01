@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
+import type { AfterEnterObserver, RouterLocation } from '@vaadin/router';
 
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/input/input.js';
@@ -71,7 +72,7 @@ interface MarkerChangeDetail {
  * ```
  */
 @customElement('uvm-editor-view')
-export class UvmEditorView extends LitElement {
+export class UvmEditorView extends LitElement implements AfterEnterObserver {
   static styles = css`
     :host {
       display: block;
@@ -84,8 +85,10 @@ export class UvmEditorView extends LitElement {
       grid-template-columns: minmax(400px, 500px) 1fr minmax(260px, 300px);
       grid-template-rows: 1fr;
       gap: 1rem;
+      padding: 1rem 1.5rem;
       height: calc(100vh - 120px);
       min-height: 500px;
+      box-sizing: border-box;
     }
 
     @media (max-width: 1400px) {
@@ -105,6 +108,7 @@ export class UvmEditorView extends LitElement {
         grid-template-columns: 1fr;
         grid-template-rows: auto 1fr auto;
         height: auto;
+        padding: 0.75rem 1rem;
       }
     }
 
@@ -131,9 +135,9 @@ export class UvmEditorView extends LitElement {
 
     .params-panel {
       background-color: #ffffff;
-      border: 1px solid #e5e7eb;
+      border: 1px solid #d1d5db;
       border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -144,8 +148,8 @@ export class UvmEditorView extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 0.5rem;
-      padding: 0.625rem 0.875rem;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
       background-color: #fafafa;
       border-bottom: 1px solid #e5e7eb;
     }
@@ -165,10 +169,10 @@ export class UvmEditorView extends LitElement {
     }
 
     .params-content {
-      padding: 0.875rem;
+      padding: 1rem 1.25rem;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 1rem;
       flex: 1;
       overflow-y: auto;
       min-height: 0;
@@ -204,7 +208,7 @@ export class UvmEditorView extends LitElement {
     }
 
     .sample-info {
-      padding: 0.625rem 0.875rem;
+      padding: 0.75rem 1rem;
       background-color: #fafafa;
       border-bottom: 1px solid #e5e7eb;
     }
@@ -265,6 +269,111 @@ export class UvmEditorView extends LitElement {
       line-height: 1.5;
     }
 
+    /* Enhanced waveform empty state */
+    .waveform-empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+      text-align: center;
+      flex: 1;
+      min-height: 300px;
+      background-color: #fafbfc;
+      background-image:
+        radial-gradient(circle at 1px 1px, #e5e7eb 1px, transparent 0);
+      background-size: 24px 24px;
+      border: 2px dashed #d1d5db;
+      border-radius: 12px;
+    }
+
+    .waveform-empty-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+      max-width: 320px;
+    }
+
+    .waveform-empty-icon-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .waveform-empty-arrow {
+      font-size: 1.75rem;
+      color: #9ca3af;
+      animation: point-left 1.5s ease-in-out infinite;
+    }
+
+    @keyframes point-left {
+      0%, 100% {
+        transform: translateX(0);
+        opacity: 0.6;
+      }
+      50% {
+        transform: translateX(-6px);
+        opacity: 1;
+      }
+    }
+
+    .waveform-empty-waveform-icon {
+      font-size: 3.5rem;
+      color: #d1d5db;
+    }
+
+    .waveform-empty-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #374151;
+      margin: 0;
+    }
+
+    .waveform-empty-description {
+      font-size: 0.875rem;
+      color: #6b7280;
+      line-height: 1.6;
+      margin: 0;
+    }
+
+    .waveform-empty-hints {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.875rem 1rem;
+      background-color: rgba(255, 255, 255, 0.8);
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .waveform-empty-hint {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-size: 0.8125rem;
+      color: #6b7280;
+    }
+
+    .waveform-empty-hint sl-icon {
+      font-size: 1rem;
+      color: #9ca3af;
+      flex-shrink: 0;
+    }
+
+    .waveform-empty-hint kbd {
+      display: inline-block;
+      padding: 0.125rem 0.375rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #374151;
+      background-color: #f3f4f6;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      box-shadow: 0 1px 0 #d1d5db;
+    }
+
     .error-message {
       margin-bottom: 1rem;
     }
@@ -281,8 +390,8 @@ export class UvmEditorView extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
-      margin-top: 0.5rem;
-      padding-top: 0.75rem;
+      margin-top: 0.75rem;
+      padding-top: 1rem;
       border-top: 1px solid #e5e7eb;
     }
 
@@ -331,10 +440,10 @@ export class UvmEditorView extends LitElement {
     }
 
     .skeleton-params {
-      padding: 1rem;
+      padding: 1rem 1.25rem;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 1rem;
     }
 
     .skeleton-param-group {
@@ -348,7 +457,7 @@ export class UvmEditorView extends LitElement {
     }
 
     .sidebar-section {
-      margin-bottom: 1rem;
+      margin-bottom: 0.75rem;
     }
 
     .sidebar-section:last-child {
@@ -360,10 +469,10 @@ export class UvmEditorView extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
-      padding: 0.625rem;
+      padding: 0.875rem 1rem;
       background: #f9fafb;
       border-radius: 6px;
-      border: 1px solid #f3f4f6;
+      border: 1px solid #e5e7eb;
     }
 
     .marker-legend-title {
@@ -403,7 +512,7 @@ export class UvmEditorView extends LitElement {
 
     /* Precise values toggle section */
     .precise-values-toggle {
-      margin-top: 0.375rem;
+      margin-top: 0.5rem;
     }
 
     .precise-values-toggle sl-details::part(summary) {
@@ -418,13 +527,13 @@ export class UvmEditorView extends LitElement {
     }
 
     .precise-values-toggle sl-details::part(content) {
-      padding-top: 0.375rem;
+      padding-top: 0.5rem;
     }
 
     .precise-values-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0.375rem;
+      gap: 0.5rem;
     }
 
     .precise-values-grid .param-group {
@@ -457,6 +566,13 @@ export class UvmEditorView extends LitElement {
       color: #9ca3af;
     }
   `;
+
+  // URL parameter state (from router)
+  @state()
+  private _urlVoicebankId: string | null = null;
+
+  @state()
+  private _urlSampleId: string | null = null;
 
   // Current selection state
   @state()
@@ -530,6 +646,57 @@ export class UvmEditorView extends LitElement {
     // Add keyboard listener for Ctrl+S / Cmd+S
     this._boundKeyHandler = this._onKeyDown.bind(this);
     document.addEventListener('keydown', this._boundKeyHandler);
+
+    // Parse URL for deep linking (fallback if onAfterEnter isn't called)
+    this._parseUrlAndLoad();
+  }
+
+  /**
+   * Parse the current URL for deep linking parameters.
+   * This serves as a fallback when Vaadin Router lifecycle hooks aren't called.
+   */
+  private _parseUrlAndLoad(): void {
+    const path = window.location.pathname;
+    // Match /editor/:voicebankId/sample/:sampleId
+    const sampleMatch = path.match(/^\/editor\/([^/]+)\/sample\/([^/]+)$/);
+    if (sampleMatch) {
+      const voicebankId = decodeURIComponent(sampleMatch[1]);
+      const sampleId = decodeURIComponent(sampleMatch[2]);
+      this._loadSample(voicebankId, sampleId);
+      return;
+    }
+    // Match /editor/:voicebankId (voicebank only, no sample)
+    const voicebankMatch = path.match(/^\/editor\/([^/]+)$/);
+    if (voicebankMatch) {
+      this._urlVoicebankId = decodeURIComponent(voicebankMatch[1]);
+      // TODO: Could notify sample browser to select this voicebank
+    }
+  }
+
+  /**
+   * Vaadin Router lifecycle hook - called when navigating to this view.
+   * Reads URL parameters and loads the sample if specified.
+   */
+  onAfterEnter(location: RouterLocation): void {
+    const voicebankId = location.params.voicebankId as string | undefined;
+    const sampleId = location.params.sampleId as string | undefined;
+
+    if (voicebankId) {
+      this._urlVoicebankId = decodeURIComponent(voicebankId);
+    } else {
+      this._urlVoicebankId = null;
+    }
+
+    if (sampleId) {
+      this._urlSampleId = decodeURIComponent(sampleId);
+    } else {
+      this._urlSampleId = null;
+    }
+
+    // Load the sample if both IDs are present
+    if (this._urlVoicebankId && this._urlSampleId) {
+      this._loadSample(this._urlVoicebankId, this._urlSampleId);
+    }
   }
 
   disconnectedCallback(): void {
@@ -603,6 +770,10 @@ export class UvmEditorView extends LitElement {
       // Small delay to let UI update before starting detection
       setTimeout(() => this._autoDetect(), 100);
     }
+
+    // Update URL to reflect current selection
+    const newPath = `/editor/${encodeURIComponent(voicebankId)}/sample/${encodeURIComponent(filename)}`;
+    window.history.replaceState(null, '', newPath);
   }
 
   /**
@@ -1065,8 +1236,20 @@ export class UvmEditorView extends LitElement {
     return html`
       <uvm-sample-browser
         @sample-select=${this._onSampleSelect}
+        @voicebank-select=${this._onVoicebankSelect}
       ></uvm-sample-browser>
     `;
+  }
+
+  /**
+   * Handle voicebank selection from the sample browser.
+   * Updates the URL to reflect the selected voicebank.
+   */
+  private _onVoicebankSelect(e: CustomEvent<{ voicebankId: string }>): void {
+    const { voicebankId } = e.detail;
+    // Update URL to show voicebank selection (without triggering navigation)
+    const newPath = `/editor/${encodeURIComponent(voicebankId)}`;
+    window.history.replaceState(null, '', newPath);
   }
 
   /**
@@ -1075,11 +1258,26 @@ export class UvmEditorView extends LitElement {
   private _renderMainArea() {
     if (!this._currentFilename) {
       return html`
-        <div class="empty-state">
-          <sl-icon name="waveform"></sl-icon>
-          <div class="empty-state-text">
-            Select a sample from the browser to start editing.
-            Double-click or press Enter on a sample to load it.
+        <div class="waveform-empty-state">
+          <div class="waveform-empty-content">
+            <div class="waveform-empty-icon-row">
+              <sl-icon name="arrow-left" class="waveform-empty-arrow"></sl-icon>
+              <sl-icon name="soundwave" class="waveform-empty-waveform-icon"></sl-icon>
+            </div>
+            <h3 class="waveform-empty-title">No sample loaded</h3>
+            <p class="waveform-empty-description">
+              Select a sample from the browser panel on the left to start editing its oto parameters.
+            </p>
+            <div class="waveform-empty-hints">
+              <div class="waveform-empty-hint">
+                <sl-icon name="mouse"></sl-icon>
+                <span>Double-click a sample to load it</span>
+              </div>
+              <div class="waveform-empty-hint">
+                <sl-icon name="keyboard"></sl-icon>
+                <span>Or select and press <kbd>Enter</kbd></span>
+              </div>
+            </div>
           </div>
         </div>
       `;

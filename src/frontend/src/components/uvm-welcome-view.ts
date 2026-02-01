@@ -1,9 +1,14 @@
 import { LitElement, html, css } from 'lit';
 import { customElement } from 'lit/decorators.js';
+import { Router } from '@vaadin/router';
+import type { BeforeEnterObserver, RouterLocation, PreventAndRedirectCommands } from '@vaadin/router';
 
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
+
+/** Storage key to track whether user has created/imported voicebanks */
+const STORAGE_KEY_HAS_VOICEBANKS = 'uvm_has_voicebanks';
 
 /**
  * Welcome view component for first-time users.
@@ -12,19 +17,16 @@ import '@shoelace-style/shoelace/dist/components/icon/icon.js';
  * a friendly introduction to voicebank creation with clear
  * calls to action.
  *
- * @fires start-recording - Fired when the user clicks the "Start Recording" button
- * @fires import-voicebank - Fired when the user clicks the "Import existing voicebank" link
+ * Implements BeforeEnterObserver to redirect returning users
+ * (who have voicebanks) directly to the editor view.
  *
  * @example
  * ```html
- * <uvm-welcome-view
- *   @start-recording=${this._onStartRecording}
- *   @import-voicebank=${this._onImportVoicebank}
- * ></uvm-welcome-view>
+ * <uvm-welcome-view></uvm-welcome-view>
  * ```
  */
 @customElement('uvm-welcome-view')
-export class UvmWelcomeView extends LitElement {
+export class UvmWelcomeView extends LitElement implements BeforeEnterObserver {
   static styles = css`
     :host {
       display: flex;
@@ -174,27 +176,31 @@ export class UvmWelcomeView extends LitElement {
   `;
 
   /**
+   * Router lifecycle hook - redirects returning users to the editor.
+   */
+  onBeforeEnter(
+    location: RouterLocation,
+    commands: PreventAndRedirectCommands,
+    _router: Router
+  ): void | ReturnType<typeof commands.redirect> {
+    // If user has voicebanks and is hitting root, redirect to editor
+    if (location.pathname === '/' && localStorage.getItem(STORAGE_KEY_HAS_VOICEBANKS) === 'true') {
+      return commands.redirect('/editor');
+    }
+  }
+
+  /**
    * Handle start recording button click.
    */
   private _onStartRecording(): void {
-    this.dispatchEvent(
-      new CustomEvent('start-recording', {
-        bubbles: true,
-        composed: true,
-      })
-    );
+    Router.go('/recording');
   }
 
   /**
    * Handle import voicebank action.
    */
   private _onImportVoicebank(): void {
-    this.dispatchEvent(
-      new CustomEvent('import-voicebank', {
-        bubbles: true,
-        composed: true,
-      })
-    );
+    Router.go('/editor');
   }
 
   render() {

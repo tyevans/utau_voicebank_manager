@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { Router } from '@vaadin/router';
 
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/button/button.js';
@@ -26,6 +27,8 @@ import {
   type SessionProgress,
 } from '../services/recording-api.js';
 import { ApiError } from '../services/api.js';
+
+const STORAGE_KEY_HAS_VOICEBANKS = 'uvm_has_voicebanks';
 
 /**
  * Recording session phase.
@@ -60,8 +63,11 @@ interface ProcessingStep {
  * 3. Processing - Generate the voicebank with ML alignment
  * 4. Complete - Download the finished voicebank
  *
+ * Navigation is handled via @vaadin/router. On cancel, navigates to
+ * /editor (if voicebanks exist) or / (if none). On completion, navigates
+ * to /editor/:voicebankName.
+ *
  * @fires session-complete - Fired when voicebank generation completes
- * @fires session-cancelled - Fired when user cancels the session
  *
  * @example
  * ```html
@@ -779,6 +785,9 @@ export class UvmRecordingSession extends LitElement {
       this._generatedVoicebank = result;
       this._phase = 'complete';
 
+      // Mark that we now have voicebanks
+      localStorage.setItem(STORAGE_KEY_HAS_VOICEBANKS, 'true');
+
       UvmToastManager.success('Voicebank generated successfully!');
 
       // Emit completion event
@@ -879,15 +888,11 @@ export class UvmRecordingSession extends LitElement {
     }
 
     this._resetSession();
-
-    this.dispatchEvent(
-      new CustomEvent('session-cancelled', {
-        bubbles: true,
-        composed: true,
-      })
-    );
-
     UvmToastManager.info('Session cancelled');
+
+    // Navigate based on voicebank state
+    const hasVoicebanks = localStorage.getItem(STORAGE_KEY_HAS_VOICEBANKS) === 'true';
+    Router.go(hasVoicebanks ? '/editor' : '/');
   }
 
   /**
@@ -938,16 +943,12 @@ export class UvmRecordingSession extends LitElement {
    * Open the voicebank in the editor for fine-tuning.
    */
   private _onOpenInEditor(): void {
-    this.dispatchEvent(
-      new CustomEvent('open-editor', {
-        detail: {
-          sessionId: this._sessionId,
-          voicebankName: this._voicebankName,
-        },
-        bubbles: true,
-        composed: true,
-      })
-    );
+    // Navigate to editor with the new voicebank selected
+    if (this._voicebankName) {
+      Router.go(`/editor/${encodeURIComponent(this._voicebankName)}`);
+    } else {
+      Router.go('/editor');
+    }
   }
 
   /**

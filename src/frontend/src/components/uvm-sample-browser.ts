@@ -14,12 +14,21 @@ import '@shoelace-style/shoelace/dist/components/input/input.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
+import '@shoelace-style/shoelace/dist/components/details/details.js';
+
+/** View mode for the sample browser */
+type SampleViewMode = 'grid' | 'list';
+
+/** LocalStorage key for persisting view mode preference */
+const VIEW_MODE_STORAGE_KEY = 'uvm-sample-browser-view-mode';
 
 import { api, ApiError, getDefaultApiUrl } from '../services/api.js';
 import type { BatchOtoResult, VoicebankSummary } from '../services/types.js';
 import './uvm-upload-zone.js';
+import './uvm-phrase-preview.js';
 import type { UvmUploadZone } from './uvm-upload-zone.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
+import { getNonEmptyGroups, type PhonemeFamily } from '../utils/phoneme-groups.js';
 
 /**
  * Sample browser component for selecting voicebank samples.
@@ -73,8 +82,8 @@ export class UvmSampleBrowser extends LitElement {
     .panel-header {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0.625rem 0.875rem;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
       background-color: #fafafa;
       border-bottom: 1px solid #e5e7eb;
       font-weight: 600;
@@ -103,6 +112,16 @@ export class UvmSampleBrowser extends LitElement {
     .samples-panel {
       flex: 1;
       min-width: 200px;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .samples-panel .panel-content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
     }
 
     @media (max-width: 768px) {
@@ -117,14 +136,14 @@ export class UvmSampleBrowser extends LitElement {
     .voicebank-list {
       list-style: none;
       margin: 0;
-      padding: 0.25rem 0;
+      padding: 0.5rem 0;
     }
 
     .voicebank-item {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 0.75rem;
+      gap: 0.625rem;
+      padding: 0.625rem 1rem;
       cursor: pointer;
       border-bottom: 1px solid #f3f4f6;
       transition: all 0.15s ease;
@@ -141,7 +160,7 @@ export class UvmSampleBrowser extends LitElement {
     .voicebank-item.selected {
       background-color: #eff6ff;
       border-left: 3px solid #3b82f6;
-      padding-left: calc(0.75rem - 3px);
+      padding-left: calc(1rem - 3px);
     }
 
     .voicebank-item:focus {
@@ -193,14 +212,59 @@ export class UvmSampleBrowser extends LitElement {
 
     /* Sample chips container */
     .sample-chips-container {
-      padding: 0.75rem;
+      padding: 0.75rem 1rem;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
     }
 
     .sample-chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem;
+      gap: 0.5rem 0.625rem;
       align-content: flex-start;
+    }
+
+    /* Phoneme group sections */
+    .phoneme-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .phoneme-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .phoneme-group-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .phoneme-group-label {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #6b7280;
+    }
+
+    .phoneme-group-count {
+      font-size: 0.625rem;
+      color: #9ca3af;
+      font-weight: 400;
+    }
+
+    .phoneme-group-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.375rem 0.5rem;
+      padding-left: 0.25rem;
     }
 
     /* Individual sample chip */
@@ -338,8 +402,8 @@ export class UvmSampleBrowser extends LitElement {
     .skeleton-chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem;
-      padding: 0.75rem;
+      gap: 0.5rem 0.625rem;
+      padding: 1rem 1.25rem;
     }
 
     .skeleton-chip {
@@ -373,7 +437,8 @@ export class UvmSampleBrowser extends LitElement {
     }
 
     .keyboard-hint {
-      padding: 0.375rem 0.75rem;
+      flex-shrink: 0;
+      padding: 0.5rem 1rem;
       font-size: 0.6875rem;
       color: #9ca3af;
       background-color: #fafafa;
@@ -432,6 +497,149 @@ export class UvmSampleBrowser extends LitElement {
     .voicebank-item:focus-within .delete-btn {
       opacity: 1;
     }
+
+    .phrase-preview-section {
+      flex-shrink: 0;
+      border-top: 1px solid #e5e7eb;
+      background-color: #fafafa;
+    }
+
+    .phrase-preview-section sl-details {
+      --border-width: 0;
+      --border-radius: 0;
+    }
+
+    .phrase-preview-section sl-details::part(base) {
+      border: none;
+      background-color: transparent;
+    }
+
+    .phrase-preview-section sl-details::part(header) {
+      padding: 0.875rem 1rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    .phrase-preview-section sl-details::part(summary-icon) {
+      color: #6b7280;
+    }
+
+    .phrase-preview-section sl-details::part(content) {
+      padding: 0 1rem 1rem;
+    }
+
+    .phrase-preview-section .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .phrase-preview-section .section-header sl-icon {
+      font-size: 1rem;
+      color: #6b7280;
+    }
+
+    /* View toggle button styling */
+    .view-toggle {
+      margin-right: 0.25rem;
+    }
+
+    .view-toggle::part(base) {
+      padding: 0.25rem;
+      color: #6b7280;
+    }
+
+    .view-toggle::part(base):hover {
+      color: #374151;
+    }
+
+    /* List view styles */
+    .sample-list-container {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .sample-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sample-list-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid #f3f4f6;
+      cursor: pointer;
+      transition: background-color 0.15s ease;
+    }
+
+    .sample-list-item:last-child {
+      border-bottom: none;
+    }
+
+    .sample-list-item:hover {
+      background-color: #f9fafb;
+    }
+
+    .sample-list-item:focus {
+      outline: 2px solid #3b82f6;
+      outline-offset: -2px;
+    }
+
+    .sample-list-item.selected {
+      background-color: #eff6ff;
+      border-left: 3px solid #3b82f6;
+      padding-left: calc(1rem - 3px);
+    }
+
+    .sample-list-alias {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: #1f2937;
+      min-width: 80px;
+    }
+
+    .sample-list-item.selected .sample-list-alias {
+      color: #1d4ed8;
+    }
+
+    .sample-list-filename {
+      flex: 1;
+      font-size: 0.75rem;
+      color: #6b7280;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sample-list-status {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      flex-shrink: 0;
+    }
+
+    .sample-list-status sl-badge::part(base) {
+      font-size: 0.625rem;
+      padding: 0.125rem 0.375rem;
+    }
+
+    .sample-list-oto-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #22c55e;
+    }
+
+    .sample-list-no-oto {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #d1d5db;
+    }
   `;
 
   @state()
@@ -460,6 +668,9 @@ export class UvmSampleBrowser extends LitElement {
 
   @state()
   private _sampleOtoMap: Map<string, boolean> = new Map();
+
+  @state()
+  private _availableAliases: Set<string> = new Set();
 
   @state()
   private _showUploadDialog = false;
@@ -500,12 +711,42 @@ export class UvmSampleBrowser extends LitElement {
   @state()
   private _batchResult: BatchOtoResult | null = null;
 
+  @state()
+  private _viewMode: SampleViewMode = 'grid';
+
   @query('uvm-upload-zone')
   private _uploadZone!: UvmUploadZone;
 
   connectedCallback(): void {
     super.connectedCallback();
+    this._loadViewModePreference();
     this._fetchVoicebanks();
+  }
+
+  /**
+   * Load the view mode preference from localStorage.
+   */
+  private _loadViewModePreference(): void {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+      if (saved === 'grid' || saved === 'list') {
+        this._viewMode = saved;
+      }
+    } catch {
+      // localStorage may not be available
+    }
+  }
+
+  /**
+   * Toggle between grid and list view modes.
+   */
+  private _toggleViewMode(): void {
+    this._viewMode = this._viewMode === 'grid' ? 'list' : 'grid';
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, this._viewMode);
+    } catch {
+      // localStorage may not be available
+    }
   }
 
   /**
@@ -569,6 +810,7 @@ export class UvmSampleBrowser extends LitElement {
     this._samples = [];
     this._selectedSample = null;
     this._sampleOtoMap.clear();
+    this._availableAliases = new Set();
 
     try {
       // Fetch samples and oto entries in parallel
@@ -586,6 +828,9 @@ export class UvmSampleBrowser extends LitElement {
         newOtoMap.set(sample, filesWithOto.has(sample));
       }
       this._sampleOtoMap = newOtoMap;
+
+      // Build a set of all available aliases for phrase preview
+      this._availableAliases = new Set(otoEntries.map((e) => e.alias));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Failed to load samples';
@@ -603,6 +848,15 @@ export class UvmSampleBrowser extends LitElement {
     if (this._selectedVoicebank === voicebankId) return;
     this._selectedVoicebank = voicebankId;
     this._fetchSamples(voicebankId);
+
+    // Emit event to notify parent of voicebank selection
+    this.dispatchEvent(
+      new CustomEvent('voicebank-select', {
+        detail: { voicebankId },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   /**
@@ -842,11 +1096,21 @@ export class UvmSampleBrowser extends LitElement {
           ${this._selectedVoicebank && this._samples.length > 0
             ? html`
                 <div class="panel-header-actions">
-                  <sl-icon-button
-                    name="magic"
-                    label="Auto-detect all samples"
-                    @click=${this._openBatchDialog}
-                  ></sl-icon-button>
+                  <sl-tooltip content="${this._viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}">
+                    <sl-icon-button
+                      class="view-toggle"
+                      name="${this._viewMode === 'grid' ? 'list-ul' : 'grid-3x3'}"
+                      label="${this._viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}"
+                      @click=${this._toggleViewMode}
+                    ></sl-icon-button>
+                  </sl-tooltip>
+                  <sl-tooltip content="Auto-detect all samples">
+                    <sl-icon-button
+                      name="magic"
+                      label="Auto-detect all samples"
+                      @click=${this._openBatchDialog}
+                    ></sl-icon-button>
+                  </sl-tooltip>
                 </div>
               `
             : null}
@@ -860,8 +1124,26 @@ export class UvmSampleBrowser extends LitElement {
                 ? this._renderErrorState(this._samplesError)
                 : this._samples.length === 0
                   ? this._renderEmptySamples()
-                  : this._renderSampleChips()}
+                  : this._viewMode === 'grid'
+                    ? this._renderSampleChips()
+                    : this._renderSampleList()}
         </div>
+        ${this._selectedVoicebank && this._samples.length > 0
+          ? html`
+              <div class="phrase-preview-section">
+                <sl-details summary="Demo Songs">
+                  <span slot="summary" class="section-header">
+                    <sl-icon name="music-note-beamed"></sl-icon>
+                    Demo Songs
+                  </span>
+                  <uvm-phrase-preview
+                    voicebankId=${this._selectedVoicebank}
+                    .availableAliases=${this._availableAliases}
+                  ></uvm-phrase-preview>
+                </sl-details>
+              </div>
+            `
+          : null}
         ${this._samples.length > 0
           ? html`<div class="keyboard-hint">
               Double-click or Enter to load sample
@@ -880,13 +1162,34 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Render the sample chips grid.
+   * Render the sample chips grid, grouped by phoneme family.
    */
   private _renderSampleChips() {
+    const groups = getNonEmptyGroups(this._samples);
+
     return html`
       <div class="sample-chips-container">
-        <div class="sample-chips" role="listbox" aria-label="Samples">
-          ${this._samples.map(
+        <div class="phoneme-groups" role="listbox" aria-label="Samples">
+          ${groups.map(({ family, samples }) =>
+            this._renderPhonemeGroup(family, samples)
+          )}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render a single phoneme group with its samples.
+   */
+  private _renderPhonemeGroup(family: PhonemeFamily, samples: string[]) {
+    return html`
+      <div class="phoneme-group" role="group" aria-label="${family.label}">
+        <div class="phoneme-group-header">
+          <span class="phoneme-group-label">${family.label}</span>
+          <span class="phoneme-group-count">(${samples.length})</span>
+        </div>
+        <div class="phoneme-group-chips">
+          ${samples.map(
             (filename) => html`
               <div
                 class="sample-chip ${this._selectedSample === filename
@@ -910,6 +1213,82 @@ export class UvmSampleBrowser extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  /**
+   * Render the sample list view (compact table format).
+   * Samples are sorted alphabetically by display name for easy sequential editing.
+   */
+  private _renderSampleList() {
+    // Sort samples alphabetically by display name for list view
+    const sortedSamples = [...this._samples].sort((a, b) =>
+      this._displayName(a).localeCompare(this._displayName(b), undefined, { sensitivity: 'base' })
+    );
+
+    return html`
+      <div class="sample-list-container">
+        <div class="sample-list" role="listbox" aria-label="Samples">
+          ${sortedSamples.map(
+            (filename) => html`
+              <div
+                class="sample-list-item ${this._selectedSample === filename ? 'selected' : ''}"
+                role="option"
+                aria-selected=${this._selectedSample === filename}
+                tabindex="0"
+                data-sample-filename=${filename}
+                @click=${() => this._onSampleClick(filename)}
+                @keydown=${(e: KeyboardEvent) => this._onSampleListKeyDown(e, filename, sortedSamples)}
+              >
+                <span class="sample-list-alias">${this._displayName(filename)}</span>
+                <span class="sample-list-filename">${filename}</span>
+                <div class="sample-list-status">
+                  ${this._sampleOtoMap.get(filename)
+                    ? html`
+                        <sl-tooltip content="Has oto entry">
+                          <span class="sample-list-oto-dot"></span>
+                        </sl-tooltip>
+                      `
+                    : html`
+                        <sl-tooltip content="No oto entry">
+                          <span class="sample-list-no-oto"></span>
+                        </sl-tooltip>
+                      `}
+                </div>
+              </div>
+            `
+          )}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Handle keyboard navigation in list view.
+   * Uses Up/Down arrows instead of the grid's 2D navigation.
+   */
+  private _onSampleListKeyDown(e: KeyboardEvent, filename: string, sortedSamples: string[]): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this._emitSampleSelect(filename);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const currentIndex = sortedSamples.indexOf(filename);
+      const nextIndex = Math.min(sortedSamples.length - 1, currentIndex + 1);
+      const nextSample = sortedSamples[nextIndex];
+      if (nextSample) {
+        this._selectedSample = nextSample;
+        this._focusSampleItem(nextSample);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const currentIndex = sortedSamples.indexOf(filename);
+      const prevIndex = Math.max(0, currentIndex - 1);
+      const prevSample = sortedSamples[prevIndex];
+      if (prevSample) {
+        this._selectedSample = prevSample;
+        this._focusSampleItem(prevSample);
+      }
+    }
   }
 
   /**
@@ -1217,6 +1596,7 @@ export class UvmSampleBrowser extends LitElement {
         this._samples = [];
         this._selectedSample = null;
         this._sampleOtoMap.clear();
+        this._availableAliases = new Set();
       }
 
       // Refresh voicebank list

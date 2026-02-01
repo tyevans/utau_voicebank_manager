@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { Router } from '@vaadin/router';
 
 // Import Shoelace components used in this file
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
@@ -12,27 +13,11 @@ import '@shoelace-style/shoelace/dist/components/button/button.js';
 import { setBasePath } from '@shoelace-style/shoelace/dist/utilities/base-path.js';
 setBasePath(import.meta.env.DEV ? '/node_modules/@shoelace-style/shoelace/dist' : '/shoelace');
 
-// Import the editor view component
-import './uvm-editor-view.js';
-
-// Import the recording session component
-import './uvm-recording-session.js';
-
-// Import the welcome view component
-import './uvm-welcome-view.js';
+// Import the router initialization
+import { initRouter } from '../router.js';
 
 // Import the toast manager for notifications
 import './uvm-toast-manager.js';
-
-/**
- * localStorage key for persisting voicebank state.
- */
-const STORAGE_KEY_HAS_VOICEBANKS = 'uvm_has_voicebanks';
-
-/**
- * Application view type.
- */
-type AppView = 'welcome' | 'editor' | 'recording';
 
 /**
  * Root application component for UTAU Voicebank Manager.
@@ -130,111 +115,36 @@ export class UvmApp extends LitElement {
   `;
 
   @state()
-  private _initialized = false;
+  private _currentPath = '/';
 
-  @state()
-  private _currentView: AppView = 'welcome';
-
-  @state()
-  private _hasVoicebanks = false;
+  /**
+   * Handler for route change events.
+   */
+  private _routeChangeHandler = (): void => {
+    this._currentPath = window.location.pathname;
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
 
-    // Check if user has created voicebanks before
-    const hasVoicebanks =
-      localStorage.getItem(STORAGE_KEY_HAS_VOICEBANKS) === 'true';
-    this._hasVoicebanks = hasVoicebanks;
+    // Initialize router after first render
+    this.updateComplete.then(() => {
+      const outlet = this.shadowRoot?.querySelector('.app-main');
+      if (outlet) {
+        initRouter(outlet as HTMLElement);
+      }
+    });
 
-    // Set initial view based on state
-    this._currentView = hasVoicebanks ? 'editor' : 'welcome';
+    // Listen for route changes to update nav highlighting
+    window.addEventListener('vaadin-router-location-changed', this._routeChangeHandler);
 
-    this._initialized = true;
+    // Set initial path
+    this._currentPath = window.location.pathname;
   }
 
-  /**
-   * Switch to the welcome view.
-   */
-  private _showWelcome(): void {
-    this._currentView = 'welcome';
-  }
-
-  /**
-   * Switch to the editor view.
-   */
-  private _showEditor(): void {
-    this._currentView = 'editor';
-  }
-
-  /**
-   * Switch to the recording session view.
-   */
-  private _showRecording(): void {
-    this._currentView = 'recording';
-  }
-
-  /**
-   * Handle start recording event from welcome view.
-   */
-  private _onStartRecordingFromWelcome(): void {
-    this._currentView = 'recording';
-  }
-
-  /**
-   * Handle import voicebank event from welcome view.
-   */
-  private _onImportVoicebank(): void {
-    // Switch to editor view which has upload capability
-    this._currentView = 'editor';
-  }
-
-  /**
-   * Handle session complete event from recording view.
-   */
-  private _onSessionComplete(): void {
-    // Mark that we now have voicebanks and persist to localStorage
-    this._hasVoicebanks = true;
-    localStorage.setItem(STORAGE_KEY_HAS_VOICEBANKS, 'true');
-    this._currentView = 'editor';
-  }
-
-  /**
-   * Handle open-editor event from recording session success screen.
-   */
-  private _onOpenEditor(): void {
-    this._currentView = 'editor';
-  }
-
-  /**
-   * Render the current view content.
-   */
-  private _renderContent() {
-    if (!this._initialized) {
-      return html`<p>Loading...</p>`;
-    }
-
-    switch (this._currentView) {
-      case 'welcome':
-        return html`
-          <uvm-welcome-view
-            @start-recording=${this._onStartRecordingFromWelcome}
-            @import-voicebank=${this._onImportVoicebank}
-          ></uvm-welcome-view>
-        `;
-      case 'recording':
-        return html`
-          <uvm-recording-session
-            @session-complete=${this._onSessionComplete}
-            @session-cancelled=${this._hasVoicebanks
-              ? this._showEditor
-              : this._showWelcome}
-            @open-editor=${this._onOpenEditor}
-          ></uvm-recording-session>
-        `;
-      case 'editor':
-      default:
-        return html`<uvm-editor-view></uvm-editor-view>`;
-    }
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener('vaadin-router-location-changed', this._routeChangeHandler);
   }
 
   render() {
@@ -248,22 +158,22 @@ export class UvmApp extends LitElement {
           <nav class="app-nav">
             <sl-button
               size="small"
-              ?data-active=${this._currentView === 'welcome'}
-              @click=${this._showWelcome}
+              ?data-active=${this._currentPath === '/'}
+              @click=${() => Router.go('/')}
             >
               Home
             </sl-button>
             <sl-button
               size="small"
-              ?data-active=${this._currentView === 'recording'}
-              @click=${this._showRecording}
+              ?data-active=${this._currentPath === '/recording'}
+              @click=${() => Router.go('/recording')}
             >
               Record
             </sl-button>
             <sl-button
               size="small"
-              ?data-active=${this._currentView === 'editor'}
-              @click=${this._showEditor}
+              ?data-active=${this._currentPath.startsWith('/editor')}
+              @click=${() => Router.go('/editor')}
             >
               Editor
             </sl-button>
@@ -277,7 +187,7 @@ export class UvmApp extends LitElement {
         </header>
 
         <main class="app-main">
-          ${this._renderContent()}
+          <slot></slot>
         </main>
         <uvm-toast-manager></uvm-toast-manager>
       </div>
