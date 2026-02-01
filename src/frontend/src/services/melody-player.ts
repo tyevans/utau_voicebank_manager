@@ -314,30 +314,41 @@ export class MelodyPlayer {
   ): void {
     const { startTime, duration, overlap, prevNote, baseGain, sequenceStartTime } = params;
 
+    // All AudioParam times must be non-negative (>= currentTime)
+    const now = this._audioContext.currentTime;
+    const safeStartTime = Math.max(startTime, now);
+
+    // Adjust duration if we had to clamp start time
+    const timeShift = safeStartTime - startTime;
+    const safeDuration = Math.max(0.01, duration - timeShift);
+
     // Clamp overlap to reasonable bounds
-    const fadeTime = Math.min(overlap, duration * 0.5, 0.1); // Max 100ms or half duration
+    const fadeTime = Math.min(overlap, safeDuration * 0.5, 0.1); // Max 100ms or half duration
 
     // Start with fade-in from 0
-    gainNode.gain.setValueAtTime(0, startTime);
+    gainNode.gain.setValueAtTime(0, safeStartTime);
 
     // Determine fade-in time based on overlap with previous note
     let fadeInTime = fadeTime;
     if (prevNote) {
       // If there's a previous note, use overlap for crossfade
       const prevEndTime = sequenceStartTime + prevNote.startTime + prevNote.duration;
-      const overlapDuration = Math.max(0, prevEndTime - startTime);
+      const overlapDuration = Math.max(0, prevEndTime - safeStartTime);
       fadeInTime = Math.min(fadeTime, overlapDuration + 0.02);
     }
 
     // Fade in
-    gainNode.gain.linearRampToValueAtTime(baseGain, startTime + fadeInTime);
+    const fadeInEnd = safeStartTime + fadeInTime;
+    gainNode.gain.linearRampToValueAtTime(baseGain, fadeInEnd);
 
     // Hold at full gain until fade-out
-    const fadeOutStart = startTime + duration - fadeTime;
-    gainNode.gain.setValueAtTime(baseGain, Math.max(fadeOutStart, startTime + fadeInTime));
+    const fadeOutStart = safeStartTime + safeDuration - fadeTime;
+    if (fadeOutStart > fadeInEnd) {
+      gainNode.gain.setValueAtTime(baseGain, fadeOutStart);
+    }
 
     // Fade out
-    gainNode.gain.linearRampToValueAtTime(0, startTime + duration);
+    gainNode.gain.linearRampToValueAtTime(0, safeStartTime + safeDuration);
   }
 
   /**
