@@ -28,6 +28,7 @@ import torchaudio
 import torchaudio.functional as F
 
 from src.backend.domain.phoneme import PhonemeDetectionResult, PhonemeSegment
+from src.backend.utils.kana_romaji import contains_kana, kana_to_romaji
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +107,18 @@ def extract_transcript_from_filename(filename: str) -> str:
     - _ka.wav -> "ka"
     - _shi.wav -> "shi"
     - _tsu.wav -> "tsu"
-    - _a_ka.wav -> "aka" (VCV style)
+    - _a_ka.wav -> "a ka" (VCV style)
     - あ.wav -> "a" (hiragana)
+    - かきくけこ.wav -> "ka ki ku ke ko" (hiragana)
+
+    Handles both romaji and Japanese kana (hiragana/katakana) filenames.
+    Japanese kana is automatically converted to romaji for SOFA alignment.
 
     Args:
         filename: The audio filename (with or without path)
 
     Returns:
-        Extracted transcript text (romaji/characters)
+        Extracted transcript text (space-separated romaji phonemes)
 
     Raises:
         TranscriptExtractionError: If transcript cannot be extracted
@@ -127,16 +132,23 @@ def extract_transcript_from_filename(filename: str) -> str:
     # Remove any numeric prefix (like "01_ka" -> "ka")
     name = re.sub(r"^\d+[_-]?", "", name)
 
-    # Handle VCV-style names with underscores (a_ka -> aka)
-    # But preserve meaningful separators
-    name = name.replace("_", "")
-
     # Handle special UTAU notation
     # - Remove breath marks and special characters
     name = re.sub(r"[-・。、]", "", name)
 
-    # Convert to lowercase for consistency
-    name = name.lower()
+    # Check if name contains Japanese kana
+    if contains_kana(name):
+        # Convert kana to romaji (returns space-separated phonemes)
+        name = kana_to_romaji(name)
+    else:
+        # Handle VCV-style names with underscores (a_ka -> a ka)
+        # Replace underscores with spaces for romaji names
+        name = name.replace("_", " ")
+        # Convert to lowercase for consistency
+        name = name.lower()
+
+    # Clean up whitespace
+    name = " ".join(name.split())
 
     if not name:
         raise TranscriptExtractionError(

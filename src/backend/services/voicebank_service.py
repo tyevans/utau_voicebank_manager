@@ -47,8 +47,38 @@ class VoicebankService:
         """
         return slugify(name, lowercase=True, separator="_")
 
+    def _decode_zip_filename(self, info: zipfile.ZipInfo) -> str:
+        """Decode ZIP filename handling Japanese Shift-JIS encoding.
+
+        Japanese UTAU voicebanks typically use Shift-JIS (CP932) encoding for
+        filenames, but Python's zipfile defaults to CP437 when UTF-8 flag is not set.
+
+        Args:
+            info: ZipInfo object containing filename
+
+        Returns:
+            Properly decoded filename
+        """
+        # If UTF-8 flag is set (bit 11), the filename is already correct
+        if info.flag_bits & 0x800:
+            return info.filename
+
+        # Otherwise, try to decode as Shift-JIS (CP932) for Japanese
+        # The filename was incorrectly decoded from CP437, so we:
+        # 1. Encode back to bytes using CP437
+        # 2. Decode using Shift-JIS (CP932)
+        try:
+            raw_bytes = info.filename.encode("cp437")
+            return raw_bytes.decode("cp932")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            # Fall back to original filename if decoding fails
+            return info.filename
+
     def _extract_zip(self, zip_content: bytes) -> dict[str, bytes]:
         """Extract files from a ZIP archive.
+
+        Handles Japanese Shift-JIS encoded filenames commonly found in UTAU
+        voicebanks distributed from Japan.
 
         Args:
             zip_content: Raw ZIP file bytes
@@ -66,11 +96,11 @@ class VoicebankService:
                     # Skip directories
                     if info.is_dir():
                         continue
+                    # Decode filename handling Japanese encoding
+                    filename = self._decode_zip_filename(info)
                     # Skip hidden files and macOS metadata
-                    if info.filename.startswith(".") or "__MACOSX" in info.filename:
+                    if filename.startswith(".") or "__MACOSX" in filename:
                         continue
-                    # Normalize path (remove leading directory if all files share one)
-                    filename = info.filename
                     files[filename] = zf.read(info)
             return files
         except zipfile.BadZipFile as e:
