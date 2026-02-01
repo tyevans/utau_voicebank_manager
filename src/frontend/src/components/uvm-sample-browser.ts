@@ -13,8 +13,9 @@ import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/input/input.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/alert/alert.js';
+import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 
-import { api, ApiError } from '../services/api.js';
+import { api, ApiError, getDefaultApiUrl } from '../services/api.js';
 import type { BatchOtoResult, VoicebankSummary } from '../services/types.js';
 import './uvm-upload-zone.js';
 import type { UvmUploadZone } from './uvm-upload-zone.js';
@@ -494,6 +495,9 @@ export class UvmSampleBrowser extends LitElement {
   private _batchOverwriteExisting = false;
 
   @state()
+  private _isDownloading = false;
+
+  @state()
   private _batchResult: BatchOtoResult | null = null;
 
   @query('uvm-upload-zone')
@@ -520,6 +524,39 @@ export class UvmSampleBrowser extends LitElement {
       UvmToastManager.error('Failed to load voicebanks');
     } finally {
       this._loadingVoicebanks = false;
+    }
+  }
+
+  /**
+   * Download the selected voicebank as a ZIP file.
+   */
+  private async _downloadVoicebank(): Promise<void> {
+    if (!this._selectedVoicebank || this._isDownloading) return;
+
+    this._isDownloading = true;
+
+    try {
+      const voicebankId = this._selectedVoicebank;
+      const voicebankName = this._getSelectedVoicebankName();
+      const downloadUrl = `${getDefaultApiUrl()}/voicebanks/${encodeURIComponent(voicebankId)}/download`;
+
+      // Create a temporary anchor element and trigger download
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${voicebankName}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      UvmToastManager.success(`Downloading "${voicebankName}"...`);
+    } catch (error) {
+      console.error('Failed to download voicebank:', error);
+      UvmToastManager.error('Failed to download voicebank');
+    } finally {
+      // Reset after a short delay to allow the download to start
+      setTimeout(() => {
+        this._isDownloading = false;
+      }, 1000);
     }
   }
 
@@ -714,6 +751,18 @@ export class UvmSampleBrowser extends LitElement {
           <sl-icon name="folder2"></sl-icon>
           Voicebanks
           <div class="panel-header-actions">
+            ${this._selectedVoicebank
+              ? html`
+                  <sl-tooltip content="Download voicebank as ZIP">
+                    <sl-icon-button
+                      name="download"
+                      label="Download voicebank"
+                      ?disabled=${this._isDownloading}
+                      @click=${this._downloadVoicebank}
+                    ></sl-icon-button>
+                  </sl-tooltip>
+                `
+              : null}
             <sl-icon-button
               name="plus-lg"
               label="Upload voicebank"
