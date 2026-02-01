@@ -40,29 +40,47 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# Copy Python project files
-COPY pyproject.toml ./
+# Set Python environment variables early so pip and uv use the same location
+ENV UV_SYSTEM_PYTHON=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Copy Python project files (README.md needed by hatchling build)
+COPY pyproject.toml README.md ./
 COPY uv.lock* ./
 
-# Install Python dependencies
-# Use CPU-only torch to reduce image size (remove index-url for GPU support)
-RUN uv sync --frozen --no-dev \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://pypi.org/simple
+# Install CPU-only PyTorch first (uv's --index-url doesn't work correctly for torch)
+# This avoids downloading ~2GB of CUDA libraries
+# For GPU support: remove this step and just use uv sync
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+    torch torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining Python dependencies (torch already satisfied from above)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 # Copy application source
 COPY src/ ./src/
+
+# Clone SOFA (Singing-Oriented Forced Aligner) submodule
+# Git submodules aren't included in Docker builds, so we clone directly
+RUN git clone --depth 1 https://github.com/tyevans/SOFA.git vendor/SOFA
+
+# Download SOFA checkpoint and dictionary files for English
+# These are required for SOFA to function (checkpoint ~387MB, dictionary ~3MB)
+RUN mkdir -p vendor/SOFA/ckpt vendor/SOFA/dictionary && \
+    curl -L -o vendor/SOFA/ckpt/tgm_en_v100.ckpt \
+        "https://github.com/spicytigermeat/SOFA-Models/releases/download/v1.0.0_en/tgm_en_v100.ckpt" && \
+    curl -L -o vendor/SOFA/dictionary/english.txt \
+        "https://github.com/spicytigermeat/SOFA-Models/releases/download/v0.0.5/tgm_sofa_dict.txt"
 
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./src/frontend/dist
 
 # Create directories for runtime data
 RUN mkdir -p /app/models /app/data/voicebanks
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV UV_SYSTEM_PYTHON=1
 
 # Expose port 8989
 EXPOSE 8989
