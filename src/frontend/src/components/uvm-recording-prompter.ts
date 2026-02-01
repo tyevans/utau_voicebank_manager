@@ -106,230 +106,199 @@ export class UvmRecordingPrompter extends LitElement {
       width: 100%;
     }
 
+    /* We've stripped away the unnecessary visual complexity.
+       The interface now steps aside to let the content breathe. */
     .prompter-container {
       display: flex;
       flex-direction: column;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-large, 0.5rem);
+      background-color: white;
+      border-radius: 16px;
       overflow: hidden;
     }
 
-    /* Progress Section */
+    /* Progress: Minimal, centered, unobtrusive */
     .progress-section {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 0.75rem 1rem;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      justify-content: center;
+      padding: 1.25rem;
     }
 
     .progress-dots {
-      display: flex;
-      gap: 0.375rem;
-      flex-wrap: wrap;
-      max-width: 70%;
-    }
-
-    .progress-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background-color: var(--sl-color-neutral-300, #cbd5e1);
-      transition: background-color 0.2s ease;
-    }
-
-    .progress-dot.completed {
-      background-color: var(--sl-color-success-500, #22c55e);
-    }
-
-    .progress-dot.current {
-      background-color: var(--sl-color-primary-500, #3b82f6);
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.2); opacity: 0.8; }
+      display: none; /* The dots created visual noise. The number is sufficient. */
     }
 
     .progress-label {
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: var(--sl-color-neutral-600, #475569);
+      font-size: 0.8125rem;
+      font-weight: 400;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      letter-spacing: 0.05em;
     }
 
-    /* Prompt Display Section */
+    /* The prompt is the hero. Everything else defers. */
     .prompt-section {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 2.5rem 1.5rem;
-      min-height: 180px;
-      position: relative;
+      padding: 3.5rem 2rem 2.5rem;
+      min-height: 220px;
     }
 
     .prompt-text-container {
       text-align: center;
-      position: relative;
     }
 
     .prompt-japanese {
-      font-size: 3rem;
-      font-weight: 500;
+      font-size: 4rem;
+      font-weight: 300;
       color: var(--sl-color-neutral-900, #0f172a);
-      letter-spacing: 0.25em;
-      margin-bottom: 0.5rem;
+      letter-spacing: 0.12em;
+      margin-bottom: 1rem;
       display: flex;
       justify-content: center;
-      gap: 0.25em;
+      gap: 0.08em;
     }
 
     .prompt-char {
       position: relative;
       display: inline-block;
-      transition: color 0.15s ease;
+      transition: color 0.25s ease, transform 0.25s ease;
     }
 
     .prompt-char.highlighted {
-      color: var(--sl-color-primary-600, #2563eb);
+      color: var(--sl-color-neutral-900, #0f172a);
+      transform: scale(1.05);
     }
 
     .prompt-char.highlighted::after {
       content: '';
       position: absolute;
-      bottom: -4px;
-      left: 0;
-      right: 0;
-      height: 3px;
-      background-color: var(--sl-color-primary-500, #3b82f6);
-      border-radius: 2px;
-      animation: underlineGrow 0.2s ease-out;
-    }
-
-    @keyframes underlineGrow {
-      from { transform: scaleX(0); }
-      to { transform: scaleX(1); }
+      bottom: -6px;
+      left: 15%;
+      right: 15%;
+      height: 2px;
+      background-color: var(--sl-color-neutral-800, #1e293b);
+      border-radius: 1px;
     }
 
     .prompt-char.spoken {
-      color: var(--sl-color-success-600, #16a34a);
+      color: var(--sl-color-neutral-300, #cbd5e1);
     }
 
     .prompt-romaji {
-      font-size: 1.25rem;
-      color: var(--sl-color-neutral-500, #64748b);
-      letter-spacing: 0.15em;
+      font-size: 1.0625rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      letter-spacing: 0.25em;
       display: flex;
       justify-content: center;
-      gap: 0.5em;
+      gap: 0.75em;
+      font-weight: 300;
     }
 
     .romaji-word {
-      transition: color 0.15s ease, font-weight 0.15s ease;
+      transition: color 0.25s ease;
     }
 
     .romaji-word.highlighted {
-      color: var(--sl-color-primary-600, #2563eb);
-      font-weight: 600;
+      color: var(--sl-color-neutral-600, #475569);
     }
 
     .romaji-word.spoken {
-      color: var(--sl-color-success-600, #16a34a);
+      color: var(--sl-color-neutral-300, #cbd5e1);
     }
 
     .empty-prompt {
       display: flex;
       flex-direction: column;
       align-items: center;
-      color: var(--sl-color-neutral-400, #94a3b8);
+      color: var(--sl-color-neutral-300, #cbd5e1);
     }
 
     .empty-prompt sl-icon {
-      font-size: 3rem;
-      margin-bottom: 1rem;
+      font-size: 2rem;
+      margin-bottom: 0.75rem;
     }
 
-    /* Recording State Indicator */
+    .empty-prompt p {
+      font-size: 0.875rem;
+    }
+
+    /* State indicator: Quiet confidence */
     .state-indicator {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
-      padding: 0.5rem;
+      gap: 0.625rem;
+      padding: 1.25rem;
       font-size: 0.875rem;
-      font-weight: 500;
+      font-weight: 400;
     }
 
     .state-indicator.idle {
-      color: var(--sl-color-neutral-500, #64748b);
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .state-indicator.listening {
-      color: var(--sl-color-warning-600, #ca8a04);
+      color: var(--sl-color-neutral-500, #64748b);
     }
 
     .state-indicator.recording {
-      color: var(--sl-color-danger-600, #dc2626);
+      color: var(--sl-color-neutral-900, #0f172a);
     }
 
     .state-indicator.processing {
-      color: var(--sl-color-primary-600, #2563eb);
+      color: var(--sl-color-neutral-500, #64748b);
     }
 
     .recording-indicator {
-      width: 12px;
-      height: 12px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      background-color: var(--sl-color-danger-500, #ef4444);
-      animation: recordingPulse 1s ease-in-out infinite;
+      background-color: #ef4444;
+      animation: recordingPulse 1.2s ease-in-out infinite;
     }
 
     @keyframes recordingPulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(1.1); }
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
     }
 
     .listening-indicator {
       display: flex;
-      gap: 2px;
-      align-items: flex-end;
-      height: 16px;
+      gap: 3px;
+      align-items: center;
+      height: 14px;
     }
 
     .listening-bar {
-      width: 3px;
-      background-color: var(--sl-color-warning-500, #eab308);
+      width: 2px;
+      background-color: var(--sl-color-neutral-400, #94a3b8);
       border-radius: 1px;
-      animation: listeningBounce 0.6s ease-in-out infinite;
+      animation: listeningBounce 0.9s ease-in-out infinite;
     }
 
-    .listening-bar:nth-child(1) { height: 6px; animation-delay: 0s; }
-    .listening-bar:nth-child(2) { height: 10px; animation-delay: 0.1s; }
-    .listening-bar:nth-child(3) { height: 14px; animation-delay: 0.2s; }
-    .listening-bar:nth-child(4) { height: 10px; animation-delay: 0.3s; }
-    .listening-bar:nth-child(5) { height: 6px; animation-delay: 0.4s; }
+    .listening-bar:nth-child(1) { height: 4px; animation-delay: 0s; }
+    .listening-bar:nth-child(2) { height: 7px; animation-delay: 0.15s; }
+    .listening-bar:nth-child(3) { height: 10px; animation-delay: 0.3s; }
+    .listening-bar:nth-child(4) { height: 7px; animation-delay: 0.45s; }
+    .listening-bar:nth-child(5) { height: 4px; animation-delay: 0.6s; }
 
     @keyframes listeningBounce {
       0%, 100% { transform: scaleY(1); }
-      50% { transform: scaleY(0.5); }
+      50% { transform: scaleY(0.35); }
     }
 
-    /* Waveform Preview Section */
+    /* Waveform: Dark canvas, focused, purposeful */
     .waveform-section {
-      padding: 1rem;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-top: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      padding: 0 1.5rem 1.5rem;
     }
 
     .waveform-container {
       position: relative;
-      height: 80px;
+      height: 56px;
       background-color: var(--sl-color-neutral-900, #0f172a);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      border-radius: 10px;
       overflow: hidden;
     }
 
@@ -343,8 +312,9 @@ export class UvmRecordingPrompter extends LitElement {
       align-items: center;
       justify-content: center;
       height: 100%;
-      color: var(--sl-color-neutral-500, #64748b);
-      font-size: 0.875rem;
+      color: var(--sl-color-neutral-600, #475569);
+      font-size: 0.8125rem;
+      font-weight: 300;
     }
 
     .waveform-recording {
@@ -353,135 +323,161 @@ export class UvmRecordingPrompter extends LitElement {
       justify-content: center;
       height: 100%;
       gap: 0.5rem;
-      color: var(--sl-color-danger-400, #f87171);
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
-    /* Controls Section */
+    .waveform-preview-container {
+      position: relative;
+      height: 100%;
+      width: 100%;
+    }
+
+    .waveform-playback-controls {
+      position: absolute;
+      bottom: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 0.5rem;
+      z-index: 10;
+    }
+
+    .waveform-playback-controls sl-button::part(base) {
+      background-color: rgba(15, 23, 42, 0.85);
+      border: none;
+      font-size: 0.75rem;
+    }
+
+    /* Controls: One clear action per state */
     .controls-section {
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
-      padding: 1rem 1.5rem;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 2rem 2rem;
     }
 
     .control-buttons {
       display: flex;
       justify-content: center;
-      gap: 1rem;
+      gap: 0.75rem;
     }
 
-    .record-btn {
-      --sl-button-font-size-large: 1rem;
+    .record-btn::part(base) {
+      font-weight: 500;
+      font-size: 0.9375rem;
+      padding: 0.875rem 2.25rem;
+      border-radius: 9999px;
+      background: var(--sl-color-neutral-900, #0f172a);
+      border: none;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .record-btn::part(base):hover {
+      transform: scale(1.02);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    }
+
+    .record-btn::part(base):active {
+      transform: scale(0.98);
     }
 
     .record-btn.recording::part(base) {
-      background-color: var(--sl-color-danger-600);
-      border-color: var(--sl-color-danger-600);
+      background-color: #ef4444;
     }
 
     .record-btn.recording::part(base):hover {
-      background-color: var(--sl-color-danger-700);
-      border-color: var(--sl-color-danger-700);
+      background-color: #dc2626;
     }
 
+    /* Metadata is hidden - it distracts from the single task */
     .metadata-row {
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      display: none;
     }
 
-    .metadata-item {
-      display: flex;
-      align-items: center;
-      gap: 0.25rem;
-    }
-
-    /* Error/Warning Alerts */
+    /* Alerts: Unobtrusive */
     .alert-container {
-      padding: 0 1rem 1rem;
+      padding: 0 1.5rem 1rem;
     }
 
     .alert-container sl-alert {
       margin: 0;
     }
 
-    /* Speech API not supported fallback */
     .fallback-message {
-      padding: 0.75rem 1rem;
-      background-color: var(--sl-color-warning-100, #fef9c3);
-      color: var(--sl-color-warning-800, #854d0e);
-      font-size: 0.875rem;
-      text-align: center;
-      border-bottom: 1px solid var(--sl-color-warning-200, #fef08a);
-    }
-
-    /* Notes section */
-    .notes-section {
-      padding: 0.75rem 1rem;
+      padding: 0.625rem 1rem;
       background-color: var(--sl-color-neutral-100, #f1f5f9);
-      font-size: 0.875rem;
       color: var(--sl-color-neutral-600, #475569);
-      font-style: italic;
+      font-size: 0.8125rem;
+      text-align: center;
     }
 
-    /* Pronunciation hints */
+    /* Notes: Removed during recording to reduce cognitive load */
+    .notes-section {
+      display: none;
+    }
+
+    /* Pronunciation hints: Refined, subtle, helpful */
     .pronunciation-hints {
-      margin-top: 1rem;
-      padding: 0.75rem 1rem;
+      margin-top: 2rem;
+      padding: 1rem 1.25rem;
       background: var(--sl-color-neutral-50, #f8fafc);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
-      font-size: 0.875rem;
-      max-width: 500px;
+      border-radius: 10px;
+      font-size: 0.8125rem;
+      max-width: 380px;
     }
 
     .hints-header {
       display: flex;
       align-items: center;
-      gap: 0.375rem;
-      margin-bottom: 0.5rem;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
       font-weight: 500;
-      color: var(--sl-color-neutral-600, #475569);
+      font-size: 0.6875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
 
     .hints-header sl-icon {
-      font-size: 1rem;
-      color: var(--sl-color-warning-500, #eab308);
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .hint-item {
       display: flex;
       align-items: baseline;
-      gap: 0.5rem;
+      gap: 0.75rem;
       color: var(--sl-color-neutral-600, #475569);
     }
 
     .hint-item + .hint-item {
-      margin-top: 0.5rem;
+      margin-top: 0.375rem;
     }
 
     .hint-phoneme {
-      font-weight: 600;
-      color: var(--sl-color-primary-600, #2563eb);
-      min-width: 2.5rem;
-      font-family: monospace;
+      font-weight: 500;
+      color: var(--sl-color-neutral-700, #334155);
+      min-width: 1.75rem;
+      font-family: inherit;
+      font-size: 0.8125rem;
     }
 
     .hint-description {
       flex: 1;
+      color: var(--sl-color-neutral-500, #64748b);
     }
 
     .hint-examples {
-      color: var(--sl-color-neutral-500, #64748b);
+      color: var(--sl-color-neutral-400, #94a3b8);
       margin-left: 0.25rem;
     }
 
     .hint-examples mark {
-      background: var(--sl-color-warning-100, #fef9c3);
-      color: var(--sl-color-neutral-800, #1e293b);
-      padding: 0 0.125rem;
-      border-radius: 2px;
+      background: var(--sl-color-neutral-200, #e2e8f0);
+      color: var(--sl-color-neutral-700, #334155);
+      padding: 0.125rem 0.25rem;
+      border-radius: 3px;
       font-weight: 500;
     }
   `;
@@ -543,6 +539,12 @@ export class UvmRecordingPrompter extends LitElement {
   @state()
   private _liveAudioData: number[] = [];
 
+  @state()
+  private _recordedAudioBuffer: AudioBuffer | null = null;
+
+  @state()
+  private _isPreviewPlaying = false;
+
   private _speechRecognition: SpeechRecognitionInstance | null = null;
   private _mediaRecorder: MediaRecorder | null = null;
   private _mediaStream: MediaStream | null = null;
@@ -551,6 +553,11 @@ export class UvmRecordingPrompter extends LitElement {
   private _animationFrameId: number | null = null;
   private _recordingStartTime = 0;
   private _durationIntervalId: number | null = null;
+  private _previewSource: AudioBufferSourceNode | null = null;
+  private _previewStartTime = 0;
+  private _previewAnimationId: number | null = null;
+  private _previewPlayheadPosition = 0;
+  private _previewAudioContext: AudioContext | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -560,6 +567,20 @@ export class UvmRecordingPrompter extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this._cleanup();
+  }
+
+  updated(changedProperties: Map<string, unknown>): void {
+    super.updated(changedProperties);
+
+    // Redraw recorded waveform when the canvas becomes visible after state change
+    if (changedProperties.has('state') || changedProperties.has('_recordedAudioBuffer')) {
+      if (this.state === 'idle' && this._recordedAudioBuffer && this._canvas) {
+        // Use requestAnimationFrame to ensure canvas is ready
+        requestAnimationFrame(() => {
+          this._drawRecordedWaveform();
+        });
+      }
+    }
   }
 
   /**
@@ -827,7 +848,7 @@ export class UvmRecordingPrompter extends LitElement {
   /**
    * Process the completed recording.
    */
-  private _processRecording(): void {
+  private async _processRecording(): Promise<void> {
     if (this._audioChunks.length === 0) {
       this._errorMessage = 'No audio recorded. Please try again.';
       this._updateState('idle');
@@ -837,6 +858,25 @@ export class UvmRecordingPrompter extends LitElement {
     const audioBlob = new Blob(this._audioChunks, {
       type: this._getSupportedMimeType()
     });
+
+    // Decode the audio blob to AudioBuffer for preview
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      // Create a separate audio context for preview playback
+      if (!this._previewAudioContext) {
+        this._previewAudioContext = new AudioContext();
+      }
+      this._recordedAudioBuffer = await this._previewAudioContext.decodeAudioData(arrayBuffer);
+
+      // Draw the recorded waveform
+      this._updateState('idle');
+      await this.updateComplete;
+      this._drawRecordedWaveform();
+    } catch (error) {
+      console.error('Failed to decode audio for preview:', error);
+      // Still proceed even if preview fails
+      this._updateState('idle');
+    }
 
     // Emit recording complete event
     this.dispatchEvent(new CustomEvent('recording-complete', {
@@ -849,7 +889,6 @@ export class UvmRecordingPrompter extends LitElement {
       composed: true,
     }));
 
-    this._updateState('idle');
     UvmToastManager.success('Recording saved');
   }
 
@@ -871,11 +910,15 @@ export class UvmRecordingPrompter extends LitElement {
    * Request to re-record the current prompt.
    */
   private _reRecord(): void {
+    // Stop any preview playback first
+    this._stopPreviewPlayback();
+
     this._cleanup();
     this._currentWordIndex = -1;
     this._spokenWords = new Set();
     this._audioChunks = [];
     this._liveAudioData = [];
+    this._recordedAudioBuffer = null;
 
     this.dispatchEvent(new CustomEvent('re-record-requested', {
       detail: { promptId: this.prompt?.id },
@@ -904,7 +947,8 @@ export class UvmRecordingPrompter extends LitElement {
       }
 
       const dataArray = new Uint8Array(this._analyser.frequencyBinCount);
-      this._analyser.getByteTimeDomainData(dataArray);
+      // Use frequency data for histogram visualization
+      this._analyser.getByteFrequencyData(dataArray);
 
       // Store live data for visualization
       this._liveAudioData = Array.from(dataArray);
@@ -927,7 +971,7 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
-   * Draw the waveform on the canvas.
+   * Draw frequency histogram (VU meter style) on the canvas.
    */
   private _drawWaveform(): void {
     if (!this._canvas) return;
@@ -944,35 +988,299 @@ export class UvmRecordingPrompter extends LitElement {
     this._canvas.height = displayHeight * dpr;
     ctx.scale(dpr, dpr);
 
-    // Clear canvas
+    // Clear canvas with dark background
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, displayWidth, displayHeight);
 
     if (this._liveAudioData.length === 0) return;
 
-    // Draw waveform
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = '#f87171';
-    ctx.beginPath();
+    // Number of bars to display (32-64 range)
+    const numBars = 48;
+    const barWidth = (displayWidth / numBars) - 2;
+    const barGap = 2;
+    const maxBarHeight = displayHeight - 10;
 
-    const sliceWidth = displayWidth / this._liveAudioData.length;
-    let x = 0;
+    // Sample the frequency data evenly
+    const step = Math.floor(this._liveAudioData.length / numBars);
 
-    for (let i = 0; i < this._liveAudioData.length; i++) {
-      const v = this._liveAudioData[i] / 128.0;
-      const y = (v * displayHeight) / 2;
+    for (let i = 0; i < numBars; i++) {
+      // Get average of nearby frequency bins for smoother visualization
+      let sum = 0;
+      const startIdx = i * step;
+      const endIdx = Math.min(startIdx + step, this._liveAudioData.length);
+      for (let j = startIdx; j < endIdx; j++) {
+        sum += this._liveAudioData[j];
+      }
+      const value = sum / (endIdx - startIdx);
 
-      if (i === 0) {
-        ctx.moveTo(x, y);
+      // Normalize value (0-255) to bar height
+      const normalizedValue = value / 255;
+      const barHeight = Math.max(4, normalizedValue * maxBarHeight);
+
+      // Calculate bar position
+      const x = i * (barWidth + barGap) + barGap;
+      const y = displayHeight - barHeight;
+
+      // Create gradient based on amplitude: green -> yellow -> red
+      const gradient = ctx.createLinearGradient(x, displayHeight, x, y);
+      if (normalizedValue < 0.4) {
+        // Low amplitude: green
+        gradient.addColorStop(0, '#22c55e');
+        gradient.addColorStop(1, '#16a34a');
+      } else if (normalizedValue < 0.7) {
+        // Medium amplitude: green to yellow
+        gradient.addColorStop(0, '#22c55e');
+        gradient.addColorStop(0.5, '#eab308');
+        gradient.addColorStop(1, '#facc15');
       } else {
-        ctx.lineTo(x, y);
+        // High amplitude: green to yellow to red
+        gradient.addColorStop(0, '#22c55e');
+        gradient.addColorStop(0.4, '#eab308');
+        gradient.addColorStop(0.7, '#f97316');
+        gradient.addColorStop(1, '#ef4444');
       }
 
-      x += sliceWidth;
+      // Add glow effect
+      ctx.shadowColor = normalizedValue > 0.5 ? '#f87171' : '#22c55e';
+      ctx.shadowBlur = normalizedValue * 15;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+
+      // Draw bar with rounded top
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      const radius = Math.min(barWidth / 2, 3);
+      ctx.roundRect(x, y, barWidth, barHeight, [radius, radius, 0, 0]);
+      ctx.fill();
+
+      // Reset shadow for next iteration
+      ctx.shadowBlur = 0;
     }
 
-    ctx.lineTo(displayWidth, displayHeight / 2);
+    // Add a subtle reflection effect at the bottom
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+    ctx.fillRect(0, displayHeight - 2, displayWidth, 2);
+  }
+
+  /**
+   * Draw the recorded waveform on the canvas.
+   */
+  private _drawRecordedWaveform(): void {
+    if (!this._canvas || !this._recordedAudioBuffer) return;
+
+    const ctx = this._canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+
+    // Set canvas size with device pixel ratio
+    const displayWidth = this._canvas.clientWidth;
+    const displayHeight = this._canvas.clientHeight;
+    this._canvas.width = displayWidth * dpr;
+    this._canvas.height = displayHeight * dpr;
+    ctx.scale(dpr, dpr);
+
+    // Clear canvas with dark background
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, displayWidth, displayHeight);
+
+    // Get audio data from buffer
+    const channelData = this._recordedAudioBuffer.getChannelData(0);
+    const samplesPerPixel = Math.floor(channelData.length / displayWidth);
+    const centerY = displayHeight / 2;
+
+    // Create gradient for waveform fill
+    const gradient = ctx.createLinearGradient(0, 0, 0, displayHeight);
+    gradient.addColorStop(0, 'rgba(248, 113, 113, 0.6)');
+    gradient.addColorStop(0.5, 'rgba(248, 113, 113, 0.3)');
+    gradient.addColorStop(1, 'rgba(248, 113, 113, 0.6)');
+
+    // Draw filled waveform
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.moveTo(0, centerY);
+
+    // Draw top half of waveform
+    for (let x = 0; x < displayWidth; x++) {
+      const startSample = x * samplesPerPixel;
+      const endSample = Math.min(startSample + samplesPerPixel, channelData.length);
+
+      let max = 0;
+      for (let i = startSample; i < endSample; i++) {
+        const sample = Math.abs(channelData[i]);
+        if (sample > max) max = sample;
+      }
+
+      const y = centerY - (max * centerY * 0.9);
+      ctx.lineTo(x, y);
+    }
+
+    // Draw bottom half of waveform (mirror)
+    for (let x = displayWidth - 1; x >= 0; x--) {
+      const startSample = x * samplesPerPixel;
+      const endSample = Math.min(startSample + samplesPerPixel, channelData.length);
+
+      let max = 0;
+      for (let i = startSample; i < endSample; i++) {
+        const sample = Math.abs(channelData[i]);
+        if (sample > max) max = sample;
+      }
+
+      const y = centerY + (max * centerY * 0.9);
+      ctx.lineTo(x, y);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw center line for the waveform
+    ctx.strokeStyle = 'rgba(248, 113, 113, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, centerY);
+
+    for (let x = 0; x < displayWidth; x++) {
+      const startSample = x * samplesPerPixel;
+      const endSample = Math.min(startSample + samplesPerPixel, channelData.length);
+
+      let max = 0;
+      let maxSign = 1;
+      for (let i = startSample; i < endSample; i++) {
+        const sample = channelData[i];
+        if (Math.abs(sample) > max) {
+          max = Math.abs(sample);
+          maxSign = sample >= 0 ? 1 : -1;
+        }
+      }
+
+      const y = centerY - (max * maxSign * centerY * 0.9);
+      ctx.lineTo(x, y);
+    }
+
     ctx.stroke();
+
+    // Draw playhead if playing
+    if (this._isPreviewPlaying && this._recordedAudioBuffer) {
+      const playheadX = this._previewPlayheadPosition * displayWidth;
+
+      // Draw playhead line with glow
+      ctx.shadowColor = '#f87171';
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = '#f87171';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, 0);
+      ctx.lineTo(playheadX, displayHeight);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Draw playhead handle
+      ctx.fillStyle = '#f87171';
+      ctx.beginPath();
+      ctx.arc(playheadX, 8, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Draw a subtle border
+    ctx.strokeStyle = 'rgba(248, 113, 113, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0, 0, displayWidth, displayHeight);
+  }
+
+  /**
+   * Start preview playback of the recorded audio.
+   */
+  private _startPreviewPlayback(): void {
+    if (!this._recordedAudioBuffer || !this._previewAudioContext) return;
+
+    // Stop any existing playback
+    this._stopPreviewPlayback();
+
+    // Resume audio context if suspended
+    if (this._previewAudioContext.state === 'suspended') {
+      this._previewAudioContext.resume();
+    }
+
+    // Create a new source node
+    this._previewSource = this._previewAudioContext.createBufferSource();
+    this._previewSource.buffer = this._recordedAudioBuffer;
+    this._previewSource.connect(this._previewAudioContext.destination);
+
+    // Set up playback tracking
+    this._previewStartTime = this._previewAudioContext.currentTime;
+    this._previewPlayheadPosition = 0;
+    this._isPreviewPlaying = true;
+
+    // Start playback
+    this._previewSource.start(0);
+
+    // Set up onended callback
+    this._previewSource.onended = () => {
+      this._isPreviewPlaying = false;
+      this._previewPlayheadPosition = 0;
+      this._stopPreviewAnimation();
+      this._drawRecordedWaveform();
+    };
+
+    // Start playhead animation
+    this._startPreviewAnimation();
+  }
+
+  /**
+   * Stop preview playback.
+   */
+  private _stopPreviewPlayback(): void {
+    if (this._previewSource) {
+      try {
+        this._previewSource.stop();
+      } catch {
+        // Ignore errors if already stopped
+      }
+      this._previewSource.disconnect();
+      this._previewSource = null;
+    }
+
+    this._isPreviewPlaying = false;
+    this._previewPlayheadPosition = 0;
+    this._stopPreviewAnimation();
+
+    // Redraw waveform without playhead
+    if (this._recordedAudioBuffer) {
+      this._drawRecordedWaveform();
+    }
+  }
+
+  /**
+   * Start the playhead animation.
+   */
+  private _startPreviewAnimation(): void {
+    const animate = () => {
+      if (!this._isPreviewPlaying || !this._recordedAudioBuffer || !this._previewAudioContext) {
+        return;
+      }
+
+      const elapsed = this._previewAudioContext.currentTime - this._previewStartTime;
+      const duration = this._recordedAudioBuffer.duration;
+      this._previewPlayheadPosition = Math.min(elapsed / duration, 1);
+
+      this._drawRecordedWaveform();
+
+      if (this._previewPlayheadPosition < 1) {
+        this._previewAnimationId = requestAnimationFrame(animate);
+      }
+    };
+
+    this._previewAnimationId = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Stop the playhead animation.
+   */
+  private _stopPreviewAnimation(): void {
+    if (this._previewAnimationId !== null) {
+      cancelAnimationFrame(this._previewAnimationId);
+      this._previewAnimationId = null;
+    }
   }
 
   /**
@@ -1008,6 +1316,14 @@ export class UvmRecordingPrompter extends LitElement {
       this._audioContext.close();
       this._audioContext = null;
     }
+
+    // Stop preview playback and clean up preview resources
+    this._stopPreviewPlayback();
+    if (this._previewAudioContext) {
+      this._previewAudioContext.close();
+      this._previewAudioContext = null;
+    }
+    this._recordedAudioBuffer = null;
 
     // Clear timers
     if (this._durationIntervalId !== null) {
@@ -1191,14 +1507,49 @@ export class UvmRecordingPrompter extends LitElement {
    * Render waveform section.
    */
   private _renderWaveformSection() {
+    const hasRecordedAudio = this._recordedAudioBuffer !== null;
+    const showHistogram = this.state === 'recording';
+    const showRecordedWaveform = this.state === 'idle' && hasRecordedAudio;
+    const showEmpty = this.state === 'idle' && !hasRecordedAudio;
+
     return html`
       <div class="waveform-section">
         <div class="waveform-container">
-          ${this.state === 'recording'
+          ${showHistogram
             ? html`<canvas class="waveform-canvas"></canvas>`
-            : this.state === 'idle' && this._audioChunks.length === 0
-              ? html`<div class="waveform-empty">Waveform will appear during recording</div>`
-              : html`<div class="waveform-empty">Recording preview</div>`
+            : showRecordedWaveform
+              ? html`
+                  <div class="waveform-preview-container">
+                    <canvas class="waveform-canvas"></canvas>
+                    <div class="waveform-playback-controls">
+                      ${this._isPreviewPlaying
+                        ? html`
+                            <sl-button
+                              variant="text"
+                              size="small"
+                              @click=${this._stopPreviewPlayback}
+                            >
+                              <sl-icon name="stop-fill"></sl-icon>
+                              Stop
+                            </sl-button>
+                          `
+                        : html`
+                            <sl-button
+                              variant="text"
+                              size="small"
+                              @click=${this._startPreviewPlayback}
+                            >
+                              <sl-icon name="play-fill"></sl-icon>
+                              Preview
+                            </sl-button>
+                          `
+                      }
+                    </div>
+                  </div>
+                `
+              : showEmpty
+                ? html`<div class="waveform-empty">Waveform will appear during recording</div>`
+                : html`<div class="waveform-empty">Processing...</div>`
           }
         </div>
       </div>

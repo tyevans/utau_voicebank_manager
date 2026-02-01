@@ -44,6 +44,7 @@ export class UvmApp extends LitElement {
     :host {
       display: block;
       min-height: 100vh;
+      background: var(--sl-color-neutral-50, #f8fafc);
     }
 
     .app-container {
@@ -52,66 +53,77 @@ export class UvmApp extends LitElement {
       min-height: 100vh;
     }
 
+    /* The header now defers to the content. Quiet. Functional. Invisible until needed. */
     .app-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.75rem 1.5rem;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      padding: 0.875rem 1.5rem;
+      background: white;
+      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
     }
 
     .app-title {
       margin: 0;
-      font-size: 1.25rem;
-      font-weight: 600;
+      font-size: 0.9375rem;
+      font-weight: 500;
       display: flex;
       align-items: center;
       gap: 0.5rem;
+      color: var(--sl-color-neutral-700, #334155);
+      letter-spacing: -0.01em;
+    }
+
+    .app-title sl-icon {
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .app-header-actions {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.25rem;
     }
 
     .app-header-actions sl-icon-button::part(base) {
-      color: white;
-      opacity: 0.8;
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .app-header-actions sl-icon-button::part(base):hover {
-      opacity: 1;
+      color: var(--sl-color-neutral-600, #475569);
     }
 
     .app-nav {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.25rem;
     }
 
     .app-nav sl-button::part(base) {
-      background: rgba(255, 255, 255, 0.15);
-      border-color: rgba(255, 255, 255, 0.3);
-      color: white;
+      background: transparent;
+      border: none;
+      color: var(--sl-color-neutral-500, #64748b);
+      font-weight: 400;
+      font-size: 0.875rem;
+      padding: 0.5rem 0.875rem;
+      border-radius: 6px;
     }
 
     .app-nav sl-button::part(base):hover {
-      background: rgba(255, 255, 255, 0.25);
-      border-color: rgba(255, 255, 255, 0.4);
+      background: var(--sl-color-neutral-100, #f1f5f9);
+      color: var(--sl-color-neutral-700, #334155);
     }
 
     .app-nav sl-button[data-active]::part(base) {
-      background: rgba(255, 255, 255, 0.3);
-      border-color: rgba(255, 255, 255, 0.5);
+      background: var(--sl-color-neutral-100, #f1f5f9);
+      color: var(--sl-color-neutral-900, #0f172a);
+      font-weight: 500;
     }
 
     .app-main {
       flex: 1;
-      padding: 1rem;
+      padding: 0;
       overflow: auto;
+      background: white;
     }
   `;
 
@@ -228,8 +240,8 @@ export class UvmApp extends LitElement {
       <div class="app-container">
         <header class="app-header">
           <h1 class="app-title">
-            <sl-icon name="music-note-beamed"></sl-icon>
-            UTAU Voicebank Manager
+            <sl-icon name="soundwave"></sl-icon>
+            Voicebank Studio
           </h1>
           <nav class="app-nav">
             <sl-button
@@ -237,24 +249,21 @@ export class UvmApp extends LitElement {
               ?data-active=${this._currentView === 'welcome'}
               @click=${this._showWelcome}
             >
-              <sl-icon slot="prefix" name="house"></sl-icon>
               Home
-            </sl-button>
-            <sl-button
-              size="small"
-              ?data-active=${this._currentView === 'editor'}
-              @click=${this._showEditor}
-            >
-              <sl-icon slot="prefix" name="pencil-square"></sl-icon>
-              Editor
             </sl-button>
             <sl-button
               size="small"
               ?data-active=${this._currentView === 'recording'}
               @click=${this._showRecording}
             >
-              <sl-icon slot="prefix" name="mic-fill"></sl-icon>
-              Create Voicebank
+              Record
+            </sl-button>
+            <sl-button
+              size="small"
+              ?data-active=${this._currentView === 'editor'}
+              @click=${this._showEditor}
+            >
+              Editor
             </sl-button>
           </nav>
           <div class="app-header-actions">

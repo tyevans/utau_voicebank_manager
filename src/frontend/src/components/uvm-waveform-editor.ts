@@ -14,17 +14,50 @@ interface MarkerConfig {
   name: string;
   color: string;
   label: string;
+  hint: string;
+  icon: string;
 }
 
 /**
  * Marker configurations for all oto.ini parameters.
+ * Each marker includes a human-readable hint explaining its purpose.
  */
 const MARKER_CONFIGS: Record<string, MarkerConfig> = {
-  offset: { name: 'offset', color: '#22c55e', label: 'Offset' },
-  consonant: { name: 'consonant', color: '#3b82f6', label: 'Consonant' },
-  cutoff: { name: 'cutoff', color: '#ef4444', label: 'Cutoff' },
-  preutterance: { name: 'preutterance', color: '#a855f7', label: 'Preutterance' },
-  overlap: { name: 'overlap', color: '#f97316', label: 'Overlap' },
+  offset: {
+    name: 'offset',
+    color: '#22c55e',
+    label: 'Offset',
+    hint: 'Start point',
+    icon: 'O',
+  },
+  consonant: {
+    name: 'consonant',
+    color: '#3b82f6',
+    label: 'Consonant',
+    hint: 'Fixed region end',
+    icon: 'C',
+  },
+  cutoff: {
+    name: 'cutoff',
+    color: '#ef4444',
+    label: 'Cutoff',
+    hint: 'End point',
+    icon: 'X',
+  },
+  preutterance: {
+    name: 'preutterance',
+    color: '#a855f7',
+    label: 'Preutterance',
+    hint: 'Note timing',
+    icon: 'P',
+  },
+  overlap: {
+    name: 'overlap',
+    color: '#f97316',
+    label: 'Overlap',
+    hint: 'Crossfade',
+    icon: 'V',
+  },
 };
 
 /**
@@ -60,10 +93,11 @@ export class UvmWaveformEditor extends LitElement {
     .waveform-container {
       position: relative;
       width: 100%;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      background-color: white;
+      border-radius: var(--sl-border-radius-large, 0.5rem);
       overflow: hidden;
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      border: 1px solid var(--sl-color-neutral-100, #f1f5f9);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     }
 
     :host([theme='dark']) .waveform-container,
@@ -106,60 +140,78 @@ export class UvmWaveformEditor extends LitElement {
     .marker-line {
       width: 2px;
       height: 100%;
-      opacity: 0.8;
-      transition: opacity 0.15s ease;
+      opacity: 0.7;
+      transition: all 0.15s ease;
     }
 
     .marker:hover .marker-line,
     .marker.dragging .marker-line {
       opacity: 1;
       width: 3px;
+      box-shadow: 0 0 8px currentColor;
     }
 
     .marker-handle {
       position: absolute;
       top: 0;
-      width: 12px;
-      height: 20px;
+      width: 14px;
+      height: 22px;
       border-radius: 0 0 4px 4px;
       cursor: ew-resize;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 8px;
+      font-size: 9px;
       color: white;
-      font-weight: bold;
+      font-weight: 600;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+      transition: transform 0.1s ease;
+    }
+
+    .marker:hover .marker-handle,
+    .marker.dragging .marker-handle {
+      transform: scale(1.1);
     }
 
     .marker-label {
       position: absolute;
-      bottom: 4px;
+      bottom: 8px;
       white-space: nowrap;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 500;
-      padding: 2px 4px;
-      border-radius: 2px;
+      padding: 4px 8px;
+      border-radius: 4px;
       color: white;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
       opacity: 0;
-      transition: opacity 0.15s ease;
+      transition: opacity 0.15s ease, transform 0.15s ease;
       pointer-events: none;
+      transform: translateY(4px);
     }
 
     .marker:hover .marker-label,
     .marker.dragging .marker-label {
       opacity: 1;
+      transform: translateY(0);
+    }
+
+    .marker-label-hint {
+      font-size: 10px;
+      opacity: 0.85;
+      display: block;
+      margin-top: 1px;
     }
 
     .controls {
       display: flex;
       align-items: center;
-      gap: 1rem;
-      padding: 0.5rem 1rem;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      font-size: 0.875rem;
+      gap: 0.75rem;
+      padding: 0.625rem 1rem;
+      background-color: white;
+      border-bottom: 1px solid var(--sl-color-neutral-100, #f1f5f9);
+      font-size: 0.8125rem;
     }
 
     :host([theme='dark']) .controls,
@@ -171,12 +223,13 @@ export class UvmWaveformEditor extends LitElement {
     .zoom-controls {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.375rem;
     }
 
     .zoom-label {
-      color: var(--sl-color-neutral-600, #475569);
-      min-width: 4rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      font-size: 0.75rem;
+      min-width: 3.5rem;
     }
 
     :host([theme='dark']) .zoom-label {
@@ -185,22 +238,25 @@ export class UvmWaveformEditor extends LitElement {
 
     .zoom-buttons {
       display: flex;
-      gap: 0.25rem;
+      gap: 0.125rem;
     }
 
     .zoom-btn {
       padding: 0.25rem 0.5rem;
-      border: 1px solid var(--sl-color-neutral-300, #cbd5e1);
-      background-color: white;
+      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      background-color: var(--sl-color-neutral-50, #f8fafc);
       border-radius: 4px;
       cursor: pointer;
-      font-size: 0.875rem;
+      font-size: 0.8125rem;
       line-height: 1;
-      transition: background-color 0.15s ease;
+      color: var(--sl-color-neutral-500, #64748b);
+      transition: all 0.15s ease;
     }
 
     .zoom-btn:hover {
       background-color: var(--sl-color-neutral-100, #f1f5f9);
+      color: var(--sl-color-neutral-700, #334155);
+      border-color: var(--sl-color-neutral-300, #cbd5e1);
     }
 
     :host([theme='dark']) .zoom-btn {
@@ -215,8 +271,9 @@ export class UvmWaveformEditor extends LitElement {
 
     .time-display {
       margin-left: auto;
-      color: var(--sl-color-neutral-500, #64748b);
+      color: var(--sl-color-neutral-400, #94a3b8);
       font-family: monospace;
+      font-size: 0.75rem;
     }
 
     .empty-state {
@@ -248,26 +305,34 @@ export class UvmWaveformEditor extends LitElement {
     }
 
     .keyboard-hint {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-400, #94a3b8);
+      font-size: 0.6875rem;
+      color: var(--sl-color-neutral-300, #cbd5e1);
+      letter-spacing: 0.01em;
+    }
+
+    .controls-divider {
+      width: 1px;
+      height: 16px;
+      background-color: var(--sl-color-neutral-200, #e2e8f0);
     }
 
     .playback-controls {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.375rem;
     }
 
     .playback-controls sl-icon-button {
-      font-size: 1.25rem;
+      font-size: 1.125rem;
     }
 
     .playback-controls sl-icon-button::part(base) {
-      color: var(--sl-color-neutral-700, #334155);
+      color: var(--sl-color-neutral-500, #64748b);
+      padding: 0.25rem;
     }
 
     .playback-controls sl-icon-button::part(base):hover {
-      color: var(--sl-color-primary-600, #4f46e5);
+      color: var(--sl-color-primary-500, #3b82f6);
     }
 
     :host([theme='dark']) .playback-controls sl-icon-button::part(base) {
@@ -280,9 +345,9 @@ export class UvmWaveformEditor extends LitElement {
 
     .playback-time {
       font-family: monospace;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-600, #475569);
-      min-width: 5rem;
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-500, #64748b);
+      min-width: 4.5rem;
     }
 
     :host([theme='dark']) .playback-time {
@@ -877,15 +942,16 @@ export class UvmWaveformEditor extends LitElement {
     return html`
       <div
         class="marker ${isDragging ? 'dragging' : ''}"
-        style="left: ${pixelPosition}px; transform: translateX(-50%);"
+        style="left: ${pixelPosition}px; transform: translateX(-50%); color: ${config.color};"
         @mousedown=${(e: MouseEvent) => this._onMarkerMouseDown(e, name)}
       >
         <div class="marker-line" style="background-color: ${config.color};"></div>
         <div class="marker-handle" style="background-color: ${config.color};">
-          ${config.label.charAt(0)}
+          ${config.icon}
         </div>
         <div class="marker-label" style="background-color: ${config.color};">
           ${config.label}: ${this._formatTime(value)}
+          <span class="marker-label-hint">${config.hint}</span>
         </div>
       </div>
     `;
@@ -906,15 +972,17 @@ export class UvmWaveformEditor extends LitElement {
             ></sl-icon-button>
             <span class="playback-time">${this._formatTime(this._playbackPosition)}</span>
           </div>
+          <div class="controls-divider"></div>
           <div class="zoom-controls">
-            <span class="zoom-label">Zoom: ${this.zoom.toFixed(1)}x</span>
+            <span class="zoom-label">${this.zoom.toFixed(1)}x</span>
             <div class="zoom-buttons">
               <button class="zoom-btn" @click=${this._zoomOut} title="Zoom out (-)">-</button>
               <button class="zoom-btn" @click=${this._zoomIn} title="Zoom in (+)">+</button>
             </div>
           </div>
-          <span class="keyboard-hint">Space: play, +/- zoom, arrows pan</span>
-          <span class="time-display">Duration: ${this._formatTime(duration)}</span>
+          <div class="controls-divider"></div>
+          <span class="keyboard-hint">Space play | +/- zoom | arrows pan</span>
+          <span class="time-display">${this._formatTime(duration)}</span>
         </div>
 
         ${this.loading

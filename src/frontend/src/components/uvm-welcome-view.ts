@@ -31,7 +31,7 @@ export class UvmWelcomeView extends LitElement {
       align-items: center;
       justify-content: center;
       min-height: 100%;
-      padding: 2rem;
+      padding: 3rem 2rem;
     }
 
     .welcome-container {
@@ -39,179 +39,136 @@ export class UvmWelcomeView extends LitElement {
       flex-direction: column;
       align-items: center;
       text-align: center;
-      max-width: 600px;
+      max-width: 480px;
       width: 100%;
     }
 
+    /* We've removed the unnecessary icon container. The title speaks for itself. */
     .welcome-hero {
-      margin-bottom: 3rem;
-    }
-
-    .welcome-icon {
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 1.5rem;
-      box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);
-    }
-
-    .welcome-icon sl-icon {
-      font-size: 3.5rem;
-      color: white;
+      margin-bottom: 4rem;
     }
 
     .welcome-title {
-      font-size: 2rem;
-      font-weight: 700;
+      font-size: 2.5rem;
+      font-weight: 600;
       color: var(--sl-color-neutral-900, #0f172a);
-      margin: 0 0 0.75rem;
-      line-height: 1.2;
+      margin: 0 0 1rem;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
     }
 
     .welcome-subtitle {
       font-size: 1.125rem;
-      color: var(--sl-color-neutral-600, #475569);
+      color: var(--sl-color-neutral-500, #64748b);
       margin: 0;
-      line-height: 1.6;
+      line-height: 1.7;
+      font-weight: 400;
     }
 
+    /* The primary action is unmistakably clear. One button. One purpose. */
     .cta-section {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 1rem;
-      margin-bottom: 3rem;
+      gap: 1.5rem;
+      margin-bottom: 4rem;
     }
 
     .cta-button::part(base) {
-      font-size: 1.125rem;
-      padding: 0.875rem 2rem;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      font-size: 1rem;
+      font-weight: 500;
+      padding: 1rem 2.5rem;
+      background: var(--sl-color-neutral-900, #0f172a);
       border: none;
-      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-      transition: all 0.2s ease;
+      border-radius: 9999px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
 
     .cta-button::part(base):hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+      transform: scale(1.02);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    }
+
+    .cta-button::part(base):active {
+      transform: scale(0.98);
     }
 
     .cta-button sl-icon {
-      font-size: 1.25rem;
+      font-size: 1.125rem;
     }
 
     .secondary-action {
       font-size: 0.875rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .secondary-action sl-button::part(base) {
-      color: var(--sl-color-primary-600, #2563eb);
-      text-decoration: underline;
-      text-underline-offset: 2px;
+      color: var(--sl-color-neutral-500, #64748b);
+      font-weight: 400;
     }
 
     .secondary-action sl-button::part(base):hover {
-      color: var(--sl-color-primary-700, #1d4ed8);
+      color: var(--sl-color-neutral-700, #334155);
     }
 
+    /* The hints section defers to content with quiet confidence */
     .hints-section {
       width: 100%;
-      padding: 2rem;
-      background: linear-gradient(
-        180deg,
-        var(--sl-color-neutral-50, #f8fafc) 0%,
-        var(--sl-color-neutral-100, #f1f5f9) 100%
-      );
-      border-radius: var(--sl-border-radius-large, 0.5rem);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-    }
-
-    .hints-title {
-      font-size: 0.875rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-700, #334155);
-      margin: 0 0 1.25rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      padding: 0;
+      background: transparent;
+      border: none;
     }
 
     .hints-list {
       display: flex;
       justify-content: center;
-      gap: 2rem;
-      flex-wrap: wrap;
+      gap: 3rem;
     }
 
     .hint-item {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 0.5rem;
-      min-width: 100px;
+      gap: 0.75rem;
     }
 
     .hint-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 12px;
-      background: white;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--sl-color-neutral-100, #f1f5f9);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
     }
 
     .hint-icon sl-icon {
-      font-size: 1.5rem;
-      color: var(--sl-color-primary-600, #2563eb);
+      font-size: 1.25rem;
+      color: var(--sl-color-neutral-500, #64748b);
     }
 
     .hint-label {
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-600, #475569);
-      font-weight: 500;
+      font-size: 0.8125rem;
+      color: var(--sl-color-neutral-500, #64748b);
+      font-weight: 400;
     }
 
     /* Responsive adjustments */
     @media (max-width: 640px) {
       :host {
-        padding: 1.5rem;
+        padding: 2rem 1.5rem;
       }
 
       .welcome-title {
-        font-size: 1.5rem;
+        font-size: 1.875rem;
       }
 
       .welcome-subtitle {
         font-size: 1rem;
       }
 
-      .welcome-icon {
-        width: 100px;
-        height: 100px;
-      }
-
-      .welcome-icon sl-icon {
-        font-size: 2.5rem;
-      }
-
       .hints-list {
-        gap: 1.5rem;
-      }
-
-      .hint-item {
-        min-width: 80px;
-      }
-
-      .hints-section {
-        padding: 1.5rem;
+        gap: 2rem;
       }
     }
   `;
@@ -244,13 +201,10 @@ export class UvmWelcomeView extends LitElement {
     return html`
       <div class="welcome-container">
         <div class="welcome-hero">
-          <div class="welcome-icon">
-            <sl-icon name="music-note-beamed"></sl-icon>
-          </div>
-          <h1 class="welcome-title">Create Your Own Singing Voice</h1>
+          <h1 class="welcome-title">Create Your Singing Voice</h1>
           <p class="welcome-subtitle">
-            Build a custom UTAU voicebank in minutes. Just record a few prompts
-            and let our AI handle the rest.
+            Record a few sounds. Our AI does the rest.
+            Your voice, ready for UTAU in minutes.
           </p>
         </div>
 
@@ -261,37 +215,34 @@ export class UvmWelcomeView extends LitElement {
             size="large"
             @click=${this._onStartRecording}
           >
-            <sl-icon slot="prefix" name="mic-fill"></sl-icon>
-            Start Recording
+            Begin Recording
           </sl-button>
           <div class="secondary-action">
-            <span>Already have a voicebank? </span>
             <sl-button variant="text" size="small" @click=${this._onImportVoicebank}>
-              Import existing
+              or import existing voicebank
             </sl-button>
           </div>
         </div>
 
         <div class="hints-section">
-          <h2 class="hints-title">What You'll Need</h2>
           <div class="hints-list">
             <div class="hint-item">
               <div class="hint-icon">
-                <sl-icon name="house"></sl-icon>
+                <sl-icon name="volume-off"></sl-icon>
               </div>
-              <span class="hint-label">A quiet room</span>
+              <span class="hint-label">Quiet space</span>
             </div>
             <div class="hint-item">
               <div class="hint-icon">
                 <sl-icon name="clock"></sl-icon>
               </div>
-              <span class="hint-label">About 10 minutes</span>
+              <span class="hint-label">10 minutes</span>
             </div>
             <div class="hint-item">
               <div class="hint-icon">
                 <sl-icon name="mic"></sl-icon>
               </div>
-              <span class="hint-label">A microphone</span>
+              <span class="hint-label">Microphone</span>
             </div>
           </div>
         </div>

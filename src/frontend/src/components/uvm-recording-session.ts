@@ -86,44 +86,51 @@ export class UvmRecordingSession extends LitElement {
       gap: 1.5rem;
     }
 
-    /* Setup Phase */
+    /* Setup Phase - Simple, focused, inviting */
     .setup-card {
-      padding: 2rem;
+      padding: 2.5rem;
+      background: white;
+      border-radius: 16px;
+      border: none;
+      box-shadow: none;
     }
 
     .setup-card::part(base) {
-      border-radius: var(--sl-border-radius-large, 0.5rem);
+      border: none;
+      box-shadow: none;
     }
 
     .setup-header {
       display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      margin-bottom: 1.5rem;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin-bottom: 2rem;
     }
 
     .setup-header sl-icon {
-      font-size: 1.5rem;
-      color: var(--sl-color-primary-600, #2563eb);
+      display: none; /* The text is sufficient */
     }
 
     .setup-header h2 {
       margin: 0;
-      font-size: 1.25rem;
+      font-size: 1.5rem;
       font-weight: 600;
       color: var(--sl-color-neutral-900, #0f172a);
+      letter-spacing: -0.02em;
     }
 
     .setup-subtitle {
-      margin: 0.25rem 0 0;
-      font-size: 0.875rem;
+      margin: 0;
+      font-size: 0.9375rem;
       color: var(--sl-color-neutral-500, #64748b);
+      font-weight: 400;
     }
 
     .setup-form {
       display: flex;
       flex-direction: column;
-      gap: 1.25rem;
+      gap: 1.5rem;
     }
 
     .form-group {
@@ -133,23 +140,29 @@ export class UvmRecordingSession extends LitElement {
     }
 
     .form-group label {
-      font-size: 0.875rem;
+      font-size: 0.8125rem;
       font-weight: 500;
-      color: var(--sl-color-neutral-700, #334155);
+      color: var(--sl-color-neutral-600, #475569);
     }
 
     .form-group-description {
       font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      color: var(--sl-color-neutral-400, #94a3b8);
       margin-top: 0.25rem;
+      line-height: 1.5;
     }
 
     sl-details {
       margin-top: 0.5rem;
     }
 
+    sl-details::part(summary) {
+      font-size: 0.8125rem;
+      color: var(--sl-color-neutral-500, #64748b);
+    }
+
     sl-details .form-group {
-      margin-top: 1rem;
+      margin-top: 1.25rem;
     }
 
     sl-details .form-group:first-child {
@@ -158,106 +171,112 @@ export class UvmRecordingSession extends LitElement {
 
     .form-actions {
       display: flex;
-      justify-content: flex-end;
+      justify-content: flex-start;
       gap: 0.75rem;
-      margin-top: 1rem;
+      margin-top: 1.5rem;
     }
 
-    /* Recording Phase */
+    /* Recording Phase - Minimal chrome, maximum focus */
     .recording-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 1rem 1.5rem;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      padding: 0.75rem 1rem;
+      background-color: transparent;
     }
 
     .recording-info {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
     }
 
     .recording-info h3 {
       margin: 0;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-800, #1e293b);
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--sl-color-neutral-600, #475569);
     }
 
     .recording-progress {
       display: flex;
       flex-direction: column;
-      gap: 0.5rem;
-      margin-top: 1rem;
+      gap: 0.375rem;
+      margin-top: 0.75rem;
+      padding: 0 1rem;
     }
 
     .progress-info {
       display: flex;
       justify-content: space-between;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-600, #475569);
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .recording-controls {
       display: flex;
-      gap: 0.5rem;
+      gap: 0.25rem;
     }
 
-    /* Processing Phase */
+    .recording-controls sl-button::part(base) {
+      color: var(--sl-color-neutral-500, #64748b);
+      font-size: 0.8125rem;
+    }
+
+    /* Processing Phase - Calm confidence during the wait */
     .processing-container {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 4rem 2rem;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-large, 0.5rem);
+      background-color: white;
+      border-radius: 16px;
       text-align: center;
     }
 
     .processing-header {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 1rem;
-      margin-bottom: 2rem;
+      gap: 1.25rem;
+      margin-bottom: 2.5rem;
     }
 
     .processing-header sl-spinner {
       font-size: 2rem;
-      --indicator-color: var(--sl-color-primary-500, #3b82f6);
+      --indicator-color: var(--sl-color-neutral-400, #94a3b8);
+      --track-color: var(--sl-color-neutral-200, #e2e8f0);
     }
 
     .processing-header h3 {
       margin: 0;
       font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-800, #1e293b);
+      font-weight: 500;
+      color: var(--sl-color-neutral-700, #334155);
     }
 
     .processing-container sl-spinner {
-      font-size: 3rem;
-      --indicator-color: var(--sl-color-primary-500, #3b82f6);
-      margin-bottom: 1.5rem;
+      font-size: 2.5rem;
+      --indicator-color: var(--sl-color-neutral-400, #94a3b8);
+      --track-color: var(--sl-color-neutral-200, #e2e8f0);
+      margin-bottom: 1.25rem;
     }
 
     .processing-container h3 {
       margin: 0 0 0.5rem;
       font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-800, #1e293b);
+      font-weight: 500;
+      color: var(--sl-color-neutral-700, #334155);
     }
 
     .processing-steps {
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 0.5rem;
       margin-bottom: 2rem;
       text-align: left;
-      max-width: 400px;
+      max-width: 320px;
       margin-left: auto;
       margin-right: auto;
       width: 100%;
@@ -265,107 +284,118 @@ export class UvmRecordingSession extends LitElement {
 
     .processing-step {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 0.75rem;
-      padding: 0.5rem;
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
-      transition: background-color 0.2s;
+      padding: 0.625rem 0.75rem;
+      border-radius: 8px;
+      transition: background-color 0.2s ease;
     }
 
     .processing-step.active {
-      background-color: var(--sl-color-primary-50, #eff6ff);
+      background-color: var(--sl-color-neutral-100, #f1f5f9);
     }
 
     .processing-step.completed {
-      opacity: 0.7;
+      opacity: 0.5;
     }
 
     .step-icon {
-      font-size: 1.25rem;
+      font-size: 1rem;
       flex-shrink: 0;
     }
 
-    .step-icon.success { color: var(--sl-color-success-500, #22c55e); }
-    .step-icon.primary { color: var(--sl-color-primary-500, #3b82f6); }
+    .step-icon.success { color: var(--sl-color-neutral-500, #64748b); }
+    .step-icon.primary { color: var(--sl-color-neutral-700, #334155); }
     .step-icon.danger { color: var(--sl-color-danger-500, #ef4444); }
-    .step-icon.neutral { color: var(--sl-color-neutral-400, #9ca3af); }
+    .step-icon.neutral { color: var(--sl-color-neutral-300, #cbd5e1); }
 
     .step-content {
       display: flex;
       flex-direction: column;
-      gap: 0.25rem;
+      gap: 0.125rem;
     }
 
     .step-label {
-      font-weight: 500;
-      color: var(--sl-color-neutral-800, #1e293b);
+      font-weight: 400;
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-700, #334155);
     }
 
     .step-description {
       font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
 
     .processing-progress {
       width: 100%;
-      max-width: 400px;
+      max-width: 320px;
     }
 
-    /* Complete Phase */
+    .processing-progress sl-progress-bar::part(base) {
+      height: 4px;
+      border-radius: 2px;
+    }
+
+    .processing-progress sl-progress-bar::part(indicator) {
+      background: var(--sl-color-neutral-400, #94a3b8);
+    }
+
+    /* Complete Phase - The emotional payoff deserves elegance */
     .complete-container {
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 3rem 2rem;
-      background-color: var(--sl-color-success-50, #f0fdf4);
-      border: 1px solid var(--sl-color-success-200, #bbf7d0);
-      border-radius: var(--sl-border-radius-large, 0.5rem);
+      padding: 4rem 2rem;
+      background-color: white;
+      border-radius: 16px;
       text-align: center;
     }
 
     .complete-icon {
-      font-size: 4rem;
-      color: var(--sl-color-success-500, #22c55e);
+      font-size: 3rem;
+      color: var(--sl-color-neutral-900, #0f172a);
       margin-bottom: 1.5rem;
     }
 
     .complete-container h3 {
-      margin: 0 0 0.5rem;
-      font-size: 1.5rem;
+      margin: 0 0 0.75rem;
+      font-size: 1.75rem;
       font-weight: 600;
       color: var(--sl-color-neutral-900, #0f172a);
+      letter-spacing: -0.02em;
     }
 
     .complete-description {
       font-size: 1rem;
-      color: var(--sl-color-neutral-600, #475569);
-      margin-bottom: 1.5rem;
+      color: var(--sl-color-neutral-500, #64748b);
+      margin-bottom: 2rem;
+      font-weight: 400;
     }
 
     .voicebank-stats {
       display: flex;
-      gap: 2rem;
-      margin-bottom: 2rem;
+      gap: 3rem;
+      margin-bottom: 2.5rem;
     }
 
     .stat-item {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 0.25rem;
+      gap: 0.375rem;
     }
 
     .stat-value {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: var(--sl-color-neutral-800, #1e293b);
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: var(--sl-color-neutral-900, #0f172a);
     }
 
     .stat-label {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      font-size: 0.6875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.08em;
     }
 
     .complete-actions {
@@ -383,15 +413,14 @@ export class UvmRecordingSession extends LitElement {
       font-size: 0.875rem;
     }
 
-    /* Next Steps Section */
+    /* Next Steps Section - Clear, scannable, helpful */
     .next-steps-section {
       width: 100%;
-      max-width: 500px;
-      margin: 1.5rem 0;
-      padding: 1.5rem;
-      background-color: var(--sl-color-neutral-0, #ffffff);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      max-width: 420px;
+      margin: 2rem 0;
+      padding: 1.5rem 1.75rem;
+      background-color: var(--sl-color-neutral-50, #f8fafc);
+      border-radius: 12px;
       text-align: left;
     }
 
@@ -399,14 +428,17 @@ export class UvmRecordingSession extends LitElement {
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      margin-bottom: 1rem;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-800, #1e293b);
+      margin-bottom: 1.25rem;
+      font-size: 0.6875rem;
+      font-weight: 500;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
 
     .next-steps-header sl-icon {
-      color: var(--sl-color-primary-600, #2563eb);
+      color: var(--sl-color-neutral-400, #94a3b8);
+      font-size: 0.875rem;
     }
 
     .next-steps-list {
@@ -415,30 +447,30 @@ export class UvmRecordingSession extends LitElement {
       margin: 0;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 0.875rem;
     }
 
     .next-steps-list li {
       display: flex;
       align-items: flex-start;
-      gap: 0.75rem;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-700, #334155);
-      line-height: 1.5;
+      gap: 0.875rem;
+      font-size: 0.8125rem;
+      color: var(--sl-color-neutral-600, #475569);
+      line-height: 1.6;
     }
 
     .step-number {
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 1.5rem;
-      height: 1.5rem;
-      min-width: 1.5rem;
-      background-color: var(--sl-color-primary-100, #dbeafe);
-      color: var(--sl-color-primary-700, #1d4ed8);
+      width: 1.375rem;
+      height: 1.375rem;
+      min-width: 1.375rem;
+      background-color: var(--sl-color-neutral-200, #e2e8f0);
+      color: var(--sl-color-neutral-600, #475569);
       border-radius: 50%;
-      font-size: 0.75rem;
-      font-weight: 600;
+      font-size: 0.6875rem;
+      font-weight: 500;
     }
 
     .step-content {
@@ -446,28 +478,25 @@ export class UvmRecordingSession extends LitElement {
     }
 
     .step-content strong {
-      color: var(--sl-color-neutral-900, #0f172a);
+      color: var(--sl-color-neutral-700, #334155);
+      font-weight: 500;
     }
 
-    /* Stats row - more compact */
+    /* Stats row - refined and subtle */
     .voicebank-stats-compact {
       display: flex;
       flex-wrap: wrap;
-      gap: 1rem;
+      gap: 2rem;
       justify-content: center;
-      padding: 1rem;
-      background-color: var(--sl-color-neutral-0, #ffffff);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      padding: 1rem 0;
       margin-bottom: 1.5rem;
     }
 
     .stat-item-compact {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 0.5rem;
-      padding: 0 0.75rem;
-      border-right: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      gap: 0.25rem;
     }
 
     .stat-item-compact:last-child {
@@ -475,14 +504,16 @@ export class UvmRecordingSession extends LitElement {
     }
 
     .stat-item-compact .stat-value {
-      font-size: 1.125rem;
+      font-size: 1.25rem;
       font-weight: 600;
       color: var(--sl-color-neutral-800, #1e293b);
     }
 
     .stat-item-compact .stat-label {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      font-size: 0.6875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     /* Error Phase */

@@ -16,6 +16,7 @@ import '@shoelace-style/shoelace/dist/components/select/select.js';
 import '@shoelace-style/shoelace/dist/components/option/option.js';
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
+import '@shoelace-style/shoelace/dist/components/details/details.js';
 import type SlDialog from '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 
 // Import child components
@@ -365,6 +366,108 @@ export class UvmEditorView extends LitElement {
 
     .sidebar-section:last-child {
       margin-bottom: 0;
+    }
+
+    /* Marker legend - visual first approach */
+    .marker-legend {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.75rem;
+      background: var(--sl-color-neutral-50, #f8fafc);
+      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      border: 1px solid var(--sl-color-neutral-100, #f1f5f9);
+    }
+
+    .marker-legend-title {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      margin-bottom: 0.25rem;
+    }
+
+    .marker-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-size: 0.8125rem;
+      color: var(--sl-color-neutral-600, #475569);
+    }
+
+    .marker-legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .marker-legend-name {
+      font-weight: 500;
+      color: var(--sl-color-neutral-700, #334155);
+      min-width: 5.5rem;
+    }
+
+    .marker-legend-hint {
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+    }
+
+    /* Precise values toggle section */
+    .precise-values-toggle {
+      margin-top: 0.5rem;
+    }
+
+    .precise-values-toggle sl-details::part(summary) {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--sl-color-neutral-500, #64748b);
+      padding: 0.5rem 0;
+    }
+
+    .precise-values-toggle sl-details::part(summary-icon) {
+      color: var(--sl-color-neutral-400, #94a3b8);
+    }
+
+    .precise-values-toggle sl-details::part(content) {
+      padding-top: 0.5rem;
+    }
+
+    .precise-values-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .precise-values-grid .param-group {
+      margin-bottom: 0;
+    }
+
+    .precise-values-grid sl-input::part(base) {
+      font-size: 0.75rem;
+    }
+
+    .precise-values-grid .param-label {
+      font-size: 0.6875rem;
+    }
+
+    /* Simplified waveform hint */
+    .waveform-hint {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.625rem;
+      background: var(--sl-color-neutral-50, #f8fafc);
+      border-radius: var(--sl-border-radius-medium);
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-500, #64748b);
+    }
+
+    .waveform-hint sl-icon {
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
     }
   `;
 
@@ -1108,69 +1211,121 @@ export class UvmEditorView extends LitElement {
 
           <sl-divider></sl-divider>
 
-          <div class="param-group">
-            <label class="param-label">
-              <span class="param-color-indicator" style="background-color: #22c55e;"></span>
-              Offset (ms)
-            </label>
-            <sl-input
-              type="number"
-              value=${this._currentEntry?.offset ?? 0}
-              size="small"
-              @sl-change=${(e: Event) => this._onParamChange('offset', e)}
-            ></sl-input>
+          <!-- Waveform-first: Visual legend instead of numeric inputs -->
+          <div class="marker-legend">
+            <div class="marker-legend-title">Drag markers on waveform</div>
+            <sl-tooltip content="Where playback starts. Drag the green marker.">
+              <div class="marker-legend-item">
+                <span class="marker-legend-dot" style="background-color: #22c55e;"></span>
+                <span class="marker-legend-name">Offset</span>
+                <span class="marker-legend-hint">Start point</span>
+              </div>
+            </sl-tooltip>
+            <sl-tooltip content="End of the consonant/fixed region. Drag the blue marker.">
+              <div class="marker-legend-item">
+                <span class="marker-legend-dot" style="background-color: #3b82f6;"></span>
+                <span class="marker-legend-name">Consonant</span>
+                <span class="marker-legend-hint">Fixed region</span>
+              </div>
+            </sl-tooltip>
+            <sl-tooltip content="Where playback ends. Drag the red marker.">
+              <div class="marker-legend-item">
+                <span class="marker-legend-dot" style="background-color: #ef4444;"></span>
+                <span class="marker-legend-name">Cutoff</span>
+                <span class="marker-legend-hint">End point</span>
+              </div>
+            </sl-tooltip>
+            <sl-tooltip content="Timing point for note alignment. Drag the purple marker.">
+              <div class="marker-legend-item">
+                <span class="marker-legend-dot" style="background-color: #a855f7;"></span>
+                <span class="marker-legend-name">Preutterance</span>
+                <span class="marker-legend-hint">Note timing</span>
+              </div>
+            </sl-tooltip>
+            <sl-tooltip content="Crossfade point with previous note. Drag the orange marker.">
+              <div class="marker-legend-item">
+                <span class="marker-legend-dot" style="background-color: #f97316;"></span>
+                <span class="marker-legend-name">Overlap</span>
+                <span class="marker-legend-hint">Crossfade</span>
+              </div>
+            </sl-tooltip>
           </div>
 
-          <div class="param-group">
-            <label class="param-label">
-              <span class="param-color-indicator" style="background-color: #3b82f6;"></span>
-              Consonant (ms)
-            </label>
-            <sl-input
-              type="number"
-              value=${this._currentEntry?.consonant ?? 0}
-              size="small"
-              @sl-change=${(e: Event) => this._onParamChange('consonant', e)}
-            ></sl-input>
-          </div>
+          <!-- Power user: Collapsible precise numeric values -->
+          <div class="precise-values-toggle">
+            <sl-details summary="Show precise values">
+              <div class="precise-values-grid">
+                <div class="param-group">
+                  <label class="param-label">
+                    <span class="param-color-indicator" style="background-color: #22c55e;"></span>
+                    Offset
+                  </label>
+                  <sl-input
+                    type="number"
+                    value=${this._currentEntry?.offset ?? 0}
+                    size="small"
+                    suffix="ms"
+                    @sl-change=${(e: Event) => this._onParamChange('offset', e)}
+                  ></sl-input>
+                </div>
 
-          <div class="param-group">
-            <label class="param-label">
-              <span class="param-color-indicator" style="background-color: #ef4444;"></span>
-              Cutoff (ms)
-            </label>
-            <sl-input
-              type="number"
-              value=${this._currentEntry?.cutoff ?? 0}
-              size="small"
-              @sl-change=${(e: Event) => this._onParamChange('cutoff', e)}
-            ></sl-input>
-          </div>
+                <div class="param-group">
+                  <label class="param-label">
+                    <span class="param-color-indicator" style="background-color: #3b82f6;"></span>
+                    Consonant
+                  </label>
+                  <sl-input
+                    type="number"
+                    value=${this._currentEntry?.consonant ?? 0}
+                    size="small"
+                    suffix="ms"
+                    @sl-change=${(e: Event) => this._onParamChange('consonant', e)}
+                  ></sl-input>
+                </div>
 
-          <div class="param-group">
-            <label class="param-label">
-              <span class="param-color-indicator" style="background-color: #a855f7;"></span>
-              Preutterance (ms)
-            </label>
-            <sl-input
-              type="number"
-              value=${this._currentEntry?.preutterance ?? 0}
-              size="small"
-              @sl-change=${(e: Event) => this._onParamChange('preutterance', e)}
-            ></sl-input>
-          </div>
+                <div class="param-group">
+                  <label class="param-label">
+                    <span class="param-color-indicator" style="background-color: #ef4444;"></span>
+                    Cutoff
+                  </label>
+                  <sl-input
+                    type="number"
+                    value=${this._currentEntry?.cutoff ?? 0}
+                    size="small"
+                    suffix="ms"
+                    @sl-change=${(e: Event) => this._onParamChange('cutoff', e)}
+                  ></sl-input>
+                </div>
 
-          <div class="param-group">
-            <label class="param-label">
-              <span class="param-color-indicator" style="background-color: #f97316;"></span>
-              Overlap (ms)
-            </label>
-            <sl-input
-              type="number"
-              value=${this._currentEntry?.overlap ?? 0}
-              size="small"
-              @sl-change=${(e: Event) => this._onParamChange('overlap', e)}
-            ></sl-input>
+                <div class="param-group">
+                  <label class="param-label">
+                    <span class="param-color-indicator" style="background-color: #a855f7;"></span>
+                    Preutterance
+                  </label>
+                  <sl-input
+                    type="number"
+                    value=${this._currentEntry?.preutterance ?? 0}
+                    size="small"
+                    suffix="ms"
+                    @sl-change=${(e: Event) => this._onParamChange('preutterance', e)}
+                  ></sl-input>
+                </div>
+
+                <div class="param-group" style="grid-column: span 2;">
+                  <label class="param-label">
+                    <span class="param-color-indicator" style="background-color: #f97316;"></span>
+                    Overlap
+                  </label>
+                  <sl-input
+                    type="number"
+                    value=${this._currentEntry?.overlap ?? 0}
+                    size="small"
+                    suffix="ms"
+                    @sl-change=${(e: Event) => this._onParamChange('overlap', e)}
+                  ></sl-input>
+                </div>
+              </div>
+            </sl-details>
           </div>
 
           <sl-divider></sl-divider>
