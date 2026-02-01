@@ -28,6 +28,7 @@ You need these programs installed first:
 | **Node.js 20+** | Runs the frontend | [nodejs.org](https://nodejs.org/) (choose LTS) |
 | **uv** | Installs Python packages fast | See below |
 | **Git** | Downloads the project | [git-scm.com](https://git-scm.com/downloads) |
+| **eSpeak NG** *(Windows only)* | AI phoneme detection | [github.com/espeak-ng/espeak-ng/releases](https://github.com/espeak-ng/espeak-ng/releases) |
 
 **Installing uv** (the Python package manager):
 ```bash
@@ -116,6 +117,11 @@ That's it! You should see the app running.
 ### Audio doesn't work
 - Allow microphone access when your browser asks
 - Check your browser's audio settings
+
+### AI Detect doesn't work (Windows)
+- Install **eSpeak NG** from [github.com/espeak-ng/espeak-ng/releases](https://github.com/espeak-ng/espeak-ng/releases)
+- Download the `.msi` installer and run it
+- Restart the server after installing
 
 ### Something else is broken
 Open an issue on GitHub with:

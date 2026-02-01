@@ -309,6 +309,26 @@ export class UvmSampleBrowser extends LitElement {
     .upload-alert {
       margin-bottom: 1rem;
     }
+
+    .delete-btn {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-500);
+    }
+
+    .delete-btn::part(base) {
+      padding: 0.25rem;
+    }
+
+    .delete-btn:hover {
+      color: var(--sl-color-danger-500);
+    }
+
+    .list-item:hover .delete-btn,
+    .list-item:focus-within .delete-btn {
+      opacity: 1;
+    }
   `;
 
   @state()
@@ -352,6 +372,15 @@ export class UvmSampleBrowser extends LitElement {
 
   @state()
   private _uploadError: string | null = null;
+
+  @state()
+  private _showDeleteDialog = false;
+
+  @state()
+  private _voicebankToDelete: VoicebankSummary | null = null;
+
+  @state()
+  private _isDeleting = false;
 
   @query('uvm-upload-zone')
   private _uploadZone!: UvmUploadZone;
@@ -615,13 +644,17 @@ export class UvmSampleBrowser extends LitElement {
                 <div class="item-name">${vb.name}</div>
                 <div class="item-meta">${vb.sample_count} samples</div>
               </div>
-              ${vb.has_oto
-                ? html`
-                    <div class="item-badges">
-                      <sl-badge variant="success" pill>oto</sl-badge>
-                    </div>
-                  `
-                : null}
+              <div class="item-badges">
+                ${vb.has_oto
+                  ? html`<sl-badge variant="success" pill>oto</sl-badge>`
+                  : null}
+                <sl-icon-button
+                  name="trash"
+                  label="Delete voicebank"
+                  class="delete-btn"
+                  @click=${(e: Event) => this._openDeleteDialog(vb, e)}
+                ></sl-icon-button>
+              </div>
             </li>
           `
         )}
@@ -787,6 +820,7 @@ export class UvmSampleBrowser extends LitElement {
         ${this._renderVoicebanksPanel()} ${this._renderSamplesPanel()}
       </div>
       ${this._renderUploadDialog()}
+      ${this._renderDeleteDialog()}
     `;
   }
 
@@ -949,6 +983,113 @@ export class UvmSampleBrowser extends LitElement {
     } finally {
       this._isUploading = false;
     }
+  }
+
+  /**
+   * Open the delete confirmation dialog.
+   */
+  private _openDeleteDialog(vb: VoicebankSummary, e: Event): void {
+    e.stopPropagation(); // Don't select the voicebank
+    this._voicebankToDelete = vb;
+    this._showDeleteDialog = true;
+  }
+
+  /**
+   * Close the delete confirmation dialog.
+   */
+  private _closeDeleteDialog(): void {
+    if (this._isDeleting) return;
+    this._showDeleteDialog = false;
+    this._voicebankToDelete = null;
+  }
+
+  /**
+   * Handle dialog close request.
+   */
+  private _onDeleteDialogClose(e: Event): void {
+    if (this._isDeleting) {
+      e.preventDefault();
+      return;
+    }
+    this._closeDeleteDialog();
+  }
+
+  /**
+   * Delete the voicebank.
+   */
+  private async _deleteVoicebank(): Promise<void> {
+    if (!this._voicebankToDelete) return;
+
+    this._isDeleting = true;
+
+    try {
+      await api.deleteVoicebank(this._voicebankToDelete.id);
+      const deletedName = this._voicebankToDelete.name;
+
+      // If this was the selected voicebank, clear selection
+      if (this._selectedVoicebank === this._voicebankToDelete.id) {
+        this._selectedVoicebank = null;
+        this._samples = [];
+        this._selectedSample = null;
+        this._sampleOtoMap.clear();
+      }
+
+      // Refresh voicebank list
+      await this._fetchVoicebanks();
+
+      // Close dialog
+      this._showDeleteDialog = false;
+      this._voicebankToDelete = null;
+
+      // Show success toast
+      UvmToastManager.success(`Voicebank "${deletedName}" deleted`);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.isNotFound()) {
+          UvmToastManager.error('Voicebank not found');
+        } else {
+          UvmToastManager.error(`Failed to delete: ${error.message}`);
+        }
+      } else {
+        UvmToastManager.error('Failed to delete voicebank');
+      }
+    } finally {
+      this._isDeleting = false;
+    }
+  }
+
+  /**
+   * Render the delete confirmation dialog.
+   */
+  private _renderDeleteDialog() {
+    return html`
+      <sl-dialog
+        label="Delete Voicebank"
+        ?open=${this._showDeleteDialog}
+        @sl-request-close=${this._onDeleteDialogClose}
+      >
+        <p style="margin: 0; color: var(--sl-color-neutral-700);">
+          Are you sure you want to delete <strong>${this._voicebankToDelete?.name}</strong>?
+          This will permanently remove all samples and configuration.
+        </p>
+
+        <div slot="footer" class="upload-dialog-footer">
+          <sl-button
+            @click=${this._closeDeleteDialog}
+            ?disabled=${this._isDeleting}
+          >
+            Cancel
+          </sl-button>
+          <sl-button
+            variant="danger"
+            ?loading=${this._isDeleting}
+            @click=${this._deleteVoicebank}
+          >
+            Delete
+          </sl-button>
+        </div>
+      </sl-dialog>
+    `;
   }
 }
 
