@@ -230,6 +230,140 @@ class SOFAForcedAligner(ForcedAligner):
 
         return ckpt_path, dict_path
 
+    async def batch_align(
+        self,
+        items: list[tuple[Path, str]],
+        language: str = "ja",
+    ) -> dict[Path, AlignmentResult]:
+        """Align multiple audio files in a single SOFA invocation.
+
+        This is much faster than calling align() repeatedly because
+        the model is loaded only once.
+
+        Args:
+            items: List of (audio_path, transcript) tuples
+            language: Language code (ja, en, zh, ko, fr)
+
+        Returns:
+            Dict mapping original audio paths to their AlignmentResult
+
+        Raises:
+            AlignmentError: If alignment fails for all files
+        """
+        if not items:
+            return {}
+
+        if not self.is_available():
+            raise AlignmentError("SOFA is not installed or not properly configured")
+
+        ckpt_path, dict_path = self._get_model_paths(language)
+
+        # Create temporary directory for batch processing
+        temp_dir = Path(tempfile.mkdtemp(prefix="sofa_batch_"))
+        self._temp_dirs.append(temp_dir)
+
+        try:
+            segments_dir = temp_dir / "segments"
+            segments_dir.mkdir()
+
+            # Map from temp filename (without extension) to original path
+            filename_to_original: dict[str, Path] = {}
+
+            # Prepare all audio files and lab files
+            for idx, (audio_path, transcript) in enumerate(items):
+                # Use index-based naming to avoid collisions
+                base_name = f"audio_{idx:06d}"
+                filename_to_original[base_name] = audio_path
+
+                # Prepare audio (16kHz mono WAV)
+                prepared_audio = segments_dir / f"{base_name}.wav"
+                await self._prepare_audio(audio_path, prepared_audio)
+
+                # Create corresponding .lab file
+                lab_file = segments_dir / f"{base_name}.lab"
+                lab_file.write_text(transcript, encoding="utf-8")
+
+            # Run SOFA inference once for all files
+            assert self._sofa_path is not None
+            cmd = [
+                "python",
+                str(self._sofa_path / "infer.py"),
+                "--ckpt",
+                str(ckpt_path),
+                "--folder",
+                str(segments_dir),
+                "--dictionary",
+                str(dict_path),
+                "--out_formats",
+                "TextGrid",
+            ]
+
+            logger.info(f"Running SOFA batch alignment for {len(items)} files")
+            logger.debug(f"SOFA command: {' '.join(cmd)}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self._sofa_path),
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                error_msg = (
+                    stderr.decode()
+                    if stderr
+                    else stdout.decode()
+                    if stdout
+                    else "Unknown error"
+                )
+                logger.error(f"SOFA batch alignment failed: {error_msg}")
+                raise AlignmentError(f"SOFA batch alignment failed: {error_msg}")
+
+            # Parse all TextGrid outputs and map back to original paths
+            results: dict[Path, AlignmentResult] = {}
+            failed_files: list[Path] = []
+
+            for base_name, original_path in filename_to_original.items():
+                textgrid_path = segments_dir / f"{base_name}.TextGrid"
+
+                if textgrid_path.exists():
+                    try:
+                        result = await self._parse_textgrid(
+                            textgrid_path, original_path
+                        )
+                        results[original_path] = result
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to parse TextGrid for {original_path}: {e}"
+                        )
+                        failed_files.append(original_path)
+                else:
+                    logger.warning(f"No TextGrid output for {original_path}")
+                    failed_files.append(original_path)
+
+            if failed_files:
+                logger.warning(
+                    f"Batch alignment: {len(failed_files)} of {len(items)} files failed"
+                )
+
+            if not results:
+                raise AlignmentError(
+                    "SOFA batch alignment produced no results for any file"
+                )
+
+            return results
+
+        finally:
+            # Cleanup temp directory
+            try:
+                shutil.rmtree(temp_dir)
+                if temp_dir in self._temp_dirs:
+                    self._temp_dirs.remove(temp_dir)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp dir {temp_dir}: {e}")
+
     async def align(
         self,
         audio_path: Path,

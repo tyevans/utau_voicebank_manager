@@ -1,7 +1,7 @@
 """Tests for the OtoSuggester ML-based oto parameter suggestion."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
 from src.backend.domain.oto_suggestion import OtoSuggestion, OtoSuggestionRequest
@@ -434,3 +434,331 @@ class TestIPASets:
         """Test that consonant and vowel sets don't overlap."""
         overlap = IPA_CONSONANTS & IPA_VOWELS
         assert len(overlap) == 0, f"Overlap found: {overlap}"
+
+
+class TestBatchSuggestOto:
+    """Tests for the batch_suggest_oto method."""
+
+    @pytest.fixture
+    def mock_detector(self) -> MagicMock:
+        """Create mock phoneme detector."""
+        detector = MagicMock()
+        detector.detect_phonemes = AsyncMock()
+        return detector
+
+    @pytest.fixture
+    def mock_sofa_aligner(self) -> MagicMock:
+        """Create mock SOFA aligner."""
+        from src.backend.ml.forced_aligner import AlignmentResult
+
+        aligner = MagicMock()
+        aligner.batch_align = AsyncMock()
+        aligner.align = AsyncMock()
+        return aligner
+
+    @pytest.fixture
+    def suggester_with_sofa(
+        self, mock_detector: MagicMock, mock_sofa_aligner: MagicMock
+    ) -> OtoSuggester:
+        """Create suggester with SOFA enabled and mocked."""
+        suggester = OtoSuggester(mock_detector, use_forced_alignment=True, use_sofa=True)
+        suggester._sofa_aligner = mock_sofa_aligner
+        return suggester
+
+    @pytest.fixture
+    def suggester_no_sofa(self, mock_detector: MagicMock) -> OtoSuggester:
+        """Create suggester with SOFA disabled."""
+        return OtoSuggester(mock_detector, use_forced_alignment=False, use_sofa=False)
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_empty_list(
+        self, suggester_no_sofa: OtoSuggester
+    ) -> None:
+        """Empty input returns empty list without any processing."""
+        result = await suggester_no_sofa.batch_suggest_oto([])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_with_sofa(
+        self, suggester_with_sofa: OtoSuggester, mock_sofa_aligner: MagicMock
+    ) -> None:
+        """Uses batch_align when SOFA is enabled and available."""
+        from src.backend.ml.forced_aligner import AlignmentResult
+
+        audio_paths = [
+            Path("/test/_ka.wav"),
+            Path("/test/_sa.wav"),
+        ]
+
+        # Mock SOFA batch_align result
+        mock_sofa_aligner.batch_align.return_value = {
+            audio_paths[0]: AlignmentResult(
+                segments=[
+                    PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0),
+                    PhonemeSegment(phoneme="a", start_ms=60.0, end_ms=200.0, confidence=1.0),
+                ],
+                audio_duration_ms=250.0,
+                method="sofa",
+            ),
+            audio_paths[1]: AlignmentResult(
+                segments=[
+                    PhonemeSegment(phoneme="s", start_ms=25.0, end_ms=70.0, confidence=1.0),
+                    PhonemeSegment(phoneme="a", start_ms=70.0, end_ms=210.0, confidence=1.0),
+                ],
+                audio_duration_ms=260.0,
+                method="sofa",
+            ),
+        }
+
+        with patch("src.backend.ml.oto_suggester.is_sofa_available", return_value=True), \
+             patch(
+                 "src.backend.ml.oto_suggester.extract_transcript_from_filename",
+                 side_effect=lambda f: f.replace("_", "").replace(".wav", "").replace("", " ").strip()
+             ):
+            result = await suggester_with_sofa.batch_suggest_oto(
+                audio_paths, sofa_language="ja"
+            )
+
+        # Verify batch_align was called
+        mock_sofa_aligner.batch_align.assert_called_once()
+
+        # Verify results
+        assert len(result) == 2
+        assert result[0].filename == "_ka.wav"
+        assert result[1].filename == "_sa.wav"
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_fallback_to_sequential(
+        self, suggester_with_sofa: OtoSuggester, mock_detector: MagicMock
+    ) -> None:
+        """Falls back to sequential processing when SOFA is unavailable."""
+        audio_paths = [
+            Path("/test/_ka.wav"),
+            Path("/test/_sa.wav"),
+        ]
+
+        # Mock phoneme detection for sequential fallback
+        mock_detector.detect_phonemes.return_value = PhonemeDetectionResult(
+            segments=[
+                PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=0.9),
+                PhonemeSegment(phoneme="a", start_ms=60.0, end_ms=200.0, confidence=0.85),
+            ],
+            audio_duration_ms=250.0,
+            model_name="test-model",
+        )
+
+        with patch("src.backend.ml.oto_suggester.is_sofa_available", return_value=False):
+            result = await suggester_with_sofa.batch_suggest_oto(
+                audio_paths, sofa_language="ja"
+            )
+
+        # Verify sequential processing was used (detector called for each file)
+        assert mock_detector.detect_phonemes.call_count == 2
+
+        # Verify results
+        assert len(result) == 2
+        assert result[0].filename == "_ka.wav"
+        assert result[1].filename == "_sa.wav"
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_preserves_order(
+        self, suggester_with_sofa: OtoSuggester, mock_sofa_aligner: MagicMock
+    ) -> None:
+        """Results are in same order as input paths."""
+        from src.backend.ml.forced_aligner import AlignmentResult
+
+        audio_paths = [
+            Path("/test/_ta.wav"),
+            Path("/test/_ka.wav"),
+            Path("/test/_sa.wav"),
+        ]
+
+        # Mock SOFA batch_align result (intentionally different order)
+        mock_sofa_aligner.batch_align.return_value = {
+            audio_paths[1]: AlignmentResult(
+                segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+                audio_duration_ms=250.0,
+                method="sofa",
+            ),
+            audio_paths[0]: AlignmentResult(
+                segments=[PhonemeSegment(phoneme="t", start_ms=15.0, end_ms=55.0, confidence=1.0)],
+                audio_duration_ms=240.0,
+                method="sofa",
+            ),
+            audio_paths[2]: AlignmentResult(
+                segments=[PhonemeSegment(phoneme="s", start_ms=25.0, end_ms=70.0, confidence=1.0)],
+                audio_duration_ms=260.0,
+                method="sofa",
+            ),
+        }
+
+        with patch("src.backend.ml.oto_suggester.is_sofa_available", return_value=True), \
+             patch(
+                 "src.backend.ml.oto_suggester.extract_transcript_from_filename",
+                 side_effect=lambda f: f.replace("_", "").replace(".wav", "")
+             ):
+            result = await suggester_with_sofa.batch_suggest_oto(
+                audio_paths, sofa_language="ja"
+            )
+
+        # Verify order matches input
+        assert len(result) == 3
+        assert result[0].filename == "_ta.wav"
+        assert result[1].filename == "_ka.wav"
+        assert result[2].filename == "_sa.wav"
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_with_custom_aliases(
+        self, suggester_with_sofa: OtoSuggester, mock_sofa_aligner: MagicMock
+    ) -> None:
+        """Custom aliases are used when provided."""
+        from src.backend.ml.forced_aligner import AlignmentResult
+
+        audio_paths = [
+            Path("/test/_ka.wav"),
+            Path("/test/_sa.wav"),
+        ]
+        custom_aliases = ["custom ka", "custom sa"]
+
+        mock_sofa_aligner.batch_align.return_value = {
+            audio_paths[0]: AlignmentResult(
+                segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+                audio_duration_ms=250.0,
+                method="sofa",
+            ),
+            audio_paths[1]: AlignmentResult(
+                segments=[PhonemeSegment(phoneme="s", start_ms=25.0, end_ms=70.0, confidence=1.0)],
+                audio_duration_ms=260.0,
+                method="sofa",
+            ),
+        }
+
+        with patch("src.backend.ml.oto_suggester.is_sofa_available", return_value=True), \
+             patch(
+                 "src.backend.ml.oto_suggester.extract_transcript_from_filename",
+                 side_effect=lambda f: f.replace("_", "").replace(".wav", "")
+             ):
+            result = await suggester_with_sofa.batch_suggest_oto(
+                audio_paths, aliases=custom_aliases, sofa_language="ja"
+            )
+
+        # Verify custom aliases are used
+        assert result[0].alias == "custom ka"
+        assert result[1].alias == "custom sa"
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_aliases_length_mismatch_raises(
+        self, suggester_no_sofa: OtoSuggester
+    ) -> None:
+        """Raises ValueError if aliases length doesn't match paths length."""
+        audio_paths = [Path("/test/_ka.wav"), Path("/test/_sa.wav")]
+        aliases = ["only one alias"]  # Mismatch!
+
+        with pytest.raises(ValueError, match="aliases length"):
+            await suggester_no_sofa.batch_suggest_oto(audio_paths, aliases=aliases)
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_partial_sofa_failure(
+        self,
+        suggester_with_sofa: OtoSuggester,
+        mock_sofa_aligner: MagicMock,
+        mock_detector: MagicMock,
+    ) -> None:
+        """Files that fail SOFA are processed individually via fallback."""
+        from src.backend.ml.forced_aligner import AlignmentResult
+
+        audio_paths = [
+            Path("/test/_ka.wav"),
+            Path("/test/_sa.wav"),  # This one will fail SOFA
+        ]
+
+        # Mock SOFA batch_align returns only first file (second failed)
+        mock_sofa_aligner.batch_align.return_value = {
+            audio_paths[0]: AlignmentResult(
+                segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+                audio_duration_ms=250.0,
+                method="sofa",
+            ),
+            # audio_paths[1] is missing - simulates failure
+        }
+
+        # Mock suggest_oto for fallback (called for failed files)
+        fallback_suggestion = OtoSuggestion(
+            filename="_sa.wav",
+            alias="- sa",
+            offset=20.0,
+            consonant=100.0,
+            cutoff=-30.0,
+            preutterance=60.0,
+            overlap=25.0,
+            confidence=0.8,
+            phonemes_detected=[],
+            audio_duration_ms=260.0,
+        )
+
+        with patch("src.backend.ml.oto_suggester.is_sofa_available", return_value=True), \
+             patch(
+                 "src.backend.ml.oto_suggester.extract_transcript_from_filename",
+                 side_effect=lambda f: f.replace("_", "").replace(".wav", "")
+             ), \
+             patch.object(
+                 suggester_with_sofa, "suggest_oto", new_callable=AsyncMock,
+                 return_value=fallback_suggestion
+             ):
+            result = await suggester_with_sofa.batch_suggest_oto(
+                audio_paths, sofa_language="ja"
+            )
+
+        # Verify both files have results
+        assert len(result) == 2
+        assert result[0].filename == "_ka.wav"
+        assert result[1].filename == "_sa.wav"
+
+    @pytest.mark.asyncio
+    async def test_batch_suggest_oto_sofa_batch_error_falls_back(
+        self,
+        suggester_with_sofa: OtoSuggester,
+        mock_sofa_aligner: MagicMock,
+        mock_detector: MagicMock,
+    ) -> None:
+        """When SOFA batch_align raises error, falls back to sequential."""
+        from src.backend.ml.forced_aligner import AlignmentError
+
+        audio_paths = [Path("/test/_ka.wav")]
+
+        # Mock SOFA batch_align to raise error
+        mock_sofa_aligner.batch_align.side_effect = AlignmentError("SOFA failed")
+
+        # Create a mock suggestion for the fallback
+        fallback_suggestion = OtoSuggestion(
+            filename="_ka.wav",
+            alias="- ka",
+            offset=20.0,
+            consonant=100.0,
+            cutoff=-30.0,
+            preutterance=60.0,
+            overlap=25.0,
+            confidence=0.85,
+            phonemes_detected=[],
+            audio_duration_ms=250.0,
+        )
+
+        with patch("src.backend.ml.oto_suggester.is_sofa_available", return_value=True), \
+             patch(
+                 "src.backend.ml.oto_suggester.extract_transcript_from_filename",
+                 side_effect=lambda f: f.replace("_", "").replace(".wav", "")
+             ), \
+             patch.object(
+                 suggester_with_sofa,
+                 "_batch_suggest_sequential",
+                 new_callable=AsyncMock,
+                 return_value=[fallback_suggestion]
+             ) as mock_sequential:
+            result = await suggester_with_sofa.batch_suggest_oto(
+                audio_paths, sofa_language="ja"
+            )
+
+        # Verify _batch_suggest_sequential was called as fallback
+        mock_sequential.assert_called_once()
+        assert len(result) == 1
+        assert result[0].filename == "_ka.wav"

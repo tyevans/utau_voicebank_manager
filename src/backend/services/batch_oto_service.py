@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from src.backend.domain.batch_oto import BatchOtoResult
 from src.backend.domain.oto_entry import OtoEntry
@@ -13,6 +14,10 @@ from src.backend.services.voicebank_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Confidence threshold below which a suggestion is considered low-confidence
+# (likely used default values due to detection failure)
+LOW_CONFIDENCE_THRESHOLD = 0.3
 
 
 class BatchOtoService:
@@ -45,19 +50,22 @@ class BatchOtoService:
         voicebank_id: str,
         overwrite_existing: bool = False,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        sofa_language: str = "ja",
     ) -> BatchOtoResult:
         """Generate oto entries for all samples in a voicebank.
 
-        Processes each WAV sample through the ML pipeline to generate
-        suggested oto parameters. Optionally skips files that already
-        have oto entries.
+        Uses batch processing when SOFA is available, which is much faster
+        than processing files one-by-one because the ML model is loaded only once.
 
         Args:
             voicebank_id: The voicebank to process
             overwrite_existing: If True, replace existing entries.
                                If False, skip files with entries.
             progress_callback: Optional callback(current, total, filename)
-                              for progress updates
+                              for progress updates. Note: with batch processing,
+                              progress is reported at start and completion only.
+            sofa_language: Language code for SOFA alignment (ja, en, zh, ko, fr).
+                          Defaults to "ja" for Japanese.
 
         Returns:
             BatchOtoResult with generated entries and statistics
@@ -76,19 +84,11 @@ class BatchOtoService:
         existing_entries = await self._oto_repository.get_entries(voicebank_id) or []
         existing_filenames = {entry.filename for entry in existing_entries}
 
-        # Track statistics
-        processed = 0
+        # Collect sample paths that need processing (not skipped)
+        samples_to_process: list[tuple[str, Path]] = []
         skipped = 0
-        failed = 0
-        generated_entries: list[OtoEntry] = []
-        failed_files: list[str] = []
-        confidence_sum = 0.0
 
-        for index, filename in enumerate(samples):
-            # Report progress
-            if progress_callback:
-                progress_callback(index + 1, total_samples, filename)
-
+        for filename in samples:
             # Skip if has existing entry and not overwriting
             if filename in existing_filenames and not overwrite_existing:
                 logger.debug(f"Skipping {filename}: already has oto entry")
@@ -100,16 +100,40 @@ class BatchOtoService:
                 sample_path = await self._voicebank_service.get_sample_path(
                     voicebank_id, filename
                 )
+                samples_to_process.append((filename, sample_path))
             except VoicebankNotFoundError:
                 logger.warning(f"Sample file not found: {filename}")
-                failed += 1
-                failed_files.append(filename)
-                continue
+                # Will be tracked as failed later
 
-            # Generate oto suggestion
-            try:
-                suggestion = await self._oto_suggester.suggest_oto(sample_path)
+        # Report progress: starting batch processing
+        if progress_callback:
+            to_process_count = len(samples_to_process)
+            progress_callback(
+                0,
+                total_samples,
+                f"Starting batch processing of {to_process_count} samples...",
+            )
 
+        # Process all samples in batch
+        generated_entries: list[OtoEntry] = []
+        failed_files: list[str] = []
+        low_confidence_files: list[str] = []
+        confidence_sum = 0.0
+        processed = 0
+
+        if samples_to_process:
+            # Extract just the paths for batch processing
+            paths = [path for _, path in samples_to_process]
+
+            # Call batch_suggest_oto once for all files
+            suggestions = await self._oto_suggester.batch_suggest_oto(
+                paths, sofa_language=sofa_language
+            )
+
+            # Process results
+            for (filename, _), suggestion in zip(
+                samples_to_process, suggestions, strict=True
+            ):
                 # Convert OtoSuggestion to OtoEntry
                 entry = OtoEntry(
                     filename=suggestion.filename,
@@ -125,16 +149,45 @@ class BatchOtoService:
                 confidence_sum += suggestion.confidence
                 processed += 1
 
-                logger.debug(
-                    f"Generated oto for {filename}: "
-                    f"alias={entry.alias}, confidence={suggestion.confidence:.2f}"
-                )
+                # Track low-confidence suggestions (likely used defaults)
+                if suggestion.confidence < LOW_CONFIDENCE_THRESHOLD:
+                    low_confidence_files.append(filename)
+                    logger.debug(
+                        f"Low confidence for {filename}: "
+                        f"confidence={suggestion.confidence:.2f}"
+                    )
+                else:
+                    logger.debug(
+                        f"Generated oto for {filename}: "
+                        f"alias={entry.alias}, confidence={suggestion.confidence:.2f}"
+                    )
 
-            except Exception as e:
-                logger.warning(f"Failed to process {filename}: {e}")
-                failed += 1
+        # Track files that couldn't be found as failed
+        found_filenames = {filename for filename, _ in samples_to_process}
+        for filename in samples:
+            should_process = filename not in existing_filenames or overwrite_existing
+            if should_process and filename not in found_filenames:
                 failed_files.append(filename)
-                continue
+
+        failed = len(failed_files)
+
+        # Log summary of low-confidence files
+        if low_confidence_files:
+            logger.info(
+                f"{len(low_confidence_files)} files had low confidence "
+                "(may need manual review): {low_confidence_files[:5]}..."
+                if len(low_confidence_files) > 5
+                else f"{len(low_confidence_files)} files had low confidence "
+                f"(may need manual review): {low_confidence_files}"
+            )
+
+        # Report progress: batch complete
+        if progress_callback:
+            progress_callback(
+                total_samples,
+                total_samples,
+                f"Batch complete: {processed} processed, {skipped} skipped, {failed} failed",
+            )
 
         # Calculate average confidence
         average_confidence = confidence_sum / processed if processed > 0 else 0.0

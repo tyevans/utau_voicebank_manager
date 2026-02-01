@@ -17,6 +17,7 @@ from src.backend.ml.forced_alignment_detector import (
 from src.backend.ml.phoneme_detector import PhonemeDetector, preprocess_audio
 from src.backend.ml.sofa_aligner import (
     AlignmentError,
+    AlignmentResult,
     SOFAForcedAligner,
     get_sofa_aligner,
     is_sofa_available,
@@ -329,6 +330,272 @@ class OtoSuggester:
             overlap=round(overlap, 1),
             confidence=round(confidence, 3),
             phonemes_detected=segments,
+            audio_duration_ms=round(audio_duration_ms, 1),
+        )
+
+    async def batch_suggest_oto(
+        self,
+        audio_paths: list[Path],
+        aliases: list[str] | None = None,
+        sofa_language: str = "ja",
+    ) -> list[OtoSuggestion]:
+        """Analyze multiple audio files and suggest oto parameters in batch.
+
+        When SOFA is enabled and available, this is much faster than calling
+        suggest_oto() repeatedly because the model is loaded only once.
+
+        Args:
+            audio_paths: List of paths to WAV files
+            aliases: Optional list of aliases (same length as audio_paths).
+                    If None, aliases are generated from filenames.
+            sofa_language: Language code for SOFA alignment (ja, en, zh, ko, fr)
+
+        Returns:
+            List of OtoSuggestion objects (same order as input paths)
+        """
+        if not audio_paths:
+            return []
+
+        # Validate aliases length if provided
+        if aliases is not None and len(aliases) != len(audio_paths):
+            raise ValueError(
+                f"aliases length ({len(aliases)}) must match "
+                f"audio_paths length ({len(audio_paths)})"
+            )
+
+        # If SOFA is not enabled or not available, fall back to sequential processing
+        if not self.use_sofa or not is_sofa_available():
+            logger.info(
+                "SOFA not available for batch processing, "
+                "falling back to sequential suggest_oto() calls"
+            )
+            return await self._batch_suggest_sequential(
+                audio_paths, aliases, sofa_language
+            )
+
+        # Extract transcripts and prepare items for batch alignment
+        items: list[tuple[Path, str]] = []
+        path_to_transcript: dict[Path, str] = {}
+
+        for audio_path in audio_paths:
+            filename = audio_path.name
+            try:
+                transcript = extract_transcript_from_filename(filename)
+                items.append((audio_path, transcript))
+                path_to_transcript[audio_path] = transcript
+            except TranscriptExtractionError as e:
+                logger.warning(
+                    f"Failed to extract transcript from {filename}: {e}. "
+                    "Will process individually."
+                )
+                # Keep track but don't add to batch items
+                path_to_transcript[audio_path] = ""
+
+        # Filter to only files with valid transcripts for batch processing
+        batch_items = [(p, t) for p, t in items if t]
+
+        # Run batch alignment with SOFA
+        alignment_results: dict[Path, AlignmentResult] = {}
+        if batch_items:
+            try:
+                alignment_results = await self.sofa_aligner.batch_align(
+                    batch_items, language=sofa_language
+                )
+                logger.info(
+                    f"SOFA batch alignment succeeded for "
+                    f"{len(alignment_results)}/{len(batch_items)} files"
+                )
+            except AlignmentError as e:
+                logger.warning(
+                    f"SOFA batch alignment failed: {e}. "
+                    "Falling back to sequential processing."
+                )
+                return await self._batch_suggest_sequential(
+                    audio_paths, aliases, sofa_language
+                )
+
+        # Build suggestions from alignment results
+        suggestions: list[OtoSuggestion] = []
+        failed_paths: list[tuple[int, Path]] = []  # (index, path) for fallback
+
+        for idx, audio_path in enumerate(audio_paths):
+            filename = audio_path.name
+
+            # Determine alias for this file
+            if aliases is not None:
+                alias = aliases[idx]
+            else:
+                alias = self._generate_alias_from_filename(filename)
+
+            # Check if we have alignment result for this file
+            if audio_path in alignment_results:
+                result = alignment_results[audio_path]
+                suggestion = self._build_suggestion_from_alignment(
+                    filename=filename,
+                    alias=alias,
+                    segments=result.segments,
+                    audio_duration_ms=result.audio_duration_ms,
+                    detection_method="sofa",
+                )
+                suggestions.append(suggestion)
+            else:
+                # Mark for fallback processing
+                failed_paths.append((idx, audio_path))
+                suggestions.append(None)  # type: ignore[arg-type] # Placeholder
+
+        # Process failed files individually using suggest_oto()
+        if failed_paths:
+            logger.info(
+                f"Processing {len(failed_paths)} files that failed batch alignment"
+            )
+            for idx, audio_path in failed_paths:
+                file_alias = aliases[idx] if aliases is not None else None
+                try:
+                    suggestion = await self.suggest_oto(
+                        audio_path, alias=file_alias, sofa_language=sofa_language
+                    )
+                    suggestions[idx] = suggestion
+                except Exception as e:
+                    logger.error(f"Failed to process {audio_path}: {e}")
+                    # Create a default suggestion
+                    suggestions[idx] = self._build_default_suggestion(
+                        audio_path, file_alias
+                    )
+
+        return suggestions
+
+    async def _batch_suggest_sequential(
+        self,
+        audio_paths: list[Path],
+        aliases: list[str] | None,
+        sofa_language: str,
+    ) -> list[OtoSuggestion]:
+        """Process files sequentially when batch processing is not available.
+
+        Args:
+            audio_paths: List of paths to WAV files
+            aliases: Optional list of aliases
+            sofa_language: Language code for SOFA alignment
+
+        Returns:
+            List of OtoSuggestion objects
+        """
+        suggestions: list[OtoSuggestion] = []
+
+        for idx, audio_path in enumerate(audio_paths):
+            file_alias = aliases[idx] if aliases is not None else None
+            try:
+                suggestion = await self.suggest_oto(
+                    audio_path, alias=file_alias, sofa_language=sofa_language
+                )
+                suggestions.append(suggestion)
+            except Exception as e:
+                logger.error(f"Failed to process {audio_path}: {e}")
+                suggestions.append(
+                    self._build_default_suggestion(audio_path, file_alias)
+                )
+
+        return suggestions
+
+    def _build_suggestion_from_alignment(
+        self,
+        filename: str,
+        alias: str,
+        segments: list[PhonemeSegment],
+        audio_duration_ms: float,
+        detection_method: str,
+    ) -> OtoSuggestion:
+        """Build an OtoSuggestion from alignment results.
+
+        Uses the same parameter estimation logic as suggest_oto().
+
+        Args:
+            filename: WAV filename
+            alias: Phoneme alias
+            segments: Detected phoneme segments
+            audio_duration_ms: Total audio duration
+            detection_method: Detection method used (for logging)
+
+        Returns:
+            OtoSuggestion with estimated parameters
+        """
+        logger.debug(f"Detection method for {filename}: {detection_method}")
+
+        # Classify phonemes
+        classification = self._classify_phonemes(segments)
+
+        # Calculate confidence based on detection quality
+        confidence = self._calculate_confidence(segments, audio_duration_ms)
+
+        # Estimate parameters
+        if segments and confidence >= MIN_CONFIDENCE_THRESHOLD:
+            offset = self._estimate_offset(segments)
+            consonant_end = self._estimate_consonant_end(segments, classification)
+            preutterance = self._estimate_preutterance(segments, classification)
+            cutoff = self._estimate_cutoff(audio_duration_ms, segments)
+            overlap = self._estimate_overlap(offset, preutterance)
+        else:
+            # Use reasonable defaults
+            logger.info(
+                f"Low confidence ({confidence:.2f}) or no segments, using defaults"
+            )
+            offset = DEFAULT_OFFSET_MS
+            preutterance = DEFAULT_PREUTTERANCE_MS
+            consonant_end = DEFAULT_CONSONANT_MS
+            cutoff = -DEFAULT_CUTOFF_PADDING_MS
+            overlap = DEFAULT_OVERLAP_MS
+
+        # Ensure consonant is at least as large as preutterance
+        consonant_end = max(consonant_end, preutterance + 20)
+
+        return OtoSuggestion(
+            filename=filename,
+            alias=alias,
+            offset=round(offset, 1),
+            consonant=round(consonant_end, 1),
+            cutoff=round(cutoff, 1),
+            preutterance=round(preutterance, 1),
+            overlap=round(overlap, 1),
+            confidence=round(confidence, 3),
+            phonemes_detected=segments,
+            audio_duration_ms=round(audio_duration_ms, 1),
+        )
+
+    def _build_default_suggestion(
+        self,
+        audio_path: Path,
+        alias: str | None,
+    ) -> OtoSuggestion:
+        """Build a default OtoSuggestion when all detection methods fail.
+
+        Args:
+            audio_path: Path to the audio file
+            alias: Optional alias override
+
+        Returns:
+            OtoSuggestion with default parameters
+        """
+        filename = audio_path.name
+
+        if alias is None:
+            alias = self._generate_alias_from_filename(filename)
+
+        # Try to get audio duration
+        try:
+            _, _, audio_duration_ms = preprocess_audio(audio_path)
+        except Exception:
+            audio_duration_ms = 1000.0  # Default 1 second
+
+        return OtoSuggestion(
+            filename=filename,
+            alias=alias,
+            offset=DEFAULT_OFFSET_MS,
+            consonant=DEFAULT_CONSONANT_MS,
+            cutoff=-DEFAULT_CUTOFF_PADDING_MS,
+            preutterance=DEFAULT_PREUTTERANCE_MS,
+            overlap=DEFAULT_OVERLAP_MS,
+            confidence=0.0,
+            phonemes_detected=[],
             audio_duration_ms=round(audio_duration_ms, 1),
         )
 

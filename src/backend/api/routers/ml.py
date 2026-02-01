@@ -439,6 +439,7 @@ async def batch_generate_oto(
         result = await service.generate_oto_for_voicebank(
             voicebank_id=request.voicebank_id,
             overwrite_existing=request.overwrite_existing,
+            sofa_language=request.sofa_language,
         )
 
         logger.info(

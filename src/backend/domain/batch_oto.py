@@ -16,6 +16,10 @@ class BatchOtoRequest(BaseModel):
         default=False,
         description="If True, replace existing entries. If False, skip files with entries.",
     )
+    sofa_language: str = Field(
+        default="ja",
+        description="Language code for SOFA alignment (ja, en, zh, ko, fr). Defaults to Japanese.",
+    )
 
 
 class BatchOtoResult(BaseModel):
