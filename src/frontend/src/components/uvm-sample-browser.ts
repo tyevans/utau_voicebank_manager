@@ -101,7 +101,7 @@ export class UvmSampleBrowser extends LitElement {
 
     .samples-panel {
       flex: 1;
-      min-width: 280px;
+      min-width: 200px;
     }
 
     @media (max-width: 768px) {

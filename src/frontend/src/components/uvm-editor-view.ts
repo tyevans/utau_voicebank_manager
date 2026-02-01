@@ -81,16 +81,22 @@ export class UvmEditorView extends LitElement {
 
     .editor-layout {
       display: grid;
-      grid-template-columns: minmax(280px, 340px) 1fr minmax(260px, 300px);
+      grid-template-columns: minmax(400px, 500px) 1fr minmax(260px, 300px);
       grid-template-rows: 1fr;
       gap: 1rem;
       height: calc(100vh - 120px);
       min-height: 500px;
     }
 
+    @media (max-width: 1400px) {
+      .editor-layout {
+        grid-template-columns: minmax(360px, 450px) 1fr minmax(240px, 280px);
+      }
+    }
+
     @media (max-width: 1200px) {
       .editor-layout {
-        grid-template-columns: minmax(260px, 320px) 1fr minmax(240px, 280px);
+        grid-template-columns: minmax(320px, 400px) 1fr minmax(240px, 280px);
       }
     }
 
@@ -106,13 +112,11 @@ export class UvmEditorView extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 1rem;
-      height: 100%;
       min-height: 0;
     }
 
     .waveform-section {
-      flex: 1;
-      min-height: 200px;
+      flex: 0 0 auto;
       display: flex;
       flex-direction: column;
       background-color: #ffffff;
