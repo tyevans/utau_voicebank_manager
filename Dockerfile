@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
@@ -68,13 +69,19 @@ COPY src/ ./src/
 # Git submodules aren't included in Docker builds, so we clone directly
 RUN git clone --depth 1 https://github.com/tyevans/SOFA.git vendor/SOFA
 
-# Download SOFA checkpoint and dictionary files for English
-# These are required for SOFA to function (checkpoint ~387MB, dictionary ~3MB)
+# Download SOFA checkpoint and dictionary files
+# English: checkpoint ~387MB, dictionary ~3MB
+# Japanese: zip ~1.1GB containing checkpoint and dictionary
 RUN mkdir -p vendor/SOFA/ckpt vendor/SOFA/dictionary && \
     curl -L -o vendor/SOFA/ckpt/tgm_en_v100.ckpt \
         "https://github.com/spicytigermeat/SOFA-Models/releases/download/v1.0.0_en/tgm_en_v100.ckpt" && \
     curl -L -o vendor/SOFA/dictionary/english.txt \
-        "https://github.com/spicytigermeat/SOFA-Models/releases/download/v0.0.5/tgm_sofa_dict.txt"
+        "https://github.com/spicytigermeat/SOFA-Models/releases/download/v0.0.5/tgm_sofa_dict.txt" && \
+    curl -L -o /tmp/sofa_jpn.zip \
+        "https://github.com/colstone/SOFA_Models/releases/download/JPN-V0.0.2b/SOFA_model_JPN_Ver0.0.2_Beta.zip" && \
+    unzip -j /tmp/sofa_jpn.zip "*.ckpt" -d vendor/SOFA/ckpt/ && \
+    unzip -j /tmp/sofa_jpn.zip "*.txt" -d vendor/SOFA/dictionary/ && \
+    rm /tmp/sofa_jpn.zip
 
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./src/frontend/dist

@@ -4,9 +4,12 @@ Usage:
     uv run python -m src.backend.ml.download_models
 """
 
+import fnmatch
 import logging
 import sys
+import tempfile
 import urllib.request
+import zipfile
 from pathlib import Path
 
 logging.basicConfig(
@@ -50,6 +53,15 @@ SOFA_DOWNLOADS: dict[str, dict[str, dict[str, str | int]]] = {
             "url": "https://github.com/spicytigermeat/SOFA-Models/releases/download/v0.0.5/tgm_sofa_dict.txt",
             "filename": "english.txt",
             "size_mb": 3,
+        },
+    },
+    "ja": {
+        "zip": {
+            "url": "https://github.com/colstone/SOFA_Models/releases/download/JPN-V0.0.2b/SOFA_model_JPN_Ver0.0.2_Beta.zip",
+            "filename": "SOFA_model_JPN_Ver0.0.2_Beta.zip",
+            "size_mb": 1100,
+            "checkpoint_pattern": "*.ckpt",
+            "dictionary_pattern": "*.txt",
         },
     },
 }
@@ -238,7 +250,93 @@ def download_sofa_models() -> tuple[int, int]:
                 else:
                     failure_count += 1
 
+        # Download and extract zip (contains both checkpoint and dictionary)
+        zip_info = lang_models.get("zip")
+        if zip_info:
+            url = str(zip_info["url"])
+            filename = str(zip_info["filename"])
+            expected_size_mb = int(zip_info["size_mb"])
+            ckpt_pattern = str(zip_info.get("checkpoint_pattern", "*.ckpt"))
+            dict_pattern = str(zip_info.get("dictionary_pattern", "*.txt"))
+
+            # Check if we already have extracted files
+            existing_ckpts = list(SOFA_CHECKPOINTS_DIR.glob(ckpt_pattern))
+            if existing_ckpts:
+                logger.info(
+                    f"  Checkpoint files for {lang_code} already exist, skipping zip download"
+                )
+                success_count += 1
+            else:
+                if _download_and_extract_zip(
+                    url, filename, expected_size_mb, ckpt_pattern, dict_pattern
+                ):
+                    success_count += 1
+                else:
+                    failure_count += 1
+
     return success_count, failure_count
+
+
+def _download_and_extract_zip(
+    url: str,
+    filename: str,
+    expected_size_mb: int,
+    ckpt_pattern: str,
+    dict_pattern: str,
+) -> bool:
+    """Download a zip file and extract checkpoint/dictionary files.
+
+    Args:
+        url: URL to download from
+        filename: Display name for logging
+        expected_size_mb: Expected file size in MB
+        ckpt_pattern: Glob pattern for checkpoint files
+        dict_pattern: Glob pattern for dictionary files
+
+    Returns:
+        True if download and extraction succeeded, False otherwise
+    """
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir) / filename
+            logger.info(f"  Starting download: {filename} (~{expected_size_mb}MB)")
+            progress_hook = _create_download_progress_hook(filename, expected_size_mb)
+
+            urllib.request.urlretrieve(url, temp_path, reporthook=progress_hook)
+            logger.info(f"  Download complete, extracting...")
+
+            with zipfile.ZipFile(temp_path, "r") as zf:
+                for member in zf.namelist():
+                    basename = Path(member).name
+                    if not basename:  # Skip directories
+                        continue
+
+                    # Extract checkpoint files
+                    if fnmatch.fnmatch(basename, ckpt_pattern):
+                        target = SOFA_CHECKPOINTS_DIR / basename
+                        logger.info(f"  Extracting checkpoint: {basename}")
+                        with zf.open(member) as src, open(target, "wb") as dst:
+                            dst.write(src.read())
+
+                    # Extract dictionary files
+                    elif fnmatch.fnmatch(basename, dict_pattern):
+                        target = SOFA_DICTIONARY_DIR / basename
+                        logger.info(f"  Extracting dictionary: {basename}")
+                        with zf.open(member) as src, open(target, "wb") as dst:
+                            dst.write(src.read())
+
+            logger.info(f"  Successfully extracted: {filename}")
+            return True
+
+    except urllib.error.URLError as e:
+        logger.error(f"  Failed to download {filename}: Network error - {e}")
+        return False
+    except zipfile.BadZipFile as e:
+        logger.error(f"  Failed to extract {filename}: Invalid zip file - {e}")
+        return False
+    except Exception as e:
+        logger.exception(f"  Failed to process {filename}: {e}")
+        return False
 
 
 def _download_file(
