@@ -17,6 +17,9 @@ export { UvmWaveformCanvas } from './uvm-waveform-canvas.js';
 // Sample browser for selecting voicebank samples
 export { UvmSampleBrowser } from './uvm-sample-browser.js';
 
+// Sample card for mini-waveform grid display
+export { UvmSampleCard } from './uvm-sample-card.js';
+
 // Main editor view integrating all components
 export { UvmEditorView } from './uvm-editor-view.js';
 

@@ -506,15 +506,105 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       return;
     }
 
+    // Don't trigger shortcuts if user is typing in an input
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
+
+    // Sample navigation shortcuts
+    if (e.key === '[') {
+      e.preventDefault();
+      this._navigateToPreviousSample();
+      return;
+    }
+
+    if (e.key === ']') {
+      e.preventDefault();
+      this._navigateToNextSample();
+      return;
+    }
+
     // Toggle precision drawer with = or + key
     if (e.key === '=' || e.key === '+') {
-      // Don't trigger if user is typing in an input
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        return;
-      }
       e.preventDefault();
       this._showPrecision = !this._showPrecision;
+    }
+  }
+
+  // Sample list cache for navigation
+  @state()
+  private _samplesList: string[] = [];
+
+  /**
+   * Navigate to the previous sample in the current voicebank.
+   */
+  private async _navigateToPreviousSample(): Promise<void> {
+    if (!this._currentVoicebankId || !this._currentFilename) return;
+
+    // Fetch samples list if not cached or voicebank changed
+    if (this._samplesList.length === 0) {
+      await this._fetchSamplesList();
+    }
+
+    const currentIndex = this._samplesList.indexOf(this._currentFilename);
+    if (currentIndex <= 0) return; // Already at first sample
+
+    const previousSample = this._samplesList[currentIndex - 1];
+
+    // Check for unsaved changes before navigating
+    if (this._isDirty) {
+      this._pendingSampleSelect = {
+        voicebankId: this._currentVoicebankId,
+        filename: previousSample,
+      };
+      this._unsavedDialog.show();
+      return;
+    }
+
+    await this._loadSample(this._currentVoicebankId, previousSample);
+  }
+
+  /**
+   * Navigate to the next sample in the current voicebank.
+   */
+  private async _navigateToNextSample(): Promise<void> {
+    if (!this._currentVoicebankId || !this._currentFilename) return;
+
+    // Fetch samples list if not cached or voicebank changed
+    if (this._samplesList.length === 0) {
+      await this._fetchSamplesList();
+    }
+
+    const currentIndex = this._samplesList.indexOf(this._currentFilename);
+    if (currentIndex < 0 || currentIndex >= this._samplesList.length - 1) return; // Already at last sample
+
+    const nextSample = this._samplesList[currentIndex + 1];
+
+    // Check for unsaved changes before navigating
+    if (this._isDirty) {
+      this._pendingSampleSelect = {
+        voicebankId: this._currentVoicebankId,
+        filename: nextSample,
+      };
+      this._unsavedDialog.show();
+      return;
+    }
+
+    await this._loadSample(this._currentVoicebankId, nextSample);
+  }
+
+  /**
+   * Fetch the samples list for the current voicebank.
+   */
+  private async _fetchSamplesList(): Promise<void> {
+    if (!this._currentVoicebankId) return;
+
+    try {
+      this._samplesList = await api.listSamples(this._currentVoicebankId);
+    } catch (error) {
+      console.warn('Failed to fetch samples list:', error);
+      this._samplesList = [];
     }
   }
 
@@ -543,6 +633,11 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
    * Load a sample (audio and oto entries).
    */
   private async _loadSample(voicebankId: string, filename: string): Promise<void> {
+    // Clear samples list cache if voicebank changed
+    if (this._currentVoicebankId !== voicebankId) {
+      this._samplesList = [];
+    }
+
     this._currentVoicebankId = voicebankId;
     this._currentFilename = filename;
     this._error = null;
@@ -1160,6 +1255,10 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
             <div class="waveform-empty-hint">
               <sl-icon name="keyboard"></sl-icon>
               <span>Press <kbd>/</kbd> to quick-open browser</span>
+            </div>
+            <div class="waveform-empty-hint">
+              <sl-icon name="arrow-left-right"></sl-icon>
+              <span>Use <kbd>[</kbd> and <kbd>]</kbd> to navigate samples</span>
             </div>
           </div>
         </div>

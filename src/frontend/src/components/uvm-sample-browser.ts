@@ -16,8 +16,19 @@ import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
 
+// Import sample card component
+import './uvm-sample-card.js';
+
 /** View mode for the sample browser */
 type SampleViewMode = 'grid' | 'list';
+
+/** Virtual scrolling configuration */
+const VIRTUAL_SCROLL_CONFIG = {
+  cardWidth: 120,
+  cardHeight: 80,
+  gap: 12,
+  buffer: 10, // Extra items above/below viewport
+};
 
 /** LocalStorage key for persisting view mode preference */
 const VIEW_MODE_STORAGE_KEY = 'uvm-sample-browser-view-mode';
@@ -28,7 +39,6 @@ import './uvm-upload-zone.js';
 import './uvm-phrase-preview.js';
 import type { UvmUploadZone } from './uvm-upload-zone.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
-import { getNonEmptyGroups, type PhonemeFamily } from '../utils/phoneme-groups.js';
 import type SlInput from '@shoelace-style/shoelace/dist/components/input/input.js';
 
 /**
@@ -321,6 +331,27 @@ export class UvmSampleBrowser extends LitElement {
       flex-wrap: wrap;
       gap: 0.5rem 0.625rem;
       align-content: flex-start;
+    }
+
+    /* Sample cards container (grid view with virtual scrolling) */
+    .sample-cards-container {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .sample-cards-virtual {
+      position: relative;
+    }
+
+    .sample-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 12px;
+      padding: 12px;
+      position: absolute;
+      width: calc(100% - 24px);
     }
 
     /* Phoneme group sections */
@@ -821,25 +852,188 @@ export class UvmSampleBrowser extends LitElement {
   @state()
   private _searchQuery = '';
 
+  // Virtual scrolling state
+  @state()
+  private _scrollTop = 0;
+
+  @state()
+  private _containerHeight = 0;
+
+  @state()
+  private _containerWidth = 0;
+
+  // Grid navigation state
+  @state()
+  private _selectedGridIndex = -1;
+
   @query('uvm-upload-zone')
   private _uploadZone!: UvmUploadZone;
+
+  @query('.sample-cards-container')
+  private _cardsContainer!: HTMLElement;
 
   @query('.search-input')
   private _searchInput!: SlInput;
 
   /**
-   * Handle global keydown for Escape to close modal.
+   * Handle global keydown for Escape to close modal and vim-style navigation.
    */
   private _handleKeyDown = (e: KeyboardEvent): void => {
-    if (this.open && e.key === 'Escape') {
-      // Don't close if a nested dialog is open
-      if (this._showUploadDialog || this._showDeleteDialog || this._showBatchDialog) {
-        return;
+    if (!this.open) return;
+
+    // Don't handle keys if a nested dialog is open
+    if (this._showUploadDialog || this._showDeleteDialog || this._showBatchDialog) {
+      return;
+    }
+
+    // Don't handle if focus is in an input element
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      // Only allow Escape to close from inputs
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this._close();
       }
+      return;
+    }
+
+    // Escape to close modal
+    if (e.key === 'Escape') {
       e.preventDefault();
       this._close();
+      return;
+    }
+
+    // Grid view vim-style navigation (hjkl)
+    if (this._viewMode === 'grid' && this._selectedVoicebank) {
+      const filteredSamples = this._getFilteredSamples();
+      if (filteredSamples.length === 0) return;
+
+      const columnsPerRow = this._getColumnsPerRow();
+
+      switch (e.key) {
+        case 'h': // Left
+          e.preventDefault();
+          this._navigateGrid(-1, 0, columnsPerRow);
+          break;
+        case 'l': // Right
+          e.preventDefault();
+          this._navigateGrid(1, 0, columnsPerRow);
+          break;
+        case 'k': // Up
+          e.preventDefault();
+          this._navigateGrid(0, -1, columnsPerRow);
+          break;
+        case 'j': // Down
+          e.preventDefault();
+          this._navigateGrid(0, 1, columnsPerRow);
+          break;
+        case 'Enter': // Select current
+          e.preventDefault();
+          if (this._selectedGridIndex >= 0 && this._selectedGridIndex < filteredSamples.length) {
+            this._emitSampleSelect(filteredSamples[this._selectedGridIndex]);
+          }
+          break;
+      }
     }
   };
+
+  /**
+   * Get the number of columns per row in the grid.
+   */
+  private _getColumnsPerRow(): number {
+    if (!this._cardsContainer || this._containerWidth <= 0) {
+      return 5; // Default fallback
+    }
+    const { cardWidth, gap } = VIRTUAL_SCROLL_CONFIG;
+    const availableWidth = this._containerWidth - 24; // Subtract padding
+    return Math.max(1, Math.floor((availableWidth + gap) / (cardWidth + gap)));
+  }
+
+  /**
+   * Navigate the grid using hjkl keys.
+   */
+  private _navigateGrid(dx: number, dy: number, columnsPerRow: number): void {
+    const filteredSamples = this._getFilteredSamples();
+    if (filteredSamples.length === 0) return;
+
+    // Initialize selection if none
+    if (this._selectedGridIndex < 0) {
+      this._selectedGridIndex = 0;
+      this._updateSelectedSampleFromGrid(filteredSamples);
+      return;
+    }
+
+    const currentRow = Math.floor(this._selectedGridIndex / columnsPerRow);
+    const currentCol = this._selectedGridIndex % columnsPerRow;
+
+    let newRow = currentRow + dy;
+    let newCol = currentCol + dx;
+
+    // Handle wrap-around for horizontal movement
+    if (dx !== 0 && dy === 0) {
+      if (newCol < 0) {
+        // Wrap to previous row, last column
+        if (newRow > 0) {
+          newRow--;
+          newCol = columnsPerRow - 1;
+        } else {
+          newCol = 0;
+        }
+      } else if (newCol >= columnsPerRow) {
+        // Wrap to next row, first column
+        newRow++;
+        newCol = 0;
+      }
+    }
+
+    // Clamp row to valid range
+    const totalRows = Math.ceil(filteredSamples.length / columnsPerRow);
+    newRow = Math.max(0, Math.min(totalRows - 1, newRow));
+
+    // Calculate new index
+    let newIndex = newRow * columnsPerRow + newCol;
+
+    // Clamp index to valid range
+    newIndex = Math.max(0, Math.min(filteredSamples.length - 1, newIndex));
+
+    if (newIndex !== this._selectedGridIndex) {
+      this._selectedGridIndex = newIndex;
+      this._updateSelectedSampleFromGrid(filteredSamples);
+      this._scrollToSelectedCard();
+    }
+  }
+
+  /**
+   * Update the selected sample based on grid index.
+   */
+  private _updateSelectedSampleFromGrid(samples: string[]): void {
+    if (this._selectedGridIndex >= 0 && this._selectedGridIndex < samples.length) {
+      this._selectedSample = samples[this._selectedGridIndex];
+    }
+  }
+
+  /**
+   * Scroll to ensure the selected card is visible.
+   */
+  private _scrollToSelectedCard(): void {
+    if (!this._cardsContainer || this._selectedGridIndex < 0) return;
+
+    const { cardHeight, gap } = VIRTUAL_SCROLL_CONFIG;
+    const columnsPerRow = this._getColumnsPerRow();
+    const row = Math.floor(this._selectedGridIndex / columnsPerRow);
+    const rowTop = row * (cardHeight + gap) + 12; // Include padding
+    const rowBottom = rowTop + cardHeight;
+
+    const scrollTop = this._cardsContainer.scrollTop;
+    const containerHeight = this._cardsContainer.clientHeight;
+
+    if (rowTop < scrollTop) {
+      this._cardsContainer.scrollTop = rowTop - 12;
+    } else if (rowBottom > scrollTop + containerHeight) {
+      this._cardsContainer.scrollTop = rowBottom - containerHeight + 12;
+    }
+  }
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -851,17 +1045,62 @@ export class UvmSampleBrowser extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     document.removeEventListener('keydown', this._handleKeyDown);
+    this._cleanupResizeObserver();
+  }
+
+  private _resizeObserver: ResizeObserver | null = null;
+
+  /**
+   * Clean up the resize observer.
+   */
+  private _cleanupResizeObserver(): void {
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
   }
 
   /**
-   * Focus the search input when modal opens.
+   * Set up resize observer for the cards container.
+   */
+  private _setupResizeObserver(): void {
+    this._cleanupResizeObserver();
+
+    this._resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        this._containerWidth = entry.contentRect.width;
+        this._containerHeight = entry.contentRect.height;
+      }
+    });
+
+    if (this._cardsContainer) {
+      this._resizeObserver.observe(this._cardsContainer);
+    }
+  }
+
+  /**
+   * Handle scroll events for virtual scrolling.
+   */
+  private _onCardsScroll(e: Event): void {
+    const container = e.target as HTMLElement;
+    this._scrollTop = container.scrollTop;
+  }
+
+  /**
+   * Focus the search input when modal opens and set up observers.
    */
   protected updated(changedProperties: Map<string, unknown>): void {
     if (changedProperties.has('open') && this.open) {
       // Use requestAnimationFrame to ensure DOM is ready
       requestAnimationFrame(() => {
         this._searchInput?.focus();
+        this._setupResizeObserver();
       });
+    }
+
+    // Reset grid selection when samples change
+    if (changedProperties.has('_samples') || changedProperties.has('_searchQuery')) {
+      this._selectedGridIndex = -1;
     }
   }
 
@@ -1049,29 +1288,6 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Handle keyboard navigation on samples.
-   */
-  private _onSampleKeyDown(e: KeyboardEvent, filename: string): void {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      this._emitSampleSelect(filename);
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      this._navigateSample(1);
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      this._navigateSample(-1);
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      // Navigate down by row (approximately 5-6 chips per row)
-      this._navigateSample(5);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      this._navigateSample(-5);
-    }
-  }
-
-  /**
    * Handle keyboard navigation on voicebanks.
    */
   private _onVoicebankKeyDown(e: KeyboardEvent, voicebankId: string): void {
@@ -1106,29 +1322,6 @@ export class UvmSampleBrowser extends LitElement {
     if (newVoicebank) {
       this._onVoicebankClick(newVoicebank.id);
       this._focusVoicebankItem(newVoicebank.id);
-    }
-  }
-
-  /**
-   * Navigate to next/previous sample.
-   */
-  private _navigateSample(direction: number): void {
-    const filteredSamples = this._getFilteredSamples();
-    if (filteredSamples.length === 0) return;
-
-    const currentIndex = this._selectedSample
-      ? filteredSamples.indexOf(this._selectedSample)
-      : -1;
-
-    const newIndex = Math.max(
-      0,
-      Math.min(filteredSamples.length - 1, currentIndex + direction)
-    );
-
-    const newSample = filteredSamples[newIndex];
-    if (newSample) {
-      this._selectedSample = newSample;
-      this._focusSampleItem(newSample);
     }
   }
 
@@ -1343,7 +1536,9 @@ export class UvmSampleBrowser extends LitElement {
           : null}
         ${this._samples.length > 0
           ? html`<div class="keyboard-hint">
-              Double-click or Enter to load sample
+              ${this._viewMode === 'grid'
+                ? 'hjkl to navigate, Enter to load'
+                : 'Arrow keys to navigate, Enter to load'}
             </div>`
           : null}
       </div>
@@ -1359,57 +1554,66 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Render the sample chips grid, grouped by phoneme family.
+   * Render the sample cards grid with virtual scrolling.
    */
   private _renderSampleChips(samples: string[]) {
-    const groups = getNonEmptyGroups(samples);
+    const { cardHeight, gap, buffer } = VIRTUAL_SCROLL_CONFIG;
+    const columnsPerRow = this._getColumnsPerRow();
+    const rowHeight = cardHeight + gap;
+    const totalRows = Math.ceil(samples.length / columnsPerRow);
+    const totalHeight = totalRows * rowHeight + 24; // Include padding
+
+    // Calculate visible range
+    const visibleStart = Math.floor(this._scrollTop / rowHeight);
+    const visibleEnd = Math.ceil((this._scrollTop + this._containerHeight) / rowHeight);
+    const renderStart = Math.max(0, visibleStart - buffer);
+    const renderEnd = Math.min(totalRows, visibleEnd + buffer);
+
+    // Get samples for visible rows
+    const startIndex = renderStart * columnsPerRow;
+    const endIndex = Math.min(samples.length, renderEnd * columnsPerRow);
+    const visibleSamples = samples.slice(startIndex, endIndex);
+
+    // Calculate top offset for positioning
+    const topOffset = renderStart * rowHeight + 12; // Include top padding
 
     return html`
-      <div class="sample-chips-container">
-        <div class="phoneme-groups" role="listbox" aria-label="Samples">
-          ${groups.map(({ family, samples: groupSamples }) =>
-            this._renderPhonemeGroup(family, groupSamples)
-          )}
+      <div
+        class="sample-cards-container"
+        @scroll=${this._onCardsScroll}
+        role="listbox"
+        aria-label="Samples"
+      >
+        <div class="sample-cards-virtual" style="height: ${totalHeight}px;">
+          <div class="sample-cards-grid" style="top: ${topOffset}px;">
+            ${visibleSamples.map((filename, i) => {
+              const globalIndex = startIndex + i;
+              const isSelected = this._selectedSample === filename || this._selectedGridIndex === globalIndex;
+              return html`
+                <uvm-sample-card
+                  filename=${filename}
+                  voicebankId=${this._selectedVoicebank || ''}
+                  ?hasOto=${this._sampleOtoMap.get(filename) || false}
+                  ?selected=${isSelected}
+                  data-sample-filename=${filename}
+                  data-sample-index=${globalIndex}
+                  @sample-click=${() => this._onCardClick(filename, globalIndex)}
+                  @sample-dblclick=${() => this._emitSampleSelect(filename)}
+                ></uvm-sample-card>
+              `;
+            })}
+          </div>
         </div>
       </div>
     `;
   }
 
   /**
-   * Render a single phoneme group with its samples.
+   * Handle card click - select without navigating.
    */
-  private _renderPhonemeGroup(family: PhonemeFamily, samples: string[]) {
-    return html`
-      <div class="phoneme-group" role="group" aria-label="${family.label}">
-        <div class="phoneme-group-header">
-          <span class="phoneme-group-label">${family.label}</span>
-          <span class="phoneme-group-count">(${samples.length})</span>
-        </div>
-        <div class="phoneme-group-chips">
-          ${samples.map(
-            (filename) => html`
-              <div
-                class="sample-chip ${this._selectedSample === filename
-                  ? 'selected'
-                  : ''}"
-                role="option"
-                aria-selected=${this._selectedSample === filename}
-                tabindex="0"
-                data-sample-filename=${filename}
-                @click=${() => this._onSampleClick(filename)}
-                @keydown=${(e: KeyboardEvent) => this._onSampleKeyDown(e, filename)}
-                title=${filename}
-              >
-                ${this._sampleOtoMap.get(filename)
-                  ? html`<span class="oto-dot"></span>`
-                  : null}
-                <span class="sample-chip-name">${this._displayName(filename)}</span>
-              </div>
-            `
-          )}
-        </div>
-      </div>
-    `;
+  private _onCardClick(filename: string, index: number): void {
+    this._selectedSample = filename;
+    this._selectedGridIndex = index;
   }
 
   /**
