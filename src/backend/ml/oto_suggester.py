@@ -7,6 +7,12 @@ import numpy as np
 
 from src.backend.domain.oto_suggestion import OtoSuggestion
 from src.backend.domain.phoneme import PhonemeSegment
+from src.backend.ml.forced_alignment_detector import (
+    ForcedAlignmentDetector,
+    ForcedAlignmentError,
+    TranscriptExtractionError,
+    get_forced_alignment_detector,
+)
 from src.backend.ml.phoneme_detector import PhonemeDetector, preprocess_audio
 
 logger = logging.getLogger(__name__)
@@ -134,15 +140,45 @@ class OtoSuggester:
 
     Uses ML-detected phoneme boundaries to automatically estimate
     initial oto.ini parameters for voicebank samples.
+
+    Supports two detection modes:
+    - Forced alignment (default): Higher accuracy using expected phonemes from filename
+    - Blind detection: Fallback using Wav2Vec2 phoneme recognition
     """
 
-    def __init__(self, phoneme_detector: PhonemeDetector):
+    def __init__(
+        self,
+        phoneme_detector: PhonemeDetector | None = None,
+        use_forced_alignment: bool = True,
+    ):
         """Initialize the oto suggester.
 
         Args:
-            phoneme_detector: PhonemeDetector instance for phoneme detection
+            phoneme_detector: PhonemeDetector instance for blind phoneme detection.
+                             Loaded lazily if not provided.
+            use_forced_alignment: If True, attempt forced alignment first for higher
+                                  accuracy. Falls back to blind detection on failure.
+                                  Defaults to True.
         """
-        self.phoneme_detector = phoneme_detector
+        self._phoneme_detector = phoneme_detector
+        self._forced_alignment_detector: ForcedAlignmentDetector | None = None
+        self.use_forced_alignment = use_forced_alignment
+
+    @property
+    def phoneme_detector(self) -> PhonemeDetector:
+        """Get the phoneme detector, loading lazily if needed."""
+        if self._phoneme_detector is None:
+            from src.backend.ml.phoneme_detector import get_phoneme_detector
+
+            self._phoneme_detector = get_phoneme_detector()
+        return self._phoneme_detector
+
+    @property
+    def forced_alignment_detector(self) -> ForcedAlignmentDetector:
+        """Get the forced alignment detector, loading lazily if needed."""
+        if self._forced_alignment_detector is None:
+            self._forced_alignment_detector = get_forced_alignment_detector()
+        return self._forced_alignment_detector
 
     async def suggest_oto(
         self,
@@ -166,15 +202,50 @@ class OtoSuggester:
             alias = self._generate_alias_from_filename(filename)
 
         # Run phoneme detection
-        try:
-            detection_result = await self.phoneme_detector.detect_phonemes(audio_path)
-            segments = detection_result.segments
-            audio_duration_ms = detection_result.audio_duration_ms
-        except Exception as e:
-            logger.warning(f"Phoneme detection failed, using defaults: {e}")
-            # Fall back to loading audio duration manually
-            _, _, audio_duration_ms = preprocess_audio(audio_path)
-            segments = []
+        segments = []
+        audio_duration_ms = 0.0
+        detection_method = "none"
+
+        # Try forced alignment first if enabled
+        if self.use_forced_alignment:
+            try:
+                detection_result = await self.forced_alignment_detector.detect_phonemes(
+                    audio_path
+                )
+                segments = detection_result.segments
+                audio_duration_ms = detection_result.audio_duration_ms
+                detection_method = "forced_alignment"
+                logger.info(
+                    f"Forced alignment succeeded for {filename}: "
+                    f"{len(segments)} segments detected"
+                )
+            except (ForcedAlignmentError, TranscriptExtractionError) as e:
+                logger.warning(
+                    f"Forced alignment failed for {filename}, "
+                    f"falling back to blind detection: {e}"
+                )
+
+        # Fall back to blind detection if forced alignment failed or is disabled
+        if not segments:
+            try:
+                detection_result = await self.phoneme_detector.detect_phonemes(
+                    audio_path
+                )
+                segments = detection_result.segments
+                audio_duration_ms = detection_result.audio_duration_ms
+                detection_method = "blind_detection"
+                logger.info(
+                    f"Blind detection used for {filename}: "
+                    f"{len(segments)} segments detected"
+                )
+            except Exception as e:
+                logger.warning(f"Phoneme detection failed, using defaults: {e}")
+                # Fall back to loading audio duration manually
+                _, _, audio_duration_ms = preprocess_audio(audio_path)
+                segments = []
+                detection_method = "defaults"
+
+        logger.debug(f"Detection method for {filename}: {detection_method}")
 
         # Classify phonemes
         classification = self._classify_phonemes(segments)
@@ -578,22 +649,33 @@ class OtoSuggester:
 _default_suggester: OtoSuggester | None = None
 
 
-def get_oto_suggester(phoneme_detector: PhonemeDetector | None = None) -> OtoSuggester:
+def get_oto_suggester(
+    phoneme_detector: PhonemeDetector | None = None,
+    use_forced_alignment: bool = True,
+) -> OtoSuggester:
     """Get the default oto suggester singleton.
 
     Args:
-        phoneme_detector: Optional phoneme detector to use.
-                         If not provided, uses the default detector.
+        phoneme_detector: Optional phoneme detector to use for blind detection.
+                         Loaded lazily if not provided.
+        use_forced_alignment: If True, attempt forced alignment first for higher
+                              accuracy. Falls back to blind detection on failure.
+                              Defaults to True.
 
     Returns:
         OtoSuggester instance
+
+    Note:
+        The singleton is created on first call. Subsequent calls return the
+        same instance regardless of parameters. To use different settings,
+        create a new OtoSuggester instance directly.
     """
     global _default_suggester
 
     if _default_suggester is None:
-        from src.backend.ml.phoneme_detector import get_phoneme_detector
-
-        detector = phoneme_detector or get_phoneme_detector()
-        _default_suggester = OtoSuggester(detector)
+        _default_suggester = OtoSuggester(
+            phoneme_detector=phoneme_detector,
+            use_forced_alignment=use_forced_alignment,
+        )
 
     return _default_suggester
