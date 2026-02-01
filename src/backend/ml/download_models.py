@@ -61,7 +61,9 @@ SOFA_DOWNLOADS: dict[str, dict[str, dict[str, str | int]]] = {
             "filename": "SOFA_model_JPN_Ver0.0.2_Beta.zip",
             "size_mb": 1100,
             "checkpoint_pattern": "*.ckpt",
+            "checkpoint_target": "japanese.ckpt",  # Rename to expected name
             "dictionary_pattern": "*.txt",
+            "dictionary_target": "japanese.txt",  # Rename to expected name
         },
     },
 }
@@ -257,18 +259,26 @@ def download_sofa_models() -> tuple[int, int]:
             filename = str(zip_info["filename"])
             expected_size_mb = int(zip_info["size_mb"])
             ckpt_pattern = str(zip_info.get("checkpoint_pattern", "*.ckpt"))
+            ckpt_target = zip_info.get("checkpoint_target")
             dict_pattern = str(zip_info.get("dictionary_pattern", "*.txt"))
+            dict_target = zip_info.get("dictionary_target")
 
-            # Check if we already have extracted files
-            existing_ckpts = list(SOFA_CHECKPOINTS_DIR.glob(ckpt_pattern))
-            if existing_ckpts:
+            # Check if we already have the target checkpoint file
+            target_ckpt = SOFA_CHECKPOINTS_DIR / ckpt_target if ckpt_target else None
+            if target_ckpt and target_ckpt.exists():
                 logger.info(
-                    f"  Checkpoint files for {lang_code} already exist, skipping zip download"
+                    f"  Checkpoint {ckpt_target} already exists, skipping zip download"
                 )
                 success_count += 1
             else:
                 if _download_and_extract_zip(
-                    url, filename, expected_size_mb, ckpt_pattern, dict_pattern
+                    url,
+                    filename,
+                    expected_size_mb,
+                    ckpt_pattern,
+                    dict_pattern,
+                    str(ckpt_target) if ckpt_target else None,
+                    str(dict_target) if dict_target else None,
                 ):
                     success_count += 1
                 else:
@@ -283,6 +293,8 @@ def _download_and_extract_zip(
     expected_size_mb: int,
     ckpt_pattern: str,
     dict_pattern: str,
+    ckpt_target: str | None = None,
+    dict_target: str | None = None,
 ) -> bool:
     """Download a zip file and extract checkpoint/dictionary files.
 
@@ -292,6 +304,8 @@ def _download_and_extract_zip(
         expected_size_mb: Expected file size in MB
         ckpt_pattern: Glob pattern for checkpoint files
         dict_pattern: Glob pattern for dictionary files
+        ckpt_target: Target filename for checkpoint (rename after extract)
+        dict_target: Target filename for dictionary (rename after extract)
 
     Returns:
         True if download and extraction succeeded, False otherwise
@@ -313,15 +327,19 @@ def _download_and_extract_zip(
 
                     # Extract checkpoint files
                     if fnmatch.fnmatch(basename, ckpt_pattern):
-                        target = SOFA_CHECKPOINTS_DIR / basename
-                        logger.info(f"  Extracting checkpoint: {basename}")
+                        # Use target name if provided, otherwise keep original
+                        target_name = ckpt_target if ckpt_target else basename
+                        target = SOFA_CHECKPOINTS_DIR / target_name
+                        logger.info(f"  Extracting checkpoint: {basename} -> {target_name}")
                         with zf.open(member) as src, open(target, "wb") as dst:
                             dst.write(src.read())
 
                     # Extract dictionary files
                     elif fnmatch.fnmatch(basename, dict_pattern):
-                        target = SOFA_DICTIONARY_DIR / basename
-                        logger.info(f"  Extracting dictionary: {basename}")
+                        # Use target name if provided, otherwise keep original
+                        target_name = dict_target if dict_target else basename
+                        target = SOFA_DICTIONARY_DIR / target_name
+                        logger.info(f"  Extracting dictionary: {basename} -> {target_name}")
                         with zf.open(member) as src, open(target, "wb") as dst:
                             dst.write(src.read())
 

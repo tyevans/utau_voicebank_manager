@@ -81,7 +81,11 @@ RUN mkdir -p vendor/SOFA/ckpt vendor/SOFA/dictionary && \
         "https://github.com/colstone/SOFA_Models/releases/download/JPN-V0.0.2b/SOFA_model_JPN_Ver0.0.2_Beta.zip" && \
     unzip -j /tmp/sofa_jpn.zip "*.ckpt" -d vendor/SOFA/ckpt/ && \
     unzip -j /tmp/sofa_jpn.zip "*.txt" -d vendor/SOFA/dictionary/ && \
-    rm /tmp/sofa_jpn.zip
+    rm /tmp/sofa_jpn.zip && \
+    # Rename Japanese checkpoint to expected name (code looks for japanese.ckpt)
+    find vendor/SOFA/ckpt -name "*.ckpt" ! -name "tgm_en_v100.ckpt" -exec mv {} vendor/SOFA/ckpt/japanese.ckpt \; && \
+    # Rename Japanese dictionary to expected name (code looks for japanese.txt)
+    find vendor/SOFA/dictionary -name "*.txt" ! -name "english.txt" -exec mv {} vendor/SOFA/dictionary/japanese.txt \;
 
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./src/frontend/dist
