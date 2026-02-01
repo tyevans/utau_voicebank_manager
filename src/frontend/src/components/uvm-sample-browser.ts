@@ -41,11 +41,13 @@ export class UvmSampleBrowser extends LitElement {
     :host {
       display: block;
       width: 100%;
+      height: 100%;
     }
 
     .browser-container {
       display: flex;
-      gap: 1rem;
+      gap: 0.75rem;
+      height: 100%;
       min-height: 400px;
     }
 
@@ -64,6 +66,7 @@ export class UvmSampleBrowser extends LitElement {
       border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
       border-radius: var(--sl-border-radius-medium, 0.375rem);
       overflow: hidden;
+      min-height: 0;
     }
 
     .panel-header {
@@ -85,7 +88,7 @@ export class UvmSampleBrowser extends LitElement {
     .panel-content {
       flex: 1;
       overflow-y: auto;
-      max-height: 350px;
+      min-height: 0;
     }
 
     .list {
@@ -253,18 +256,22 @@ export class UvmSampleBrowser extends LitElement {
     }
 
     .voicebank-panel {
-      max-width: 300px;
-      min-width: 200px;
-    }
-
-    @media (max-width: 768px) {
-      .voicebank-panel {
-        max-width: 100%;
-      }
+      flex: 1;
+      min-width: 160px;
+      max-width: 220px;
     }
 
     .samples-panel {
-      flex: 2;
+      flex: 1.5;
+      min-width: 180px;
+    }
+
+    @media (max-width: 768px) {
+      .voicebank-panel,
+      .samples-panel {
+        max-width: 100%;
+        flex: 1;
+      }
     }
 
     .keyboard-hint {

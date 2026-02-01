@@ -80,17 +80,24 @@ export class UvmEditorView extends LitElement {
 
     .editor-layout {
       display: grid;
-      grid-template-columns: minmax(280px, 320px) 1fr minmax(250px, 300px);
+      grid-template-columns: minmax(400px, 500px) 1fr minmax(280px, 320px);
       grid-template-rows: 1fr;
       gap: 1rem;
-      height: 100%;
+      height: calc(100vh - 120px);
       min-height: 500px;
     }
 
-    @media (max-width: 1024px) {
+    @media (max-width: 1200px) {
+      .editor-layout {
+        grid-template-columns: minmax(350px, 420px) 1fr minmax(260px, 300px);
+      }
+    }
+
+    @media (max-width: 900px) {
       .editor-layout {
         grid-template-columns: 1fr;
-        grid-template-rows: auto auto auto;
+        grid-template-rows: auto 1fr auto;
+        height: auto;
       }
     }
 
@@ -129,11 +136,15 @@ export class UvmEditorView extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 1rem;
+      height: 100%;
+      min-height: 0;
     }
 
     .waveform-section {
       flex: 1;
       min-height: 200px;
+      display: flex;
+      flex-direction: column;
     }
 
     .params-panel {
@@ -141,6 +152,9 @@ export class UvmEditorView extends LitElement {
       border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
       border-radius: var(--sl-border-radius-medium, 0.375rem);
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
     }
 
     .params-header {
@@ -171,6 +185,9 @@ export class UvmEditorView extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
     }
 
     .param-group {
@@ -243,8 +260,11 @@ export class UvmEditorView extends LitElement {
       justify-content: center;
       padding: 2rem;
       text-align: center;
-      height: 100%;
+      flex: 1;
       min-height: 200px;
+      background-color: var(--sl-color-neutral-50, #f8fafc);
+      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      border-radius: var(--sl-border-radius-medium, 0.375rem);
     }
 
     .empty-state sl-icon {
@@ -484,6 +504,30 @@ export class UvmEditorView extends LitElement {
       this._loadAudio(voicebankId, filename),
       this._loadOtoEntries(voicebankId, filename),
     ]);
+
+    // Auto-detect if this is a new entry OR has only default values
+    if (
+      (this._originalEntry === null || this._hasOnlyDefaultValues(this._originalEntry)) &&
+      this._audioBuffer !== null
+    ) {
+      // Small delay to let UI update before starting detection
+      setTimeout(() => this._autoDetect(), 100);
+    }
+  }
+
+  /**
+   * Check if entry has only default values (hasn't been configured).
+   */
+  private _hasOnlyDefaultValues(entry: OtoEntry | null): boolean {
+    if (!entry) return true;
+
+    return (
+      entry.offset === DEFAULT_OTO_VALUES.offset &&
+      entry.consonant === DEFAULT_OTO_VALUES.consonant &&
+      entry.cutoff === DEFAULT_OTO_VALUES.cutoff &&
+      entry.preutterance === DEFAULT_OTO_VALUES.preutterance &&
+      entry.overlap === DEFAULT_OTO_VALUES.overlap
+    );
   }
 
   /**
@@ -1172,6 +1216,10 @@ export class UvmEditorView extends LitElement {
    * Render the status badge showing saved/unsaved/new state.
    */
   private _renderStatusBadge() {
+    // Show spinner when auto-detecting
+    if (this._isDetecting) {
+      return html`<sl-spinner style="font-size: 1rem; --track-width: 2px;"></sl-spinner>`;
+    }
     if (this._saveSuccess) {
       return html`<sl-badge variant="success" pill>saved</sl-badge>`;
     }

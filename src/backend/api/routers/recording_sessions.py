@@ -1,12 +1,14 @@
 """API router for recording session management."""
 
+import io
 import logging
+import zipfile
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from src.backend.domain.generated_voicebank import (
     GeneratedVoicebank,
@@ -31,7 +33,7 @@ from src.backend.services.recording_session_service import (
     SessionNotFoundError,
     SessionStateError,
     SessionValidationError,
-    VoicebankNotFoundError,
+    VoicebankNotGeneratedError,
 )
 from src.backend.services.voicebank_generator import (
     NoAlignedSegmentsError,
@@ -103,8 +105,12 @@ async def create_session(
     Creates a guided recording session for capturing audio samples.
     The session tracks progress through the provided prompts.
 
+    The voicebank_id is the target name for the voicebank that will be
+    created when generate-voicebank is called. It does not need to
+    exist beforehand.
+
     Args:
-        request: Session creation parameters including voicebank_id,
+        request: Session creation parameters including voicebank_id (target name),
             recording_style, language, and list of prompts
 
     Returns:
@@ -112,7 +118,6 @@ async def create_session(
 
     Raises:
         HTTPException 400: If validation fails
-        HTTPException 404: If target voicebank not found
     """
     try:
         session = await service.create(request)
@@ -121,11 +126,6 @@ async def create_session(
             f"'{request.voicebank_id}' with {len(request.prompts)} prompts"
         )
         return session
-    except VoicebankNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        ) from e
     except SessionValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -542,3 +542,134 @@ async def generate_voicebank_from_session(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Voicebank generation failed: {e}",
         ) from e
+
+
+@router.get("/{session_id}/download")
+async def download_voicebank(
+    session_id: UUID,
+    service: Annotated[RecordingSessionService, Depends(get_session_service)],
+) -> StreamingResponse:
+    """Download the generated voicebank as a ZIP file.
+
+    Returns a downloadable ZIP archive containing all voicebank files:
+    - WAV audio samples (44.1kHz mono)
+    - oto.ini with ML-generated timing parameters
+    - character.txt metadata (if present)
+    - readme.txt with usage instructions
+
+    The voicebank must be generated first using the generate-voicebank endpoint.
+
+    Args:
+        session_id: Session UUID
+
+    Returns:
+        StreamingResponse with ZIP file attachment
+
+    Raises:
+        HTTPException 404: If session not found or voicebank not generated
+    """
+    try:
+        # Get voicebank path and name
+        voicebank_path, voicebank_name = await service.get_generated_voicebank_path(
+            session_id, GENERATED_BASE_PATH
+        )
+
+        # Create ZIP file in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            # Add all WAV files
+            for wav_file in voicebank_path.glob("*.wav"):
+                zip_file.write(wav_file, wav_file.name)
+
+            # Add oto.ini
+            oto_path = voicebank_path / "oto.ini"
+            if oto_path.exists():
+                zip_file.write(oto_path, "oto.ini")
+
+            # Add character.txt if exists
+            char_path = voicebank_path / "character.txt"
+            if char_path.exists():
+                zip_file.write(char_path, "character.txt")
+
+            # Generate and add readme.txt
+            readme_content = _generate_readme(voicebank_name)
+            zip_file.writestr("readme.txt", readme_content)
+
+        # Seek to beginning for reading
+        zip_buffer.seek(0)
+
+        # Generate safe filename for download
+        safe_filename = voicebank_name.replace('"', "'").replace("\n", " ")
+        filename = f"{safe_filename}.zip"
+
+        logger.info(
+            f"Downloading voicebank '{voicebank_name}' for session {session_id}"
+        )
+
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except SessionNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except VoicebankNotGeneratedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+
+
+def _generate_readme(voicebank_name: str) -> str:
+    """Generate readme.txt content for the voicebank.
+
+    Args:
+        voicebank_name: Name of the voicebank
+
+    Returns:
+        Readme content string
+    """
+    return f"""================================================================================
+{voicebank_name} - UTAU Voicebank
+================================================================================
+
+This is an UTAU/OpenUTAU voicebank created with UTAU Voicebank Manager.
+
+INSTALLATION
+------------
+1. Extract this ZIP file to your UTAU voice folder:
+   - UTAU: Usually located at [UTAU installation]/voice/
+   - OpenUTAU: Usually located at [OpenUTAU]/Singers/
+
+2. The folder structure should look like:
+   voice/{voicebank_name}/
+       oto.ini
+       *.wav
+
+3. Restart UTAU/OpenUTAU if it was running during installation.
+
+USAGE
+-----
+Select this voicebank from the singer selection in your UTAU/OpenUTAU project.
+The oto.ini file contains timing parameters for each sample that were
+automatically generated using machine learning analysis.
+
+CONTENTS
+--------
+- oto.ini: Timing configuration for all samples
+- *.wav: Audio samples (44.1kHz mono, normalized)
+- character.txt: Voicebank metadata (if present)
+
+CREDITS
+-------
+Generated by UTAU Voicebank Manager
+https://github.com/utau-voicebank-manager
+
+================================================================================
+"""

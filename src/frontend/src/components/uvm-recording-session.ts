@@ -13,6 +13,7 @@ import '@shoelace-style/shoelace/dist/components/card/card.js';
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/divider/divider.js';
+import '@shoelace-style/shoelace/dist/components/details/details.js';
 
 // Import child components
 import './uvm-recording-prompter.js';
@@ -38,6 +39,16 @@ interface RecordingCompleteDetail {
   audioBlob: Blob;
   duration: number;
   promptId?: string;
+}
+
+/**
+ * Processing step for detailed progress display.
+ */
+interface ProcessingStep {
+  id: string;
+  label: string;
+  description: string;
+  status: 'pending' | 'active' | 'completed' | 'error';
 }
 
 /**
@@ -103,6 +114,12 @@ export class UvmRecordingSession extends LitElement {
       color: var(--sl-color-neutral-900, #0f172a);
     }
 
+    .setup-subtitle {
+      margin: 0.25rem 0 0;
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-500, #64748b);
+    }
+
     .setup-form {
       display: flex;
       flex-direction: column;
@@ -125,6 +142,18 @@ export class UvmRecordingSession extends LitElement {
       font-size: 0.75rem;
       color: var(--sl-color-neutral-500, #64748b);
       margin-top: 0.25rem;
+    }
+
+    sl-details {
+      margin-top: 0.5rem;
+    }
+
+    sl-details .form-group {
+      margin-top: 1rem;
+    }
+
+    sl-details .form-group:first-child {
+      margin-top: 0;
     }
 
     .form-actions {
@@ -190,6 +219,25 @@ export class UvmRecordingSession extends LitElement {
       text-align: center;
     }
 
+    .processing-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .processing-header sl-spinner {
+      font-size: 2rem;
+      --indicator-color: var(--sl-color-primary-500, #3b82f6);
+    }
+
+    .processing-header h3 {
+      margin: 0;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--sl-color-neutral-800, #1e293b);
+    }
+
     .processing-container sl-spinner {
       font-size: 3rem;
       --indicator-color: var(--sl-color-primary-500, #3b82f6);
@@ -203,10 +251,59 @@ export class UvmRecordingSession extends LitElement {
       color: var(--sl-color-neutral-800, #1e293b);
     }
 
-    .processing-status {
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-600, #475569);
-      margin-bottom: 1.5rem;
+    .processing-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 2rem;
+      text-align: left;
+      max-width: 400px;
+      margin-left: auto;
+      margin-right: auto;
+      width: 100%;
+    }
+
+    .processing-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.5rem;
+      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      transition: background-color 0.2s;
+    }
+
+    .processing-step.active {
+      background-color: var(--sl-color-primary-50, #eff6ff);
+    }
+
+    .processing-step.completed {
+      opacity: 0.7;
+    }
+
+    .step-icon {
+      font-size: 1.25rem;
+      flex-shrink: 0;
+    }
+
+    .step-icon.success { color: var(--sl-color-success-500, #22c55e); }
+    .step-icon.primary { color: var(--sl-color-primary-500, #3b82f6); }
+    .step-icon.danger { color: var(--sl-color-danger-500, #ef4444); }
+    .step-icon.neutral { color: var(--sl-color-neutral-400, #9ca3af); }
+
+    .step-content {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .step-label {
+      font-weight: 500;
+      color: var(--sl-color-neutral-800, #1e293b);
+    }
+
+    .step-description {
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-500, #64748b);
     }
 
     .processing-progress {
@@ -274,6 +371,118 @@ export class UvmRecordingSession extends LitElement {
     .complete-actions {
       display: flex;
       gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .complete-secondary-actions {
+      margin-top: 1rem;
+    }
+
+    .complete-secondary-actions sl-button::part(base) {
+      font-size: 0.875rem;
+    }
+
+    /* Next Steps Section */
+    .next-steps-section {
+      width: 100%;
+      max-width: 500px;
+      margin: 1.5rem 0;
+      padding: 1.5rem;
+      background-color: var(--sl-color-neutral-0, #ffffff);
+      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      text-align: left;
+    }
+
+    .next-steps-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--sl-color-neutral-800, #1e293b);
+    }
+
+    .next-steps-header sl-icon {
+      color: var(--sl-color-primary-600, #2563eb);
+    }
+
+    .next-steps-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .next-steps-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-700, #334155);
+      line-height: 1.5;
+    }
+
+    .step-number {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.5rem;
+      height: 1.5rem;
+      min-width: 1.5rem;
+      background-color: var(--sl-color-primary-100, #dbeafe);
+      color: var(--sl-color-primary-700, #1d4ed8);
+      border-radius: 50%;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .step-content {
+      flex: 1;
+    }
+
+    .step-content strong {
+      color: var(--sl-color-neutral-900, #0f172a);
+    }
+
+    /* Stats row - more compact */
+    .voicebank-stats-compact {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      padding: 1rem;
+      background-color: var(--sl-color-neutral-0, #ffffff);
+      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-item-compact {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0 0.75rem;
+      border-right: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+    }
+
+    .stat-item-compact:last-child {
+      border-right: none;
+    }
+
+    .stat-item-compact .stat-value {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: var(--sl-color-neutral-800, #1e293b);
+    }
+
+    .stat-item-compact .stat-label {
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-500, #64748b);
     }
 
     /* Error Phase */
@@ -337,6 +546,18 @@ export class UvmRecordingSession extends LitElement {
       .error-actions sl-button {
         width: 100%;
       }
+
+      .next-steps-section {
+        padding: 1rem;
+      }
+
+      .stat-item-compact {
+        padding: 0 0.5rem;
+      }
+
+      .stat-item-compact .stat-value {
+        font-size: 1rem;
+      }
     }
   `;
 
@@ -365,9 +586,6 @@ export class UvmRecordingSession extends LitElement {
   private _progress = 0;
 
   @state()
-  private _processingStatus = 'Initializing...';
-
-  @state()
   private _generatedVoicebank?: GeneratedVoicebank;
 
   @state()
@@ -378,6 +596,9 @@ export class UvmRecordingSession extends LitElement {
 
   @state()
   private _skippedPrompts: Set<number> = new Set();
+
+  @state()
+  private _processingSteps: ProcessingStep[] = [];
 
   private _pollIntervalId?: number;
 
@@ -498,14 +719,21 @@ export class UvmRecordingSession extends LitElement {
 
     this._phase = 'processing';
     this._progress = 0;
-    this._processingStatus = 'Completing session...';
+
+    // Initialize processing steps
+    this._processingSteps = [
+      { id: 'save', label: 'Saving recordings', description: 'Storing your audio files securely', status: 'completed' },
+      { id: 'analyze', label: 'Analyzing phonemes', description: 'AI is finding where each sound starts and ends', status: 'pending' },
+      { id: 'generate', label: 'Generating configuration', description: 'Creating timing parameters for each sample', status: 'pending' },
+      { id: 'package', label: 'Packaging voicebank', description: 'Bundling everything into a downloadable file', status: 'pending' },
+    ];
 
     try {
       // Mark session as complete
       await recordingApi.completeSession(this._sessionId);
 
-      this._processingStatus = 'Generating voicebank...';
       this._progress = 20;
+      this._updateProcessingSteps(this._progress);
 
       // Start polling for status
       this._startPolling();
@@ -558,15 +786,43 @@ export class UvmRecordingSession extends LitElement {
         // Update progress based on status
         if (status.status === 'processing') {
           this._progress = Math.min(90, this._progress + 5);
-          this._processingStatus = 'Processing audio files...';
         } else if (status.status === 'completed') {
           this._progress = 100;
-          this._processingStatus = 'Finalizing...';
         }
+
+        // Update processing steps based on progress
+        this._updateProcessingSteps(this._progress);
       } catch (error) {
         console.warn('Failed to poll status:', error);
       }
     }, 2000);
+  }
+
+  /**
+   * Update processing step statuses based on current progress.
+   */
+  private _updateProcessingSteps(progress: number): void {
+    this._processingSteps = this._processingSteps.map((step) => {
+      if (progress < 20) {
+        // 0-20%: 'save' completed, 'analyze' active
+        if (step.id === 'save') return { ...step, status: 'completed' as const };
+        if (step.id === 'analyze') return { ...step, status: 'active' as const };
+        return { ...step, status: 'pending' as const };
+      } else if (progress < 50) {
+        // 20-50%: 'analyze' completed, 'generate' active
+        if (step.id === 'save' || step.id === 'analyze') return { ...step, status: 'completed' as const };
+        if (step.id === 'generate') return { ...step, status: 'active' as const };
+        return { ...step, status: 'pending' as const };
+      } else if (progress < 90) {
+        // 50-90%: 'generate' completed, 'package' active
+        if (step.id === 'save' || step.id === 'analyze' || step.id === 'generate') return { ...step, status: 'completed' as const };
+        if (step.id === 'package') return { ...step, status: 'active' as const };
+        return { ...step, status: 'pending' as const };
+      } else {
+        // 90-100%: all completed
+        return { ...step, status: 'completed' as const };
+      }
+    });
   }
 
   /**
@@ -616,10 +872,10 @@ export class UvmRecordingSession extends LitElement {
     this._prompts = [];
     this._currentPromptIndex = 0;
     this._progress = 0;
-    this._processingStatus = '';
     this._generatedVoicebank = undefined;
     this._errorMessage = '';
     this._skippedPrompts = new Set();
+    this._processingSteps = [];
   }
 
   /**
@@ -627,6 +883,40 @@ export class UvmRecordingSession extends LitElement {
    */
   private _onRecordAnother(): void {
     this._resetSession();
+  }
+
+  /**
+   * Download the generated voicebank ZIP file.
+   */
+  private _onDownloadVoicebank(): void {
+    if (!this._sessionId) return;
+
+    // Trigger download via the API endpoint
+    const downloadUrl = `/api/v1/sessions/${this._sessionId}/download`;
+
+    // Create a hidden anchor element to trigger the download
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${this._voicebankName || 'voicebank'}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  /**
+   * Open the voicebank in the editor for fine-tuning.
+   */
+  private _onOpenInEditor(): void {
+    this.dispatchEvent(
+      new CustomEvent('open-editor', {
+        detail: {
+          sessionId: this._sessionId,
+          voicebankName: this._voicebankName,
+        },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   /**
@@ -682,51 +972,53 @@ export class UvmRecordingSession extends LitElement {
       <sl-card class="setup-card">
         <div class="setup-header">
           <sl-icon name="mic-fill"></sl-icon>
-          <h2>Create New Voicebank</h2>
+          <div>
+            <h2>Let's Create Your Voice</h2>
+            <p class="setup-subtitle">Record short sounds to build your unique singing voice</p>
+          </div>
         </div>
 
         <div class="setup-form">
           <div class="form-group">
-            <label for="voicebank-name">Voicebank Name</label>
+            <label for="voicebank-name">What should we call your voice?</label>
             <sl-input
               id="voicebank-name"
-              placeholder="Enter a name for your voicebank"
+              placeholder="Give your voice a name"
               .value=${this._voicebankName}
               @sl-input=${this._onNameInput}
               required
             ></sl-input>
-            <p class="form-group-description">
-              This name will be used for the voicebank folder and metadata.
-            </p>
           </div>
 
-          <div class="form-group">
-            <label for="recording-style">Recording Style</label>
-            <sl-select
-              id="recording-style"
-              .value=${this._recordingStyle}
-              @sl-change=${this._onStyleChange}
-            >
-              <sl-option value="cv">CV (Consonant-Vowel)</sl-option>
-              <sl-option value="vcv">VCV (Vowel-Consonant-Vowel)</sl-option>
-              <sl-option value="cvvc">CVVC (Combined)</sl-option>
-            </sl-select>
-            <p class="form-group-description">
-              CV is simpler with ${JAPANESE_CV_PROMPTS_COUNT} prompts. VCV produces smoother transitions with ${JAPANESE_VCV_PROMPTS_COUNT} prompts.
-            </p>
-          </div>
+          <sl-details summary="Advanced options">
+            <div class="form-group">
+              <label for="recording-style">Recording Style</label>
+              <sl-select
+                id="recording-style"
+                .value=${this._recordingStyle}
+                @sl-change=${this._onStyleChange}
+              >
+                <sl-option value="cv">Simple phrases (${JAPANESE_CV_PROMPTS_COUNT} recordings)</sl-option>
+                <sl-option value="vcv">Smooth transitions (${JAPANESE_VCV_PROMPTS_COUNT} recordings)</sl-option>
+                <sl-option value="cvvc">Combined approach</sl-option>
+              </sl-select>
+              <p class="form-group-description">
+                Simple phrases are quicker to record. Smooth transitions sound more natural but take longer.
+              </p>
+            </div>
 
-          <div class="form-group">
-            <label for="language">Language</label>
-            <sl-select
-              id="language"
-              .value=${this._language}
-              @sl-change=${this._onLanguageChange}
-            >
-              <sl-option value="ja">Japanese</sl-option>
-              <sl-option value="en" disabled>English (Coming Soon)</sl-option>
-            </sl-select>
-          </div>
+            <div class="form-group">
+              <label for="language">Language</label>
+              <sl-select
+                id="language"
+                .value=${this._language}
+                @sl-change=${this._onLanguageChange}
+              >
+                <sl-option value="ja">Japanese</sl-option>
+                <sl-option value="en">English (ARPAsing)</sl-option>
+              </sl-select>
+            </div>
+          </sl-details>
 
           <sl-divider></sl-divider>
 
@@ -784,8 +1076,34 @@ export class UvmRecordingSession extends LitElement {
           .prompt=${currentPrompt}
           .promptIndex=${this._currentPromptIndex}
           .totalPrompts=${this._prompts.length}
+          language=${this._language}
           @recording-complete=${this._onRecordingComplete}
         ></uvm-recording-prompter>
+      </div>
+    `;
+  }
+
+  /**
+   * Render a single processing step.
+   */
+  private _renderProcessingStep(step: ProcessingStep) {
+    const icon = step.status === 'completed' ? 'check-circle-fill'
+      : step.status === 'active' ? 'arrow-right-circle-fill'
+      : step.status === 'error' ? 'x-circle-fill'
+      : 'circle';
+
+    const variant = step.status === 'completed' ? 'success'
+      : step.status === 'active' ? 'primary'
+      : step.status === 'error' ? 'danger'
+      : 'neutral';
+
+    return html`
+      <div class="processing-step ${step.status}">
+        <sl-icon name=${icon} class="step-icon ${variant}"></sl-icon>
+        <div class="step-content">
+          <span class="step-label">${step.label}</span>
+          ${step.status === 'active' ? html`<span class="step-description">${step.description}</span>` : null}
+        </div>
       </div>
     `;
   }
@@ -796,9 +1114,15 @@ export class UvmRecordingSession extends LitElement {
   private _renderProcessing() {
     return html`
       <div class="processing-container">
-        <sl-spinner></sl-spinner>
-        <h3>Generating Voicebank</h3>
-        <p class="processing-status">${this._processingStatus}</p>
+        <div class="processing-header">
+          <sl-spinner></sl-spinner>
+          <h3>Creating Your Voicebank</h3>
+        </div>
+
+        <div class="processing-steps">
+          ${this._processingSteps.map(step => this._renderProcessingStep(step))}
+        </div>
+
         <div class="processing-progress">
           <sl-progress-bar value=${this._progress}></sl-progress-bar>
         </div>
@@ -815,50 +1139,100 @@ export class UvmRecordingSession extends LitElement {
     return html`
       <div class="complete-container">
         <sl-icon class="complete-icon" name="check-circle-fill"></sl-icon>
-        <h3>Voicebank Created!</h3>
+        <h3>Your Voicebank is Ready!</h3>
         <p class="complete-description">
-          Your voicebank "${this._generatedVoicebank.name}" has been generated successfully.
+          "${this._generatedVoicebank.name}" has been created and is ready to download.
         </p>
 
-        <div class="voicebank-stats">
-          <div class="stat-item">
+        <!-- Compact stats row -->
+        <div class="voicebank-stats-compact">
+          <div class="stat-item-compact">
             <span class="stat-value">${this._generatedVoicebank.sample_count}</span>
             <span class="stat-label">Samples</span>
           </div>
-          <div class="stat-item">
+          <div class="stat-item-compact">
             <span class="stat-value">${this._generatedVoicebank.oto_entries}</span>
             <span class="stat-label">Oto Entries</span>
           </div>
-          <div class="stat-item">
+          <div class="stat-item-compact">
             <span class="stat-value">${Math.round(this._generatedVoicebank.average_confidence * 100)}%</span>
             <span class="stat-label">Confidence</span>
           </div>
-          <div class="stat-item">
+          <div class="stat-item-compact">
             <span class="stat-value">${this._generatedVoicebank.generation_time_seconds.toFixed(1)}s</span>
-            <span class="stat-label">Gen Time</span>
+            <span class="stat-label">Generated</span>
           </div>
         </div>
 
         ${this._generatedVoicebank.warnings.length > 0
           ? html`
-              <sl-alert variant="warning" open>
+              <sl-alert variant="warning" open style="margin-bottom: 1rem; width: 100%; max-width: 500px;">
                 <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
                 ${this._generatedVoicebank.warnings.length} warning(s) during generation.
                 ${this._generatedVoicebank.skipped_segments > 0
-                  ? `${this._generatedVoicebank.skipped_segments} segment(s) were skipped.`
+                  ? ` ${this._generatedVoicebank.skipped_segments} segment(s) were skipped.`
                   : ''}
               </sl-alert>
             `
           : null}
 
+        <!-- Primary action -->
         <div class="complete-actions">
-          <sl-button variant="primary" size="large">
+          <sl-button variant="primary" size="large" @click=${this._onDownloadVoicebank}>
             <sl-icon slot="prefix" name="download"></sl-icon>
             Download Voicebank
           </sl-button>
-          <sl-button variant="default" size="large" @click=${this._onRecordAnother}>
+        </div>
+
+        <!-- What's next instructions -->
+        <div class="next-steps-section">
+          <div class="next-steps-header">
+            <sl-icon name="lightbulb"></sl-icon>
+            <span>How to use your voicebank in OpenUTAU</span>
+          </div>
+          <ol class="next-steps-list">
+            <li>
+              <span class="step-number">1</span>
+              <span class="step-content">
+                <strong>Download</strong> your voicebank using the button above
+              </span>
+            </li>
+            <li>
+              <span class="step-number">2</span>
+              <span class="step-content">
+                <strong>Open OpenUTAU</strong> on your computer
+              </span>
+            </li>
+            <li>
+              <span class="step-number">3</span>
+              <span class="step-content">
+                Go to <strong>Tools</strong> menu and select <strong>Install Singer</strong>
+              </span>
+            </li>
+            <li>
+              <span class="step-number">4</span>
+              <span class="step-content">
+                <strong>Select the downloaded ZIP file</strong> and click Open
+              </span>
+            </li>
+            <li>
+              <span class="step-number">5</span>
+              <span class="step-content">
+                Your voice is ready to sing! Select it from the singer dropdown.
+              </span>
+            </li>
+          </ol>
+        </div>
+
+        <!-- Secondary actions -->
+        <div class="complete-actions">
+          <sl-button variant="default" @click=${this._onRecordAnother}>
             <sl-icon slot="prefix" name="plus-lg"></sl-icon>
-            Record Another
+            Create Another
+          </sl-button>
+          <sl-button variant="text" @click=${this._onOpenInEditor}>
+            <sl-icon slot="prefix" name="sliders"></sl-icon>
+            Fine-tune in Editor
           </sl-button>
         </div>
       </div>

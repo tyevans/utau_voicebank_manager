@@ -34,6 +34,10 @@ class SessionStateError(Exception):
     """Raised when an operation is invalid for the current session state."""
 
 
+class VoicebankNotGeneratedError(Exception):
+    """Raised when a voicebank has not been generated yet."""
+
+
 class RecordingSessionService:
     """Business logic for recording session operations.
 
@@ -98,17 +102,14 @@ class RecordingSessionService:
             Created recording session
 
         Raises:
-            VoicebankNotFoundError: If target voicebank doesn't exist
             SessionValidationError: If request validation fails
         """
         # Validate request
         self._validate_create_request(request)
 
-        # Verify voicebank exists
-        if not await self._voicebank_repo.exists(request.voicebank_id):
-            raise VoicebankNotFoundError(
-                f"Voicebank '{request.voicebank_id}' not found"
-            )
+        # Note: voicebank_id is the target name for the new voicebank
+        # The actual voicebank will be created during generateVoicebank
+        # We don't require it to exist beforehand
 
         # Create session
         session = RecordingSession(
@@ -418,3 +419,70 @@ class RecordingSessionService:
                 f"Audio '{filename}' not found in session '{session_id}'"
             )
         return path
+
+    async def get_generated_voicebank_path(
+        self,
+        session_id: UUID,
+        generated_base_path: Path,
+    ) -> tuple[Path, str]:
+        """Get path to a session's generated voicebank folder.
+
+        Args:
+            session_id: Session UUID
+            generated_base_path: Base path where voicebanks are generated
+
+        Returns:
+            Tuple of (voicebank_path, voicebank_name)
+
+        Raises:
+            SessionNotFoundError: If session not found
+            VoicebankNotGeneratedError: If voicebank has not been generated
+        """
+        session = await self.get(session_id)
+        voicebank_name = session.voicebank_id
+
+        # Sanitize name using same logic as voicebank_generator
+        safe_name = self._sanitize_name(voicebank_name)
+        voicebank_path = generated_base_path / safe_name
+
+        if not voicebank_path.exists():
+            raise VoicebankNotGeneratedError(
+                f"Voicebank '{voicebank_name}' has not been generated yet. "
+                f"Use the generate-voicebank endpoint first."
+            )
+
+        # Verify oto.ini exists (minimum requirement for a valid voicebank)
+        oto_path = voicebank_path / "oto.ini"
+        if not oto_path.exists():
+            raise VoicebankNotGeneratedError(
+                f"Voicebank '{voicebank_name}' is incomplete (missing oto.ini). "
+                f"Please regenerate the voicebank."
+            )
+
+        return voicebank_path, voicebank_name
+
+    def _sanitize_name(self, name: str) -> str:
+        """Sanitize a name for use in filenames.
+
+        This matches the logic in voicebank_generator.py.
+
+        Args:
+            name: Original name
+
+        Returns:
+            Sanitized name safe for filesystem
+        """
+        # Replace unsafe characters
+        safe = name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+        safe = safe.replace(":", "_").replace("*", "_").replace("?", "_")
+        safe = safe.replace('"', "_").replace("<", "_").replace(">", "_")
+        safe = safe.replace("|", "_")
+
+        # Remove leading/trailing underscores
+        safe = safe.strip("_")
+
+        # Ensure non-empty
+        if not safe:
+            safe = "sample"
+
+        return safe[:50]  # Limit length

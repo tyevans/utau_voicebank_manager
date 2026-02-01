@@ -32,3 +32,6 @@ export type { PhonemePrompt } from './uvm-recording-prompter.js';
 
 // Recording session for guided voicebank creation flow
 export { UvmRecordingSession } from './uvm-recording-session.js';
+
+// Welcome view for first-time users
+export { UvmWelcomeView } from './uvm-welcome-view.js';

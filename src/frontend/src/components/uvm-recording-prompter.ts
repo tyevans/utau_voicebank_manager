@@ -57,6 +57,7 @@ import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 
 import { UvmToastManager } from './uvm-toast-manager.js';
+import { getHintsForPrompt, getEnglishHintsForPrompt, type PronunciationHint } from '../services/pronunciation-hints.js';
 
 /**
  * Phoneme prompt data structure from the backend.
@@ -424,6 +425,65 @@ export class UvmRecordingPrompter extends LitElement {
       color: var(--sl-color-neutral-600, #475569);
       font-style: italic;
     }
+
+    /* Pronunciation hints */
+    .pronunciation-hints {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--sl-color-neutral-50, #f8fafc);
+      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      font-size: 0.875rem;
+      max-width: 500px;
+    }
+
+    .hints-header {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+      color: var(--sl-color-neutral-600, #475569);
+    }
+
+    .hints-header sl-icon {
+      font-size: 1rem;
+      color: var(--sl-color-warning-500, #eab308);
+    }
+
+    .hint-item {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      color: var(--sl-color-neutral-600, #475569);
+    }
+
+    .hint-item + .hint-item {
+      margin-top: 0.5rem;
+    }
+
+    .hint-phoneme {
+      font-weight: 600;
+      color: var(--sl-color-primary-600, #2563eb);
+      min-width: 2.5rem;
+      font-family: monospace;
+    }
+
+    .hint-description {
+      flex: 1;
+    }
+
+    .hint-examples {
+      color: var(--sl-color-neutral-500, #64748b);
+      margin-left: 0.25rem;
+    }
+
+    .hint-examples mark {
+      background: var(--sl-color-warning-100, #fef9c3);
+      color: var(--sl-color-neutral-800, #1e293b);
+      padding: 0 0.125rem;
+      border-radius: 2px;
+      font-weight: 500;
+    }
   `;
 
   /**
@@ -449,6 +509,12 @@ export class UvmRecordingPrompter extends LitElement {
    */
   @property({ type: String })
   state: RecordingState = 'idle';
+
+  /**
+   * Language for pronunciation hints ('ja' for Japanese, 'en' for English).
+   */
+  @property({ type: String })
+  language = 'ja';
 
   @query('.waveform-canvas')
   private _canvas!: HTMLCanvasElement;
@@ -1043,6 +1109,58 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
+   * Convert markdown bold (**text**) to HTML mark tags.
+   */
+  private _markdownToMark(text: string): ReturnType<typeof html> {
+    // Split by **...** pattern and render with mark tags
+    const parts = text.split(/\*\*([^*]+)\*\*/);
+    return html`${parts.map((part, i) =>
+      i % 2 === 1 ? html`<mark>${part}</mark>` : part
+    )}`;
+  }
+
+  /**
+   * Render pronunciation hints for the current prompt.
+   */
+  private _renderPronunciationHints() {
+    if (!this.prompt) return null;
+
+    const hints = this.language === 'en'
+      ? getEnglishHintsForPrompt(this.prompt.romaji)
+      : getHintsForPrompt(this.prompt.romaji);
+
+    // Limit to 4 hints to keep it concise
+    const displayedHints = hints.slice(0, 4);
+
+    if (displayedHints.length === 0) return null;
+
+    return html`
+      <div class="pronunciation-hints">
+        <div class="hints-header">
+          <sl-icon name="lightbulb"></sl-icon>
+          <span>Pronunciation Guide</span>
+        </div>
+        ${displayedHints.map(hint => this._renderHintItem(hint))}
+      </div>
+    `;
+  }
+
+  /**
+   * Render a single pronunciation hint item.
+   */
+  private _renderHintItem(hint: PronunciationHint) {
+    const examplesText = hint.examples.join(', ');
+
+    return html`
+      <div class="hint-item">
+        <span class="hint-phoneme">${hint.phoneme}</span>
+        <span class="hint-description">${hint.description}</span>
+        <span class="hint-examples">${this._markdownToMark(examplesText)}</span>
+      </div>
+    `;
+  }
+
+  /**
    * Render state indicator.
    */
   private _renderStateIndicator() {
@@ -1212,6 +1330,7 @@ export class UvmRecordingPrompter extends LitElement {
                   <div class="prompt-romaji">
                     ${this._renderRomajiText()}
                   </div>
+                  ${this._renderPronunciationHints()}
                 </div>
                 ${this._renderStateIndicator()}
               `

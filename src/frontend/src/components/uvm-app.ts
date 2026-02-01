@@ -16,13 +16,21 @@ import './uvm-editor-view.js';
 // Import the recording session component
 import './uvm-recording-session.js';
 
+// Import the welcome view component
+import './uvm-welcome-view.js';
+
 // Import the toast manager for notifications
 import './uvm-toast-manager.js';
 
 /**
+ * localStorage key for persisting voicebank state.
+ */
+const STORAGE_KEY_HAS_VOICEBANKS = 'uvm_has_voicebanks';
+
+/**
  * Application view type.
  */
-type AppView = 'editor' | 'recording';
+type AppView = 'welcome' | 'editor' | 'recording';
 
 /**
  * Root application component for UTAU Voicebank Manager.
@@ -111,11 +119,30 @@ export class UvmApp extends LitElement {
   private _initialized = false;
 
   @state()
-  private _currentView: AppView = 'editor';
+  private _currentView: AppView = 'welcome';
+
+  @state()
+  private _hasVoicebanks = false;
 
   connectedCallback(): void {
     super.connectedCallback();
+
+    // Check if user has created voicebanks before
+    const hasVoicebanks =
+      localStorage.getItem(STORAGE_KEY_HAS_VOICEBANKS) === 'true';
+    this._hasVoicebanks = hasVoicebanks;
+
+    // Set initial view based on state
+    this._currentView = hasVoicebanks ? 'editor' : 'welcome';
+
     this._initialized = true;
+  }
+
+  /**
+   * Switch to the welcome view.
+   */
+  private _showWelcome(): void {
+    this._currentView = 'welcome';
   }
 
   /**
@@ -133,10 +160,34 @@ export class UvmApp extends LitElement {
   }
 
   /**
+   * Handle start recording event from welcome view.
+   */
+  private _onStartRecordingFromWelcome(): void {
+    this._currentView = 'recording';
+  }
+
+  /**
+   * Handle import voicebank event from welcome view.
+   */
+  private _onImportVoicebank(): void {
+    // Switch to editor view which has upload capability
+    this._currentView = 'editor';
+  }
+
+  /**
    * Handle session complete event from recording view.
    */
   private _onSessionComplete(): void {
-    // Switch back to editor to see the new voicebank
+    // Mark that we now have voicebanks and persist to localStorage
+    this._hasVoicebanks = true;
+    localStorage.setItem(STORAGE_KEY_HAS_VOICEBANKS, 'true');
+    this._currentView = 'editor';
+  }
+
+  /**
+   * Handle open-editor event from recording session success screen.
+   */
+  private _onOpenEditor(): void {
     this._currentView = 'editor';
   }
 
@@ -149,11 +200,21 @@ export class UvmApp extends LitElement {
     }
 
     switch (this._currentView) {
+      case 'welcome':
+        return html`
+          <uvm-welcome-view
+            @start-recording=${this._onStartRecordingFromWelcome}
+            @import-voicebank=${this._onImportVoicebank}
+          ></uvm-welcome-view>
+        `;
       case 'recording':
         return html`
           <uvm-recording-session
             @session-complete=${this._onSessionComplete}
-            @session-cancelled=${this._showEditor}
+            @session-cancelled=${this._hasVoicebanks
+              ? this._showEditor
+              : this._showWelcome}
+            @open-editor=${this._onOpenEditor}
           ></uvm-recording-session>
         `;
       case 'editor':
@@ -171,6 +232,14 @@ export class UvmApp extends LitElement {
             UTAU Voicebank Manager
           </h1>
           <nav class="app-nav">
+            <sl-button
+              size="small"
+              ?data-active=${this._currentView === 'welcome'}
+              @click=${this._showWelcome}
+            >
+              <sl-icon slot="prefix" name="house"></sl-icon>
+              Home
+            </sl-button>
             <sl-button
               size="small"
               ?data-active=${this._currentView === 'editor'}
