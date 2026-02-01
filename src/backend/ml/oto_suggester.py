@@ -975,6 +975,7 @@ _default_suggester: OtoSuggester | None = None
 def get_oto_suggester(
     phoneme_detector: PhonemeDetector | None = None,
     use_forced_alignment: bool = True,
+    use_sofa: bool = True,
 ) -> OtoSuggester:
     """Get the default oto suggester singleton.
 
@@ -984,6 +985,9 @@ def get_oto_suggester(
         use_forced_alignment: If True, attempt forced alignment first for higher
                               accuracy. Falls back to blind detection on failure.
                               Defaults to True.
+        use_sofa: If True, attempt SOFA (Singing-Oriented Forced Aligner) first.
+                  SOFA is optimized for singing voice and produces better results
+                  for sustained vowels. Defaults to True.
 
     Returns:
         OtoSuggester instance
@@ -999,6 +1003,7 @@ def get_oto_suggester(
         _default_suggester = OtoSuggester(
             phoneme_detector=phoneme_detector,
             use_forced_alignment=use_forced_alignment,
+            use_sofa=use_sofa,
         )
 
     return _default_suggester
