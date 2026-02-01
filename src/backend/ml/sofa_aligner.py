@@ -450,13 +450,15 @@ class SOFAForcedAligner(ForcedAligner):
         """
         import torch
         from einops import repeat
-        from modules.utils.load_wav import load_wav
 
         ckpt_path, dict_path = self._get_model_paths(language)
 
-        # Get cached model
+        # Get cached model (this ensures SOFA is in sys.path)
         manager = get_model_manager()
         cached = manager.get_or_load(ckpt_path, dict_path)
+
+        # Now we can import SOFA modules after path is set up
+        from modules.utils.load_wav import load_wav
 
         model = cached.model
         g2p = cached.g2p
