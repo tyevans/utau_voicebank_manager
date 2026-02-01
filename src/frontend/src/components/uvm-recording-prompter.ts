@@ -50,6 +50,7 @@ interface SpeechRecognitionConstructor {
 // Import Shoelace components
 import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
+import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
 import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/progress-bar/progress-bar.js';
 import '@shoelace-style/shoelace/dist/components/alert/alert.js';
@@ -606,6 +607,59 @@ export class UvmRecordingPrompter extends LitElement {
     .paragraph-phoneme-coverage sl-icon {
       font-size: 0.875rem;
     }
+
+    /* Listen button styles */
+    .prompt-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .listen-button {
+      font-size: 1.5rem;
+      color: var(--sl-color-neutral-500, #64748b);
+      transition: color 0.2s ease, transform 0.2s ease;
+    }
+
+    .listen-button:hover {
+      color: var(--sl-color-neutral-700, #334155);
+      transform: scale(1.1);
+    }
+
+    .listen-button.speaking {
+      color: var(--sl-color-primary-600, #2563eb);
+      animation: speakingPulse 1s ease-in-out infinite;
+    }
+
+    .listen-button::part(base) {
+      padding: 0.5rem;
+    }
+
+    @keyframes speakingPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Karaoke highlighting for TTS */
+    .prompt-char.tts-active {
+      color: var(--sl-color-primary-600, #2563eb);
+      transform: scale(1.1);
+    }
+
+    .paragraph-word.tts-active {
+      background: var(--sl-color-primary-100, #dbeafe);
+    }
+
+    .paragraph-word.tts-active .paragraph-word-text {
+      color: var(--sl-color-primary-700, #1d4ed8);
+      transform: scale(1.08);
+    }
+
+    .paragraph-word.tts-active .paragraph-word-romaji {
+      color: var(--sl-color-primary-500, #3b82f6);
+    }
   `;
 
   /**
@@ -689,6 +743,12 @@ export class UvmRecordingPrompter extends LitElement {
   @state()
   private _isPreviewPlaying = false;
 
+  @state()
+  private _isSpeaking = false;
+
+  @state()
+  private _speakingCharIndex = -1;
+
   private _speechRecognition: SpeechRecognitionInstance | null = null;
   private _mediaRecorder: MediaRecorder | null = null;
   private _mediaStream: MediaStream | null = null;
@@ -710,11 +770,17 @@ export class UvmRecordingPrompter extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this._cancelSpeech();
     this._cleanup();
   }
 
   updated(changedProperties: Map<string, unknown>): void {
     super.updated(changedProperties);
+
+    // Cancel speech when navigating to a different prompt
+    if (changedProperties.has('prompt') || changedProperties.has('paragraphPrompt') || changedProperties.has('promptIndex')) {
+      this._cancelSpeech();
+    }
 
     // Redraw recorded waveform when the canvas becomes visible after state change
     if (changedProperties.has('state') || changedProperties.has('_recordedAudioBuffer')) {
@@ -895,6 +961,9 @@ export class UvmRecordingPrompter extends LitElement {
    */
   private async _startRecording(): Promise<void> {
     this._errorMessage = null;
+
+    // Cancel any ongoing TTS before recording
+    this._cancelSpeech();
 
     // Request mic permission if not already granted
     if (!this._micPermissionGranted) {
@@ -1455,9 +1524,71 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
+   * Cancel any ongoing speech synthesis.
+   */
+  private _cancelSpeech(): void {
+    if (this._isSpeaking) {
+      speechSynthesis.cancel();
+      this._isSpeaking = false;
+      this._speakingCharIndex = -1;
+    }
+  }
+
+  /**
+   * Speak the current prompt text using Web SpeechSynthesis API.
+   * Toggle behavior: if already speaking, cancel the speech.
+   */
+  private _speakPrompt(): void {
+    // Toggle behavior: cancel if already speaking
+    if (this._isSpeaking) {
+      this._cancelSpeech();
+      return;
+    }
+
+    // Get the text to speak based on mode
+    const text = this.mode === 'paragraph'
+      ? this.paragraphPrompt?.text
+      : this.prompt?.text;
+
+    if (!text) return;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ja-JP';
+    utterance.rate = 0.85;
+
+    utterance.onstart = () => {
+      this._isSpeaking = true;
+      this._speakingCharIndex = 0;
+    };
+
+    utterance.onend = () => {
+      this._isSpeaking = false;
+      this._speakingCharIndex = -1;
+    };
+
+    utterance.onerror = () => {
+      this._isSpeaking = false;
+      this._speakingCharIndex = -1;
+    };
+
+    // Use boundary event for karaoke-style highlighting
+    utterance.onboundary = (event: SpeechSynthesisEvent) => {
+      if (event.name === 'word' || event.name === 'sentence') {
+        // charIndex gives us the position in the text
+        this._speakingCharIndex = event.charIndex;
+      }
+    };
+
+    speechSynthesis.speak(utterance);
+  }
+
+  /**
    * Clean up resources.
    */
   private _cleanup(): void {
+    // Cancel any ongoing TTS
+    this._cancelSpeech();
+
     // Stop speech recognition
     try {
       this._speechRecognition?.stop();
@@ -1566,9 +1697,12 @@ export class UvmRecordingPrompter extends LitElement {
       const wordIdx = Math.floor(idx * romajiWords.length / chars.length);
       const isHighlighted = wordIdx === this._currentWordIndex;
       const isSpoken = this._spokenWords.has(wordIdx);
+      // TTS karaoke highlighting: highlight character at or near the speaking position
+      const isTtsActive = this._isSpeaking && this._speakingCharIndex >= 0 &&
+        idx >= this._speakingCharIndex && idx < this._speakingCharIndex + 2;
 
       return html`
-        <span class="prompt-char ${isHighlighted ? 'highlighted' : ''} ${isSpoken ? 'spoken' : ''}">
+        <span class="prompt-char ${isHighlighted ? 'highlighted' : ''} ${isSpoken ? 'spoken' : ''} ${isTtsActive ? 'tts-active' : ''}">
           ${char}
         </span>
       `;
@@ -1620,15 +1754,44 @@ export class UvmRecordingPrompter extends LitElement {
       .filter((_, idx) => this._spokenWords.has(idx))
       .reduce((sum, w) => sum + w.phonemes.length, 0);
 
+    // Determine which word is being spoken by TTS based on character index
+    const getTtsActiveWordIndex = (): number => {
+      if (!this._isSpeaking || this._speakingCharIndex < 0) return -1;
+      let charCount = 0;
+      for (let i = 0; i < this.paragraphPrompt!.words.length; i++) {
+        const word = this.paragraphPrompt!.words[i];
+        charCount += word.text.length;
+        // Add 1 for space between words (except last word)
+        if (i < this.paragraphPrompt!.words.length - 1) charCount += 1;
+        if (this._speakingCharIndex < charCount) return i;
+      }
+      return this.paragraphPrompt!.words.length - 1;
+    };
+
+    const ttsActiveWordIndex = getTtsActiveWordIndex();
+
     return html`
       <div class="prompt-text-container">
+        <div class="prompt-header" style="margin-bottom: 1rem;">
+          <sl-tooltip content="Listen to pronunciation">
+            <sl-icon-button
+              name=${this._isSpeaking ? 'stop-fill' : 'volume-up'}
+              label="Listen to pronunciation"
+              class="listen-button ${this._isSpeaking ? 'speaking' : ''}"
+              @click=${this._speakPrompt}
+              ?disabled=${this.state === 'recording'}
+            ></sl-icon-button>
+          </sl-tooltip>
+        </div>
+
         <div class="paragraph-sentence">
           ${this.paragraphPrompt.words.map((word, idx) => {
             const isActive = idx === this._currentWordIndex;
             const isSpoken = this._spokenWords.has(idx);
+            const isTtsActive = idx === ttsActiveWordIndex;
 
             return html`
-              <div class="paragraph-word ${isActive ? 'active' : ''} ${isSpoken ? 'spoken' : ''}">
+              <div class="paragraph-word ${isActive ? 'active' : ''} ${isSpoken ? 'spoken' : ''} ${isTtsActive ? 'tts-active' : ''}">
                 <span class="paragraph-word-text">${word.text}</span>
                 <span class="paragraph-word-romaji">${word.romaji}</span>
               </div>
@@ -1667,8 +1830,19 @@ export class UvmRecordingPrompter extends LitElement {
 
     return html`
       <div class="prompt-text-container">
-        <div class="prompt-japanese">
-          ${this._renderJapaneseText()}
+        <div class="prompt-header">
+          <div class="prompt-japanese">
+            ${this._renderJapaneseText()}
+          </div>
+          <sl-tooltip content="Listen to pronunciation">
+            <sl-icon-button
+              name=${this._isSpeaking ? 'stop-fill' : 'volume-up'}
+              label="Listen to pronunciation"
+              class="listen-button ${this._isSpeaking ? 'speaking' : ''}"
+              @click=${this._speakPrompt}
+              ?disabled=${this.state === 'recording'}
+            ></sl-icon-button>
+          </sl-tooltip>
         </div>
         <div class="prompt-romaji">
           ${this._renderRomajiText()}
