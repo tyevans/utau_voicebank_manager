@@ -15,6 +15,7 @@ import { customElement, property, query } from 'lit/decorators.js';
  *   .width=${800}
  *   .height=${200}
  *   .zoom=${1}
+ *   theme="dark"
  * ></uvm-waveform-canvas>
  * ```
  */
@@ -57,6 +58,14 @@ export class UvmWaveformCanvas extends LitElement {
   @property({ type: Number })
   zoom = 1;
 
+  /**
+   * Theme mode for the waveform display.
+   * - 'light': Blue waveform on light background (default)
+   * - 'dark': Light cyan/teal waveform on dark background
+   */
+  @property({ type: String })
+  theme: 'light' | 'dark' = 'light';
+
   @query('canvas')
   private _canvas!: HTMLCanvasElement;
 
@@ -84,8 +93,8 @@ export class UvmWaveformCanvas extends LitElement {
   }
 
   protected willUpdate(changedProperties: PropertyValues): void {
-    // Immediate render for audioBuffer changes (new data loaded)
-    if (changedProperties.has('audioBuffer')) {
+    // Immediate render for audioBuffer or theme changes
+    if (changedProperties.has('audioBuffer') || changedProperties.has('theme')) {
       this._scheduleRender();
       return;
     }
@@ -148,6 +157,7 @@ export class UvmWaveformCanvas extends LitElement {
     const width = this.width;
     const height = this.height;
     const dpr = window.devicePixelRatio || 1;
+    const isDark = this.theme === 'dark';
 
     // Set canvas size with device pixel ratio for crisp rendering on HiDPI displays
     this._canvas.width = width * dpr;
@@ -174,8 +184,18 @@ export class UvmWaveformCanvas extends LitElement {
     const centerY = height / 2;
     const amplitude = height / 2 - 10;
 
-    // Use semi-transparent blue for waveform
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
+    // Theme-aware colors
+    // Light mode: semi-transparent blue
+    // Dark mode: light cyan/teal for visibility on dark background
+    const waveformColor = isDark
+      ? 'rgba(103, 232, 249, 0.6)'  // Light cyan (--sl-color-cyan-300)
+      : 'rgba(59, 130, 246, 0.5)';  // Blue
+
+    const centerLineColor = isDark
+      ? 'rgba(148, 163, 184, 0.25)' // Lighter gray for dark mode
+      : 'rgba(100, 116, 139, 0.3)'; // Default gray
+
+    ctx.fillStyle = waveformColor;
     ctx.beginPath();
     ctx.moveTo(0, centerY);
 
@@ -217,7 +237,7 @@ export class UvmWaveformCanvas extends LitElement {
     ctx.fill();
 
     // Draw center line
-    ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+    ctx.strokeStyle = centerLineColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, centerY);

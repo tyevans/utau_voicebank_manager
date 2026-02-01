@@ -57,6 +57,14 @@ export class UvmSpectrogram extends LitElement {
   @property({ type: Number })
   zoom = 1;
 
+  /**
+   * Theme mode for the spectrogram display.
+   * - 'light': White to blue gradient (default)
+   * - 'dark': Dark purple to cyan gradient for better visibility
+   */
+  @property({ type: String })
+  theme: 'light' | 'dark' = 'light';
+
   /** Computed spectrogram data (normalized 0-1 magnitudes per frame). */
   @state()
   private _spectrogramData: Float32Array[] | null = null;
@@ -170,6 +178,11 @@ export class UvmSpectrogram extends LitElement {
       }
     }
 
+    // Immediate redraw for theme changes
+    if (changedProperties.has('theme')) {
+      this._scheduleRedraw();
+    }
+
     // Throttle redraws when dimensions or zoom change rapidly
     if (
       changedProperties.has('width') ||
@@ -215,21 +228,48 @@ export class UvmSpectrogram extends LitElement {
   }
 
   /**
-   * White to blue gradient for spectrogram coloring.
-   * Maps a value from 0-1 to an RGB color string matching the waveform color.
-   * t=0 -> white (255, 255, 255)
-   * t=1 -> blue (59, 130, 246) - matches waveform color
+   * Get spectrogram color based on theme and intensity.
+   *
+   * Light mode: White to blue gradient
+   * - t=0 -> white (255, 255, 255)
+   * - t=1 -> blue (59, 130, 246) - matches waveform color
+   *
+   * Dark mode: Dark purple to cyan gradient
+   * - t=0 -> dark purple (15, 23, 42) - near background
+   * - t=1 -> cyan (103, 232, 249) - matches dark mode waveform
    */
   private _spectrogramColor(t: number): string {
     // Clamp to [0, 1]
     t = Math.max(0, Math.min(1, t));
 
-    // White to blue gradient matching waveform
-    const r = Math.round(255 - t * (255 - 59));
-    const g = Math.round(255 - t * (255 - 130));
-    const b = Math.round(255 - t * (255 - 246));
+    if (this.theme === 'dark') {
+      // Dark mode: dark purple to cyan gradient
+      // Low: rgb(15, 23, 42) - slate-900
+      // Mid: rgb(88, 28, 135) - purple-800
+      // High: rgb(103, 232, 249) - cyan-300
 
-    return `rgb(${r},${g},${b})`;
+      if (t < 0.5) {
+        // Dark purple to purple transition
+        const t2 = t * 2;
+        const r = Math.round(15 + t2 * (88 - 15));
+        const g = Math.round(23 + t2 * (28 - 23));
+        const b = Math.round(42 + t2 * (135 - 42));
+        return `rgb(${r},${g},${b})`;
+      } else {
+        // Purple to cyan transition
+        const t2 = (t - 0.5) * 2;
+        const r = Math.round(88 + t2 * (103 - 88));
+        const g = Math.round(28 + t2 * (232 - 28));
+        const b = Math.round(135 + t2 * (249 - 135));
+        return `rgb(${r},${g},${b})`;
+      }
+    } else {
+      // Light mode: White to blue gradient matching waveform
+      const r = Math.round(255 - t * (255 - 59));
+      const g = Math.round(255 - t * (255 - 130));
+      const b = Math.round(255 - t * (255 - 246));
+      return `rgb(${r},${g},${b})`;
+    }
   }
 
   /**

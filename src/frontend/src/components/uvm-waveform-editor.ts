@@ -21,6 +21,27 @@ import type { OtoEntry } from '../services/index.js';
 import type { MarkerDragDetail } from './uvm-marker-handle.js';
 
 /**
+ * Represents a snapshot of all marker positions for undo functionality.
+ */
+interface MarkerSnapshot {
+  offset: number;
+  consonant: number;
+  cutoff: number;
+  preutterance: number;
+  overlap: number;
+  timestamp: number;
+}
+
+/**
+ * Ghost marker for undo visualization.
+ */
+interface GhostMarker {
+  name: string;
+  position: number;
+  value: number;
+}
+
+/**
  * Marker configuration for oto.ini parameters.
  */
 interface MarkerConfig {
@@ -498,6 +519,150 @@ export class UvmWaveformEditor extends LitElement {
     .preview-btn sl-icon {
       font-size: 0.875rem;
     }
+
+    /* ========================================
+       Playback Region Glow Animation
+       ======================================== */
+
+    .playback-glow {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      pointer-events: none;
+      z-index: 2;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(59, 130, 246, 0.08) 20%,
+        rgba(59, 130, 246, 0.15) 50%,
+        rgba(59, 130, 246, 0.08) 80%,
+        transparent 100%
+      );
+      animation: playback-breathe 2s ease-in-out infinite;
+    }
+
+    :host([theme='dark']) .playback-glow {
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(103, 232, 249, 0.1) 20%,
+        rgba(103, 232, 249, 0.2) 50%,
+        rgba(103, 232, 249, 0.1) 80%,
+        transparent 100%
+      );
+    }
+
+    @keyframes playback-breathe {
+      0%, 100% {
+        opacity: 0.6;
+        filter: blur(8px);
+      }
+      50% {
+        opacity: 1;
+        filter: blur(12px);
+      }
+    }
+
+    /* Amplitude-responsive glow intensity via CSS variable */
+    .playback-glow.loud {
+      animation: playback-breathe-loud 1.5s ease-in-out infinite;
+    }
+
+    @keyframes playback-breathe-loud {
+      0%, 100% {
+        opacity: 0.8;
+        filter: blur(10px);
+      }
+      50% {
+        opacity: 1;
+        filter: blur(16px);
+      }
+    }
+
+    /* ========================================
+       Ghost Markers for Undo Visualization
+       ======================================== */
+
+    .ghost-marker {
+      position: absolute;
+      top: 0;
+      width: 2px;
+      pointer-events: none;
+      z-index: 3;
+      opacity: 0.3;
+      border-left: 2px dashed;
+      animation: ghost-fade 1s ease-out forwards;
+    }
+
+    .ghost-marker-handle {
+      position: absolute;
+      top: -8px;
+      left: -7px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px dashed;
+      background: transparent;
+    }
+
+    @keyframes ghost-fade {
+      0% {
+        opacity: 0.5;
+      }
+      70% {
+        opacity: 0.3;
+      }
+      100% {
+        opacity: 0;
+      }
+    }
+
+    /* ========================================
+       Theme Toggle Button
+       ======================================== */
+
+    .theme-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .theme-toggle sl-icon-button::part(base) {
+      color: var(--sl-color-neutral-500, #64748b);
+      padding: 0.25rem;
+    }
+
+    .theme-toggle sl-icon-button::part(base):hover {
+      color: var(--sl-color-neutral-700, #334155);
+    }
+
+    :host([theme='dark']) .theme-toggle sl-icon-button::part(base) {
+      color: var(--sl-color-neutral-400, #94a3b8);
+    }
+
+    :host([theme='dark']) .theme-toggle sl-icon-button::part(base):hover {
+      color: var(--sl-color-neutral-200, #e2e8f0);
+    }
+
+    /* ========================================
+       Reduced Motion Support
+       ======================================== */
+
+    @media (prefers-reduced-motion: reduce) {
+      .playback-glow,
+      .ghost-marker {
+        animation: none;
+      }
+
+      .playback-glow {
+        opacity: 0.8;
+        filter: blur(10px);
+      }
+
+      .ghost-marker {
+        opacity: 0.3;
+      }
+    }
   `;
 
   /**
@@ -561,6 +726,15 @@ export class UvmWaveformEditor extends LitElement {
   spectrogramHeight = 270;
 
   /**
+   * Theme mode for the editor.
+   * - 'light': Light background with blue waveform (default)
+   * - 'dark': Dark background with cyan waveform
+   * - 'auto': Follow system preference
+   */
+  @property({ type: String, reflect: true })
+  theme: 'light' | 'dark' | 'auto' = 'auto';
+
+  /**
    * Height of the section divider in pixels.
    */
   private readonly _dividerHeight = 2;
@@ -617,6 +791,40 @@ export class UvmWaveformEditor extends LitElement {
   @state()
   private _isPreviewPlaying: boolean = false;
 
+  /**
+   * Undo history - stores last 5 marker snapshots.
+   */
+  @state()
+  private _undoHistory: MarkerSnapshot[] = [];
+
+  /**
+   * Ghost markers to display during undo visualization.
+   */
+  @state()
+  private _ghostMarkers: GhostMarker[] = [];
+
+  /**
+   * Timer for clearing ghost markers after animation.
+   */
+  private _ghostTimer: number | null = null;
+
+  /**
+   * Current amplitude level (0-1) for playback glow intensity.
+   */
+  @state()
+  private _currentAmplitude = 0;
+
+  /**
+   * Resolved theme based on 'auto' setting and system preference.
+   */
+  @state()
+  private _resolvedTheme: 'light' | 'dark' = 'light';
+
+  /**
+   * Media query for system dark mode preference.
+   */
+  private _darkModeQuery: MediaQueryList | null = null;
+
   private _resizeObserver: ResizeObserver | null = null;
   private _audioContext: AudioContext | null = null;
   private _sourceNode: AudioBufferSourceNode | null = null;
@@ -627,6 +835,11 @@ export class UvmWaveformEditor extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this._resizeObserver = new ResizeObserver(this._onResize.bind(this));
+
+    // Set up dark mode detection
+    this._darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    this._darkModeQuery.addEventListener('change', this._onDarkModeChange);
+    this._updateResolvedTheme();
   }
 
   disconnectedCallback(): void {
@@ -637,6 +850,33 @@ export class UvmWaveformEditor extends LitElement {
     this._stopPreview();
     this._stopMarkerPreview();
     this._cleanupAudioContext();
+
+    // Clean up dark mode listener
+    this._darkModeQuery?.removeEventListener('change', this._onDarkModeChange);
+
+    // Clean up ghost timer
+    if (this._ghostTimer !== null) {
+      clearTimeout(this._ghostTimer);
+      this._ghostTimer = null;
+    }
+  }
+
+  /**
+   * Handle system dark mode preference change.
+   */
+  private _onDarkModeChange = (): void => {
+    this._updateResolvedTheme();
+  };
+
+  /**
+   * Update the resolved theme based on current settings.
+   */
+  private _updateResolvedTheme(): void {
+    if (this.theme === 'auto') {
+      this._resolvedTheme = this._darkModeQuery?.matches ? 'dark' : 'light';
+    } else {
+      this._resolvedTheme = this.theme;
+    }
   }
 
   /**
@@ -659,10 +899,24 @@ export class UvmWaveformEditor extends LitElement {
   }
 
   updated(changedProperties: Map<string, unknown>): void {
-    if (
-      changedProperties.has('zoom')
-    ) {
+    if (changedProperties.has('zoom')) {
       this._updateCanvasWidth();
+    }
+
+    // Update resolved theme when theme property changes
+    if (changedProperties.has('theme')) {
+      this._updateResolvedTheme();
+    }
+
+    // Track marker changes for undo history
+    const markerProps = ['offset', 'consonant', 'cutoff', 'preutterance', 'overlap'];
+    const markerChanged = markerProps.some(prop => changedProperties.has(prop));
+
+    if (markerChanged && this.audioBuffer) {
+      // Only save to history if not during a drag operation
+      if (!this._draggingMarker) {
+        this._saveToUndoHistory();
+      }
     }
   }
 
@@ -1036,6 +1290,13 @@ export class UvmWaveformEditor extends LitElement {
   }
 
   private _onKeyDown = (e: KeyboardEvent): void => {
+    // Handle Ctrl/Cmd+Z for undo
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      e.preventDefault();
+      this._performUndo();
+      return;
+    }
+
     switch (e.key) {
       case '+':
       case '=':
@@ -1084,6 +1345,12 @@ export class UvmWaveformEditor extends LitElement {
       case 'P':
         e.preventDefault();
         this._togglePreview();
+        break;
+      case 'd':
+      case 'D':
+        // Toggle dark mode with 'd' key
+        e.preventDefault();
+        this._toggleTheme();
         break;
       case 'Tab':
         // Allow Tab to cycle through markers without preventing default navigation
@@ -1186,6 +1453,120 @@ export class UvmWaveformEditor extends LitElement {
     }
 
     this._selectedMarker = this._markerOrder[nextIndex];
+  }
+
+  // ==================== Undo Methods ====================
+
+  /**
+   * Maximum number of undo history entries to keep.
+   */
+  private readonly _maxUndoHistory = 5;
+
+  /**
+   * Save current marker positions to undo history.
+   */
+  private _saveToUndoHistory(): void {
+    const snapshot: MarkerSnapshot = {
+      offset: this.offset,
+      consonant: this.consonant,
+      cutoff: this.cutoff,
+      preutterance: this.preutterance,
+      overlap: this.overlap,
+      timestamp: Date.now(),
+    };
+
+    // Don't save duplicate snapshots (within 100ms)
+    const lastSnapshot = this._undoHistory[this._undoHistory.length - 1];
+    if (lastSnapshot) {
+      const isSame =
+        lastSnapshot.offset === snapshot.offset &&
+        lastSnapshot.consonant === snapshot.consonant &&
+        lastSnapshot.cutoff === snapshot.cutoff &&
+        lastSnapshot.preutterance === snapshot.preutterance &&
+        lastSnapshot.overlap === snapshot.overlap;
+
+      if (isSame || snapshot.timestamp - lastSnapshot.timestamp < 100) {
+        return;
+      }
+    }
+
+    // Add to history, keeping only last N entries
+    this._undoHistory = [...this._undoHistory, snapshot].slice(-this._maxUndoHistory);
+  }
+
+  /**
+   * Perform undo operation - restore previous marker positions.
+   */
+  private _performUndo(): void {
+    if (this._undoHistory.length < 2) {
+      // Need at least 2 entries: current and previous
+      return;
+    }
+
+    // Get the previous snapshot (second to last)
+    const previousSnapshot = this._undoHistory[this._undoHistory.length - 2];
+
+    // Create ghost markers showing current positions before undo
+    this._showGhostMarkers();
+
+    // Remove the current snapshot from history
+    this._undoHistory = this._undoHistory.slice(0, -1);
+
+    // Emit marker changes to restore previous positions
+    this._emitMarkerChange('offset', previousSnapshot.offset);
+    this._emitMarkerChange('consonant', previousSnapshot.consonant);
+    this._emitMarkerChange('cutoff', previousSnapshot.cutoff);
+    this._emitMarkerChange('preutterance', previousSnapshot.preutterance);
+    this._emitMarkerChange('overlap', previousSnapshot.overlap);
+  }
+
+  /**
+   * Show ghost markers at current positions before undo.
+   */
+  private _showGhostMarkers(): void {
+    // Clear any existing timer
+    if (this._ghostTimer !== null) {
+      clearTimeout(this._ghostTimer);
+    }
+
+    // Create ghost markers from current positions
+    this._ghostMarkers = [
+      { name: 'offset', position: this._msToPixel(this.offset), value: this.offset },
+      { name: 'consonant', position: this._msToPixel(this.consonant), value: this.consonant },
+      { name: 'cutoff', position: this._getCutoffPixel(), value: this.cutoff },
+      { name: 'preutterance', position: this._msToPixel(this.preutterance), value: this.preutterance },
+      { name: 'overlap', position: this._msToPixel(this.overlap), value: this.overlap },
+    ];
+
+    // Clear ghost markers after animation (1 second)
+    this._ghostTimer = window.setTimeout(() => {
+      this._ghostMarkers = [];
+      this._ghostTimer = null;
+    }, 1000);
+  }
+
+  // ==================== Theme Methods ====================
+
+  /**
+   * Toggle between light and dark theme.
+   */
+  private _toggleTheme(): void {
+    if (this.theme === 'auto') {
+      // When in auto, switch to opposite of current resolved theme
+      this.theme = this._resolvedTheme === 'dark' ? 'light' : 'dark';
+    } else {
+      // Toggle between light and dark
+      this.theme = this.theme === 'dark' ? 'light' : 'dark';
+    }
+
+    // Emit event for parent components
+    this.dispatchEvent(
+      new CustomEvent('theme-change', {
+        detail: { theme: this.theme },
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   // ==================== Playback Methods ====================
@@ -1570,12 +1951,71 @@ export class UvmWaveformEditor extends LitElement {
     return html`<div class="playhead" style="left: ${this._getPlayheadPixel()}px;"></div>`;
   }
 
-  render() {
-    const duration = this._getDuration();
+  /**
+   * Render the playback glow effect during audio playback.
+   * The glow covers the active playback region (offset to cutoff).
+   */
+  private _renderPlaybackGlow(): unknown {
+    if (!this._isPlaying || !this.audioBuffer) return null;
+
+    const offsetPixel = this._msToPixel(this.offset);
+    const cutoffPixel = this._getCutoffPixel();
+    const totalHeight = this.height + this._dividerHeight + this.spectrogramHeight;
+
+    // Determine glow intensity class based on amplitude
+    const glowClass = this._currentAmplitude > 0.5 ? 'playback-glow loud' : 'playback-glow';
 
     return html`
-      <div class="waveform-container">
-        <div class="controls">
+      <div
+        class=${glowClass}
+        style="
+          left: ${offsetPixel}px;
+          width: ${Math.max(0, cutoffPixel - offsetPixel)}px;
+          height: ${totalHeight}px;
+        "
+      ></div>
+    `;
+  }
+
+  /**
+   * Render ghost markers showing previous positions during undo.
+   */
+  private _renderGhostMarkers(): unknown {
+    if (this._ghostMarkers.length === 0) return null;
+
+    const totalHeight = this.height + this._dividerHeight + this.spectrogramHeight;
+
+    return this._ghostMarkers.map((ghost) => {
+      const config = MARKER_CONFIGS[ghost.name];
+      return html`
+        <div
+          class="ghost-marker"
+          style="
+            left: ${ghost.position}px;
+            height: ${totalHeight}px;
+            border-color: ${config.color};
+          "
+        >
+          <div
+            class="ghost-marker-handle"
+            style="border-color: ${config.color};"
+          ></div>
+        </div>
+      `;
+    });
+  }
+
+  render() {
+    const duration = this._getDuration();
+    const isDark = this._resolvedTheme === 'dark';
+
+    // Determine container class based on theme
+    const containerClass = isDark ? 'waveform-container dark' : 'waveform-container';
+    const controlsClass = isDark ? 'controls dark' : 'controls';
+
+    return html`
+      <div class=${containerClass}>
+        <div class=${controlsClass}>
           <div class="playback-controls">
             <sl-icon-button
               name=${this._isPlaying ? 'stop-fill' : 'play-fill'}
@@ -1616,9 +2056,18 @@ export class UvmWaveformEditor extends LitElement {
             </button>
           </div>
           <div class="controls-divider"></div>
+          <div class="theme-toggle">
+            <sl-icon-button
+              name=${isDark ? 'sun' : 'moon'}
+              label=${isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              @click=${this._toggleTheme}
+              title="Toggle theme (D)"
+            ></sl-icon-button>
+          </div>
+          <div class="controls-divider"></div>
           <span class="keyboard-hint">${this._selectedMarker
             ? `${MARKER_CONFIGS[this._selectedMarker].label}: Arrow nudge | Shift+Arrow 10ms | Tab next`
-            : 'Click to seek | Space play | P preview | Tab select marker'}</span>
+            : 'Click to seek | Space play | Ctrl+Z undo | D dark mode'}</span>
           <span class="time-display">${this._formatTime(duration)}</span>
         </div>
 
@@ -1639,6 +2088,7 @@ export class UvmWaveformEditor extends LitElement {
                         .audioBuffer=${this.audioBuffer}
                         .width=${this._canvasWidth}
                         .height=${this.height}
+                        .theme=${this._resolvedTheme}
                       ></uvm-waveform-canvas>
                     </div>
 
@@ -1653,6 +2103,7 @@ export class UvmWaveformEditor extends LitElement {
                         .audioBuffer=${this.audioBuffer}
                         .width=${this._canvasWidth}
                         .height=${this.spectrogramHeight}
+                        .theme=${this._resolvedTheme}
                       ></uvm-spectrogram>
                       <!-- Frequency axis labels -->
                       <div class="freq-axis">
@@ -1665,6 +2116,8 @@ export class UvmWaveformEditor extends LitElement {
                     <!-- Markers Layer spans both sections -->
                     <div class="markers-layer" style="height: ${this.height + this._dividerHeight + this.spectrogramHeight}px;">
                       ${this._renderRegions()}
+                      ${this._renderPlaybackGlow()}
+                      ${this._renderGhostMarkers()}
                       ${this._renderMarkers()}
                       ${this._renderPlayhead()}
                     </div>

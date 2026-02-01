@@ -46,6 +46,53 @@ export class UvmMarkerHandle extends LitElement {
       align-items: center;
       cursor: ew-resize;
       transform: translateX(-50%);
+      /* Default transition for position changes */
+      transition: left var(--uvm-duration-fast, 200ms)
+        var(--uvm-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+    }
+
+    /* Disable position transition during drag */
+    :host([dragging]) {
+      transition: none;
+    }
+
+    /* High confidence: quick, decisive spring animation */
+    :host([confidence="high"]) {
+      transition: left 150ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* Medium confidence: moderate animation */
+    :host([confidence="medium"]) {
+      transition: left 250ms cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    /* Low confidence: slow, tentative drift */
+    :host([confidence="low"]) {
+      transition: left 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Respect reduced motion preference */
+    @media (prefers-reduced-motion: reduce) {
+      :host,
+      :host([confidence="high"]),
+      :host([confidence="medium"]),
+      :host([confidence="low"]) {
+        transition: none;
+      }
+
+      .marker-line-waveform,
+      .marker-line-spectrogram,
+      .marker-handle,
+      .marker-label,
+      .confidence-indicator {
+        transition: none;
+        animation: none;
+      }
+
+      :host([selected]) .marker-line-waveform {
+        animation: none;
+        box-shadow: 0 0 12px currentColor;
+      }
     }
 
     .marker-line-waveform {
@@ -120,6 +167,56 @@ export class UvmMarkerHandle extends LitElement {
       transform: scale(1.15);
     }
 
+    /* Confidence indicator ring around handle */
+    .confidence-indicator {
+      position: absolute;
+      top: -12px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      opacity: 0;
+      transition: opacity var(--uvm-duration-fast, 200ms) ease-out;
+      pointer-events: none;
+      z-index: 9;
+    }
+
+    :host([confidence="high"]) .confidence-indicator {
+      border-color: var(--uvm-success, #22c55e);
+      opacity: 0.8;
+      animation: confidence-pulse-high 0.5s ease-out;
+    }
+
+    :host([confidence="medium"]) .confidence-indicator {
+      border-color: var(--uvm-warning, #f59e0b);
+      opacity: 0.6;
+      animation: confidence-pulse-medium 0.8s ease-out;
+    }
+
+    :host([confidence="low"]) .confidence-indicator {
+      border-color: var(--uvm-secondary, #9ca3af);
+      opacity: 0.4;
+      animation: confidence-pulse-low 1.2s ease-out;
+    }
+
+    @keyframes confidence-pulse-high {
+      0% { transform: scale(1.5); opacity: 0; }
+      50% { opacity: 0.8; }
+      100% { transform: scale(1); opacity: 0.8; }
+    }
+
+    @keyframes confidence-pulse-medium {
+      0% { transform: scale(1.3); opacity: 0; }
+      60% { opacity: 0.6; }
+      100% { transform: scale(1); opacity: 0.6; }
+    }
+
+    @keyframes confidence-pulse-low {
+      0% { transform: scale(1.2); opacity: 0; }
+      70% { opacity: 0.4; }
+      100% { transform: scale(1); opacity: 0.4; }
+    }
+
     .marker-label {
       position: absolute;
       white-space: nowrap;
@@ -152,6 +249,28 @@ export class UvmMarkerHandle extends LitElement {
       opacity: 0.85;
       display: block;
       margin-top: 1px;
+    }
+
+    /* Confidence badge in label */
+    .confidence-badge {
+      display: inline-block;
+      font-size: 9px;
+      padding: 1px 4px;
+      border-radius: 3px;
+      margin-left: 4px;
+      background-color: rgba(255, 255, 255, 0.2);
+    }
+
+    :host([confidence="high"]) .confidence-badge {
+      background-color: rgba(34, 197, 94, 0.3);
+    }
+
+    :host([confidence="medium"]) .confidence-badge {
+      background-color: rgba(245, 158, 11, 0.3);
+    }
+
+    :host([confidence="low"]) .confidence-badge {
+      background-color: rgba(156, 163, 175, 0.3);
     }
   `;
 
@@ -227,9 +346,26 @@ export class UvmMarkerHandle extends LitElement {
   @property({ type: Boolean, reflect: true })
   selected = false;
 
+  /**
+   * Confidence level for auto-detected positions.
+   * Affects animation speed and visual feedback.
+   * - 'high' (>0.8): Quick, decisive movement
+   * - 'medium' (0.5-0.8): Moderate animation
+   * - 'low' (<0.5): Slow, tentative drift
+   * - null: No confidence indicator (manual positioning)
+   */
+  @property({ type: String, reflect: true })
+  confidence: 'high' | 'medium' | 'low' | null = null;
+
   render() {
     // Position label in the middle of waveform section
     const labelBottom = this.spectrogramHeight + this.dividerHeight + 8;
+
+    // Format confidence for display
+    const confidenceLabel = this.confidence === 'high' ? 'High'
+      : this.confidence === 'medium' ? 'Med'
+      : this.confidence === 'low' ? 'Low'
+      : null;
 
     return html`
       <div
@@ -242,6 +378,7 @@ export class UvmMarkerHandle extends LitElement {
         part="line-spectrogram"
         style="color: ${this.color}; height: ${this.spectrogramHeight + this.dividerHeight}px;"
       ></div>
+      ${this.confidence ? html`<div class="confidence-indicator"></div>` : null}
       <div
         class="marker-handle"
         part="handle"
@@ -255,6 +392,7 @@ export class UvmMarkerHandle extends LitElement {
         style="background-color: ${this.color}; bottom: ${labelBottom}px;"
       >
         ${this.label}: ${this._formatTime(this.value)}
+        ${confidenceLabel ? html`<span class="confidence-badge">${confidenceLabel}</span>` : null}
         <span class="marker-label-hint">${this.hint}</span>
       </div>
     `;
