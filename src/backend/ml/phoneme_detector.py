@@ -26,6 +26,11 @@ DEFAULT_MODEL_NAME = "facebook/wav2vec2-lv-60-espeak-cv-ft"
 # Target sample rate for Wav2Vec2 models
 TARGET_SAMPLE_RATE = 16000
 
+# Wav2Vec2 frame duration in milliseconds
+# The model uses 7 conv layers with total stride of 320 samples
+# At 16kHz: 320 / 16000 = 0.02 seconds = 20ms per frame
+WAV2VEC2_FRAME_DURATION_MS = 20.0
+
 # Cache directory for downloaded models
 # Path: src/backend/ml/phoneme_detector.py -> project root
 MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models" / "wav2vec2"
@@ -230,9 +235,11 @@ class PhonemeDetector:
         """
         segments: list[PhonemeSegment] = []
 
-        # Calculate time per frame
-        num_frames = len(predicted_ids)
-        ms_per_frame = duration_ms / num_frames if num_frames > 0 else 0
+        # Use fixed frame duration for Wav2Vec2
+        # The model architecture produces frames at a fixed 20ms interval
+        # (320-sample stride at 16kHz = 20ms)
+        # Do NOT calculate from duration/num_frames as that causes timestamp compression
+        ms_per_frame = WAV2VEC2_FRAME_DURATION_MS
 
         # Get vocabulary for decoding
         vocab = processor.tokenizer.get_vocab()
