@@ -51,9 +51,10 @@ Thumbs.db
 # Beads task management
 .beads/
 
-# Documentation
-*.md
-!README.md
+# Documentation (keep README.md for pyproject.toml)
+CLAUDE.md
+CONTRIBUTING.md
+CHANGELOG.md
 
 # Docker
 Dockerfile*

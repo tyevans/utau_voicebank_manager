@@ -6,6 +6,24 @@ A web app that helps you record, organize, and configure voicebanks for [UTAU](h
 
 ---
 
+## Quick Start
+
+The fastest way to get running is with Docker:
+
+```bash
+git clone https://github.com/yourusername/utau_voicebank_manager.git
+cd utau_voicebank_manager
+docker compose up --build
+```
+
+Open **http://localhost:8989** in your browser.
+
+Your data persists in local folders:
+- `./data` - Voicebank projects
+- `./models` - Downloaded ML models
+
+---
+
 ## What Can It Do?
 
 - **Guided Recording** - Follow on-screen prompts to record all the sounds you need
@@ -13,59 +31,6 @@ A web app that helps you record, organize, and configure voicebanks for [UTAU](h
 - **AI Phoneme Detection** - Let the computer find where sounds start and end
 - **Multi-Style Support** - Works with CV, VCV, CVVC, and ARPAsing voicebanks
 - **Preview Your Work** - Listen to samples with your oto settings applied
-
----
-
-## Quick Start (3 Steps!)
-
-### Step 1: Install the Requirements
-
-You need these programs installed first:
-
-| Program | What it's for | How to get it |
-|---------|---------------|---------------|
-| **Python 3.11+** | Runs the backend | [python.org/downloads](https://www.python.org/downloads/) |
-| **Node.js 20+** | Runs the frontend | [nodejs.org](https://nodejs.org/) (choose LTS) |
-| **uv** | Installs Python packages fast | See below |
-| **Git** | Downloads the project | [git-scm.com](https://git-scm.com/downloads) |
-| **eSpeak NG** *(Windows only)* | AI phoneme detection | [github.com/espeak-ng/espeak-ng/releases](https://github.com/espeak-ng/espeak-ng/releases) |
-
-**Installing uv** (the Python package manager):
-```bash
-# Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Mac/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### Step 2: Download and Set Up
-
-Open a terminal (Command Prompt, PowerShell, or Terminal) and run:
-
-```bash
-# Download the project
-git clone https://github.com/yourusername/utau_voicebank_manager.git
-cd utau_voicebank_manager
-
-# Set everything up (this may take a few minutes)
-./script/setup
-```
-
-**Windows users:** If `./script/setup` doesn't work, try:
-```bash
-bash script/setup
-```
-
-### Step 3: Start the App
-
-```bash
-./script/server
-```
-
-Then open your web browser and go to: **http://localhost:5173**
-
-That's it! You should see the app running.
 
 ---
 
@@ -104,54 +69,39 @@ That's it! You should see the app running.
 
 ---
 
-## Troubleshooting
+## Development Setup
 
-### "Command not found" errors
-- Make sure Python, Node.js, and uv are installed
-- Try closing and reopening your terminal after installing
+For local development without Docker:
 
-### The app won't start
-- Check if another program is using port 5173 or 8000
-- Try running `./script/setup` again
+### Requirements
 
-### Audio doesn't work
-- Allow microphone access when your browser asks
-- Check your browser's audio settings
+| Program | What it's for | How to get it |
+|---------|---------------|---------------|
+| **Python 3.11+** | Runs the backend | [python.org/downloads](https://www.python.org/downloads/) |
+| **Node.js 20+** | Runs the frontend | [nodejs.org](https://nodejs.org/) (choose LTS) |
+| **uv** | Installs Python packages fast | See below |
+| **eSpeak NG** *(Windows only)* | AI phoneme detection | [github.com/espeak-ng/espeak-ng/releases](https://github.com/espeak-ng/espeak-ng/releases) |
 
-### AI Detect doesn't work (Windows)
-- Install **eSpeak NG** from [github.com/espeak-ng/espeak-ng/releases](https://github.com/espeak-ng/espeak-ng/releases)
-- Download the `.msi` installer and run it
-- Restart the server after installing
+**Installing uv:**
+```bash
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-### Something else is broken
-Open an issue on GitHub with:
-- What you were trying to do
-- What happened instead
-- Any error messages you saw
-
----
-
-## For Developers
-
-<details>
-<summary>Click to expand technical details</summary>
-
-### Project Structure
-
+# Mac/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
-utau_voicebank_manager/
-├── src/
-│   ├── backend/          # Python/FastAPI server
-│   │   ├── api/routers/  # REST endpoints
-│   │   ├── domain/       # Pydantic models
-│   │   ├── services/     # Business logic
-│   │   └── ml/           # ML model integrations
-│   └── frontend/         # TypeScript/Lit web app
-│       └── src/components/
-├── script/               # Helper scripts
-├── data/                 # User data (gitignored)
-└── models/               # ML models (gitignored)
+
+### Setup and Run
+
+```bash
+git clone https://github.com/yourusername/utau_voicebank_manager.git
+cd utau_voicebank_manager
+
+./script/setup    # First-time setup
+./script/server   # Start dev servers
 ```
+
+Open **http://localhost:5173** (frontend dev server with hot reload).
 
 ### Scripts
 
@@ -164,45 +114,44 @@ utau_voicebank_manager/
 | `script/models` | Download ML models |
 | `script/console` | Python REPL |
 
-### Tech Stack
+### ML Models
 
-**Backend:** Python 3.11+, FastAPI, Pydantic, PyTorch
-**Frontend:** TypeScript, Lit, Shoelace, Tailwind CSS
-**ML:** Wav2Vec2, WhisperX (optional), SOFA (optional)
-
-### ML Model Setup
-
-The app uses AI models for phoneme detection. Basic models download automatically on first use, but you can pre-download them:
+Basic models download automatically on first use. Pre-download with:
 
 ```bash
 ./script/models
 ```
 
-**Optional: SOFA for Singing Voice**
-
-[SOFA (Singing-Oriented Forced Aligner)](https://github.com/qiuqiao/SOFA) provides better detection for sustained vowels in singing samples. SOFA is included as a git submodule and models download automatically:
+**SOFA (Singing-Oriented Forced Aligner)** provides better detection for singing samples:
 
 ```bash
-# Initialize the SOFA submodule (if not already done)
 git submodule update --init
-
-# Download SOFA models (~400MB for English)
 ./script/models
-```
-
-The English model downloads automatically. Additional languages may require manual setup - run `./script/models` for details.
-
-### Running Tests
-
-```bash
-./script/test
 ```
 
 ### API Documentation
 
-When the server is running, visit: http://localhost:8000/docs
+When the server is running: http://localhost:8000/docs
 
-</details>
+---
+
+## Troubleshooting
+
+### "Command not found" errors
+- Make sure Python, Node.js, and uv are installed
+- Try closing and reopening your terminal after installing
+
+### The app won't start
+- Check if another program is using the required ports
+- Try running `./script/setup` again
+
+### Audio doesn't work
+- Allow microphone access when your browser asks
+- Check your browser's audio settings
+
+### AI Detect doesn't work (Windows)
+- Install **eSpeak NG** from [github.com/espeak-ng/espeak-ng/releases](https://github.com/espeak-ng/espeak-ng/releases)
+- Restart the server after installing
 
 ---
 
