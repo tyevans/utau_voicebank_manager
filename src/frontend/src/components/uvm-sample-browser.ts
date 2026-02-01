@@ -24,7 +24,7 @@ import { UvmToastManager } from './uvm-toast-manager.js';
  * Sample browser component for selecting voicebank samples.
  *
  * Displays a two-panel layout with voicebanks on the left and
- * samples in the selected voicebank on the right.
+ * samples in the selected voicebank on the right (as a chip grid).
  *
  * @fires sample-select - Fired when a sample is selected (double-click or Enter)
  *
@@ -46,7 +46,7 @@ export class UvmSampleBrowser extends LitElement {
 
     .browser-container {
       display: flex;
-      gap: 0.75rem;
+      gap: 1rem;
       height: 100%;
       min-height: 400px;
     }
@@ -59,12 +59,12 @@ export class UvmSampleBrowser extends LitElement {
     }
 
     .panel {
-      flex: 1;
       display: flex;
       flex-direction: column;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      background-color: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
       overflow: hidden;
       min-height: 0;
     }
@@ -73,16 +73,17 @@ export class UvmSampleBrowser extends LitElement {
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      padding: 0.625rem 0.875rem;
+      background-color: #fafafa;
+      border-bottom: 1px solid #e5e7eb;
       font-weight: 600;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-700, #334155);
+      font-size: 0.8125rem;
+      color: #374151;
     }
 
     .panel-header sl-icon {
-      font-size: 1rem;
+      font-size: 0.9375rem;
+      color: #6b7280;
     }
 
     .panel-content {
@@ -91,75 +92,176 @@ export class UvmSampleBrowser extends LitElement {
       min-height: 0;
     }
 
-    .list {
+    /* Voicebank panel - narrower and compact */
+    .voicebank-panel {
+      flex: 0 0 180px;
+      min-width: 160px;
+      max-width: 200px;
+    }
+
+    .samples-panel {
+      flex: 1;
+      min-width: 280px;
+    }
+
+    @media (max-width: 768px) {
+      .voicebank-panel,
+      .samples-panel {
+        max-width: 100%;
+        flex: 1;
+      }
+    }
+
+    /* Voicebank list styling */
+    .voicebank-list {
       list-style: none;
       margin: 0;
-      padding: 0;
+      padding: 0.25rem 0;
     }
 
-    .list-item {
+    .voicebank-item {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-      padding: 0.625rem 1rem;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
       cursor: pointer;
-      border-bottom: 1px solid var(--sl-color-neutral-100, #f1f5f9);
-      transition: background-color 0.15s ease;
+      border-bottom: 1px solid #f3f4f6;
+      transition: all 0.15s ease;
     }
 
-    .list-item:last-child {
+    .voicebank-item:last-child {
       border-bottom: none;
     }
 
-    .list-item:hover {
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
+    .voicebank-item:hover {
+      background-color: #f9fafb;
     }
 
-    .list-item.selected {
-      background-color: var(--sl-color-primary-100, #dbeafe);
+    .voicebank-item.selected {
+      background-color: #eff6ff;
+      border-left: 3px solid #3b82f6;
+      padding-left: calc(0.75rem - 3px);
     }
 
-    .list-item:focus {
-      outline: 2px solid var(--sl-color-primary-500, #3b82f6);
+    .voicebank-item:focus {
+      outline: 2px solid #3b82f6;
       outline-offset: -2px;
     }
 
-    .item-icon {
+    .voicebank-icon {
       flex-shrink: 0;
-      font-size: 1.25rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      font-size: 1rem;
+      color: #9ca3af;
     }
 
-    .list-item.selected .item-icon {
-      color: var(--sl-color-primary-600, #2563eb);
+    .voicebank-item.selected .voicebank-icon {
+      color: #3b82f6;
     }
 
-    .item-content {
+    .voicebank-content {
       flex: 1;
       min-width: 0;
     }
 
-    .item-name {
-      font-size: 0.875rem;
+    .voicebank-name {
+      font-size: 0.8125rem;
       font-weight: 500;
-      color: var(--sl-color-neutral-800, #1e293b);
+      color: #1f2937;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .item-meta {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+    .voicebank-meta {
+      font-size: 0.6875rem;
+      color: #9ca3af;
       margin-top: 0.125rem;
     }
 
-    .item-badges {
+    .voicebank-badges {
       display: flex;
-      gap: 0.375rem;
+      align-items: center;
+      gap: 0.25rem;
       flex-shrink: 0;
     }
 
+    .voicebank-badges sl-badge::part(base) {
+      font-size: 0.625rem;
+      padding: 0.125rem 0.375rem;
+    }
+
+    /* Sample chips container */
+    .sample-chips-container {
+      padding: 0.75rem;
+    }
+
+    .sample-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-content: flex-start;
+    }
+
+    /* Individual sample chip */
+    .sample-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.625rem;
+      background-color: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #374151;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+      max-width: 120px;
+    }
+
+    .sample-chip:hover {
+      background-color: #e5e7eb;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+      transform: translateY(-1px);
+    }
+
+    .sample-chip:focus {
+      outline: 2px solid #3b82f6;
+      outline-offset: 1px;
+    }
+
+    .sample-chip.selected {
+      background-color: #3b82f6;
+      border-color: #2563eb;
+      color: #ffffff;
+      box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+    }
+
+    .sample-chip.selected:hover {
+      background-color: #2563eb;
+    }
+
+    .sample-chip-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Has-oto indicator dot */
+    .oto-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #22c55e;
+      flex-shrink: 0;
+    }
+
+    .sample-chip.selected .oto-dot {
+      background-color: #86efac;
+    }
+
+    /* Empty, loading, error states */
     .empty-state {
       display: flex;
       flex-direction: column;
@@ -168,19 +270,19 @@ export class UvmSampleBrowser extends LitElement {
       padding: 2rem 1rem;
       text-align: center;
       height: 100%;
-      min-height: 200px;
+      min-height: 180px;
     }
 
     .empty-state sl-icon {
-      font-size: 2.5rem;
-      color: var(--sl-color-neutral-300, #cbd5e1);
-      margin-bottom: 0.75rem;
+      font-size: 2rem;
+      color: #d1d5db;
+      margin-bottom: 0.625rem;
     }
 
     .empty-state-text {
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-500, #64748b);
-      max-width: 200px;
+      font-size: 0.8125rem;
+      color: #6b7280;
+      max-width: 180px;
       line-height: 1.5;
     }
 
@@ -191,18 +293,18 @@ export class UvmSampleBrowser extends LitElement {
       justify-content: center;
       padding: 2rem;
       height: 100%;
-      min-height: 200px;
+      min-height: 180px;
     }
 
     .loading-state sl-spinner {
-      font-size: 2rem;
-      --indicator-color: var(--sl-color-primary-500, #3b82f6);
+      font-size: 1.75rem;
+      --indicator-color: #3b82f6;
     }
 
     .loading-state-text {
-      margin-top: 0.75rem;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      margin-top: 0.625rem;
+      font-size: 0.8125rem;
+      color: #6b7280;
     }
 
     .skeleton-list {
@@ -212,8 +314,8 @@ export class UvmSampleBrowser extends LitElement {
     .skeleton-item {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-      padding: 0.625rem 1rem;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
     }
 
     .skeleton-icon {
@@ -228,7 +330,21 @@ export class UvmSampleBrowser extends LitElement {
     }
 
     .skeleton-item sl-skeleton {
-      --border-radius: var(--sl-border-radius-small);
+      --border-radius: 4px;
+    }
+
+    /* Skeleton chips for samples */
+    .skeleton-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      padding: 0.75rem;
+    }
+
+    .skeleton-chip {
+      width: 70px;
+      height: 26px;
+      border-radius: 9999px;
     }
 
     .error-state {
@@ -239,47 +355,28 @@ export class UvmSampleBrowser extends LitElement {
       padding: 2rem 1rem;
       text-align: center;
       height: 100%;
-      min-height: 200px;
+      min-height: 180px;
     }
 
     .error-state sl-icon {
-      font-size: 2.5rem;
-      color: var(--sl-color-danger-500, #ef4444);
-      margin-bottom: 0.75rem;
+      font-size: 2rem;
+      color: #ef4444;
+      margin-bottom: 0.625rem;
     }
 
     .error-state-text {
-      font-size: 0.875rem;
-      color: var(--sl-color-danger-600, #dc2626);
-      max-width: 200px;
+      font-size: 0.8125rem;
+      color: #dc2626;
+      max-width: 180px;
       line-height: 1.5;
     }
 
-    .voicebank-panel {
-      flex: 1;
-      min-width: 160px;
-      max-width: 220px;
-    }
-
-    .samples-panel {
-      flex: 1.5;
-      min-width: 180px;
-    }
-
-    @media (max-width: 768px) {
-      .voicebank-panel,
-      .samples-panel {
-        max-width: 100%;
-        flex: 1;
-      }
-    }
-
     .keyboard-hint {
-      padding: 0.5rem 1rem;
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-400, #94a3b8);
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border-top: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      padding: 0.375rem 0.75rem;
+      font-size: 0.6875rem;
+      color: #9ca3af;
+      background-color: #fafafa;
+      border-top: 1px solid #e5e7eb;
     }
 
     .panel-header-actions {
@@ -287,11 +384,16 @@ export class UvmSampleBrowser extends LitElement {
     }
 
     .panel-header-actions sl-icon-button {
-      font-size: 1rem;
+      font-size: 0.875rem;
     }
 
     .panel-header-actions sl-icon-button::part(base) {
       padding: 0.25rem;
+      color: #6b7280;
+    }
+
+    .panel-header-actions sl-icon-button::part(base):hover {
+      color: #374151;
     }
 
     .upload-dialog-body {
@@ -313,20 +415,20 @@ export class UvmSampleBrowser extends LitElement {
     .delete-btn {
       opacity: 0;
       transition: opacity 0.15s ease;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-500);
+      font-size: 0.75rem;
+      color: #9ca3af;
     }
 
     .delete-btn::part(base) {
-      padding: 0.25rem;
+      padding: 0.125rem;
     }
 
     .delete-btn:hover {
-      color: var(--sl-color-danger-500);
+      color: #ef4444;
     }
 
-    .list-item:hover .delete-btn,
-    .list-item:focus-within .delete-btn {
+    .voicebank-item:hover .delete-btn,
+    .voicebank-item:focus-within .delete-btn {
       opacity: 1;
     }
   `;
@@ -476,12 +578,19 @@ export class UvmSampleBrowser extends LitElement {
     if (e.key === 'Enter') {
       e.preventDefault();
       this._emitSampleSelect(filename);
-    } else if (e.key === 'ArrowDown') {
+    } else if (e.key === 'ArrowRight') {
       e.preventDefault();
       this._navigateSample(1);
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       this._navigateSample(-1);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      // Navigate down by row (approximately 5-6 chips per row)
+      this._navigateSample(5);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      this._navigateSample(-5);
     }
   }
 
@@ -556,7 +665,7 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Focus a sample list item by filename.
+   * Focus a sample chip by filename.
    */
   private _focusSampleItem(filename: string): void {
     const item = this.shadowRoot?.querySelector(
@@ -609,7 +718,7 @@ export class UvmSampleBrowser extends LitElement {
         </div>
         <div class="panel-content">
           ${this._loadingVoicebanks
-            ? this._renderLoadingState('Loading voicebanks...')
+            ? this._renderVoicebankLoadingState()
             : this._voicebanksError
               ? this._renderErrorState(this._voicebanksError)
               : this._voicebanks.length === 0
@@ -625,11 +734,11 @@ export class UvmSampleBrowser extends LitElement {
    */
   private _renderVoicebankList() {
     return html`
-      <ul class="list" role="listbox" aria-label="Voicebanks">
+      <ul class="voicebank-list" role="listbox" aria-label="Voicebanks">
         ${this._voicebanks.map(
           (vb) => html`
             <li
-              class="list-item ${this._selectedVoicebank === vb.id
+              class="voicebank-item ${this._selectedVoicebank === vb.id
                 ? 'selected'
                 : ''}"
               role="option"
@@ -639,12 +748,12 @@ export class UvmSampleBrowser extends LitElement {
               @click=${() => this._onVoicebankClick(vb.id)}
               @keydown=${(e: KeyboardEvent) => this._onVoicebankKeyDown(e, vb.id)}
             >
-              <sl-icon class="item-icon" name="folder-fill"></sl-icon>
-              <div class="item-content">
-                <div class="item-name">${vb.name}</div>
-                <div class="item-meta">${vb.sample_count} samples</div>
+              <sl-icon class="voicebank-icon" name="folder-fill"></sl-icon>
+              <div class="voicebank-content">
+                <div class="voicebank-name">${vb.name}</div>
+                <div class="voicebank-meta">${vb.sample_count} samples</div>
               </div>
-              <div class="item-badges">
+              <div class="voicebank-badges">
                 ${vb.has_oto
                   ? html`<sl-badge variant="success" pill>oto</sl-badge>`
                   : null}
@@ -672,8 +781,8 @@ export class UvmSampleBrowser extends LitElement {
           <sl-icon name="music-note-list"></sl-icon>
           Samples
           ${this._selectedVoicebank
-            ? html`<span style="font-weight: normal; color: var(--sl-color-neutral-500);">
-                - ${this._getSelectedVoicebankName()}
+            ? html`<span style="font-weight: normal; color: #9ca3af; margin-left: 0.25rem;">
+                (${this._getSelectedVoicebankName()})
               </span>`
             : null}
         </div>
@@ -681,16 +790,16 @@ export class UvmSampleBrowser extends LitElement {
           ${!this._selectedVoicebank
             ? this._renderSelectVoicebankPrompt()
             : this._loadingSamples
-              ? this._renderLoadingState('Loading samples...')
+              ? this._renderSampleLoadingState()
               : this._samplesError
                 ? this._renderErrorState(this._samplesError)
                 : this._samples.length === 0
                   ? this._renderEmptySamples()
-                  : this._renderSampleList()}
+                  : this._renderSampleChips()}
         </div>
         ${this._samples.length > 0
           ? html`<div class="keyboard-hint">
-              Double-click or press Enter to load sample
+              Double-click or Enter to load sample
             </div>`
           : null}
       </div>
@@ -706,58 +815,69 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
-   * Render the sample list items.
+   * Render the sample chips grid.
    */
-  private _renderSampleList() {
+  private _renderSampleChips() {
     return html`
-      <ul class="list" role="listbox" aria-label="Samples">
-        ${this._samples.map(
-          (filename) => html`
-            <li
-              class="list-item ${this._selectedSample === filename
-                ? 'selected'
-                : ''}"
-              role="option"
-              aria-selected=${this._selectedSample === filename}
-              tabindex="0"
-              data-sample-filename=${filename}
-              @click=${() => this._onSampleClick(filename)}
-              @dblclick=${() => this._onSampleDblClick(filename)}
-              @keydown=${(e: KeyboardEvent) => this._onSampleKeyDown(e, filename)}
-            >
-              <sl-icon class="item-icon" name="file-earmark-music"></sl-icon>
-              <div class="item-content">
-                <div class="item-name">${this._displayName(filename)}</div>
+      <div class="sample-chips-container">
+        <div class="sample-chips" role="listbox" aria-label="Samples">
+          ${this._samples.map(
+            (filename) => html`
+              <div
+                class="sample-chip ${this._selectedSample === filename
+                  ? 'selected'
+                  : ''}"
+                role="option"
+                aria-selected=${this._selectedSample === filename}
+                tabindex="0"
+                data-sample-filename=${filename}
+                @click=${() => this._onSampleClick(filename)}
+                @dblclick=${() => this._onSampleDblClick(filename)}
+                @keydown=${(e: KeyboardEvent) => this._onSampleKeyDown(e, filename)}
+                title=${filename}
+              >
+                ${this._sampleOtoMap.get(filename)
+                  ? html`<span class="oto-dot"></span>`
+                  : null}
+                <span class="sample-chip-name">${this._displayName(filename)}</span>
               </div>
-              ${this._sampleOtoMap.get(filename)
-                ? html`
-                    <div class="item-badges">
-                      <sl-badge variant="primary" pill>oto</sl-badge>
-                    </div>
-                  `
-                : null}
-            </li>
-          `
-        )}
-      </ul>
+            `
+          )}
+        </div>
+      </div>
     `;
   }
 
   /**
-   * Render loading state with skeleton placeholders.
+   * Render loading state for voicebanks (skeleton list).
    */
-  private _renderLoadingState(_message: string) {
+  private _renderVoicebankLoadingState() {
     return html`
       <div class="skeleton-list">
-        ${[1, 2, 3, 4, 5].map(
+        ${[1, 2, 3].map(
           () => html`
             <div class="skeleton-item">
-              <sl-skeleton class="skeleton-icon" effect="pulse" style="width: 1.25rem; height: 1.25rem;"></sl-skeleton>
+              <sl-skeleton class="skeleton-icon" effect="pulse" style="width: 1rem; height: 1rem;"></sl-skeleton>
               <div class="skeleton-content">
-                <sl-skeleton effect="pulse" style="width: 80%; height: 0.875rem;"></sl-skeleton>
-                <sl-skeleton effect="pulse" style="width: 40%; height: 0.75rem;"></sl-skeleton>
+                <sl-skeleton effect="pulse" style="width: 75%; height: 0.8125rem;"></sl-skeleton>
+                <sl-skeleton effect="pulse" style="width: 40%; height: 0.6875rem;"></sl-skeleton>
               </div>
             </div>
+          `
+        )}
+      </div>
+    `;
+  }
+
+  /**
+   * Render loading state for samples (skeleton chips).
+   */
+  private _renderSampleLoadingState() {
+    return html`
+      <div class="skeleton-chips">
+        ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
+          () => html`
+            <sl-skeleton class="skeleton-chip" effect="pulse"></sl-skeleton>
           `
         )}
       </div>
@@ -1068,7 +1188,7 @@ export class UvmSampleBrowser extends LitElement {
         ?open=${this._showDeleteDialog}
         @sl-request-close=${this._onDeleteDialogClose}
       >
-        <p style="margin: 0; color: var(--sl-color-neutral-700);">
+        <p style="margin: 0; color: #374151;">
           Are you sure you want to delete <strong>${this._voicebankToDelete?.name}</strong>?
           This will permanently remove all samples and configuration.
         </p>

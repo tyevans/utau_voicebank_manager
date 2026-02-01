@@ -81,7 +81,7 @@ export class UvmEditorView extends LitElement {
 
     .editor-layout {
       display: grid;
-      grid-template-columns: minmax(400px, 500px) 1fr minmax(280px, 320px);
+      grid-template-columns: minmax(280px, 340px) 1fr minmax(260px, 300px);
       grid-template-rows: 1fr;
       gap: 1rem;
       height: calc(100vh - 120px);
@@ -90,7 +90,7 @@ export class UvmEditorView extends LitElement {
 
     @media (max-width: 1200px) {
       .editor-layout {
-        grid-template-columns: minmax(350px, 420px) 1fr minmax(260px, 300px);
+        grid-template-columns: minmax(260px, 320px) 1fr minmax(240px, 280px);
       }
     }
 
@@ -100,37 +100,6 @@ export class UvmEditorView extends LitElement {
         grid-template-rows: auto 1fr auto;
         height: auto;
       }
-    }
-
-    .sidebar {
-      display: flex;
-      flex-direction: column;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
-      overflow: hidden;
-    }
-
-    .sidebar-header {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      font-weight: 600;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-700, #334155);
-    }
-
-    .sidebar-header sl-icon {
-      font-size: 1rem;
-    }
-
-    .sidebar-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem;
     }
 
     .main-area {
@@ -146,12 +115,18 @@ export class UvmEditorView extends LitElement {
       min-height: 200px;
       display: flex;
       flex-direction: column;
+      background-color: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      overflow: hidden;
     }
 
     .params-panel {
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      background-color: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -163,9 +138,9 @@ export class UvmEditorView extends LitElement {
       align-items: center;
       justify-content: space-between;
       gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      padding: 0.625rem 0.875rem;
+      background-color: #fafafa;
+      border-bottom: 1px solid #e5e7eb;
     }
 
     .params-header-title {
@@ -173,16 +148,17 @@ export class UvmEditorView extends LitElement {
       align-items: center;
       gap: 0.5rem;
       font-weight: 600;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-700, #334155);
+      font-size: 0.8125rem;
+      color: #374151;
     }
 
     .params-header sl-icon {
-      font-size: 1rem;
+      font-size: 0.9375rem;
+      color: #6b7280;
     }
 
     .params-content {
-      padding: 1rem;
+      padding: 0.875rem;
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
@@ -200,7 +176,7 @@ export class UvmEditorView extends LitElement {
     .param-label {
       font-size: 0.75rem;
       font-weight: 500;
-      color: var(--sl-color-neutral-600, #475569);
+      color: #6b7280;
       display: flex;
       align-items: center;
       gap: 0.5rem;
@@ -221,21 +197,21 @@ export class UvmEditorView extends LitElement {
     }
 
     .sample-info {
-      padding: 0.75rem 1rem;
-      background-color: var(--sl-color-neutral-100, #f1f5f9);
-      border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
+      padding: 0.625rem 0.875rem;
+      background-color: #fafafa;
+      border-bottom: 1px solid #e5e7eb;
     }
 
     .sample-info-filename {
       font-weight: 600;
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-800, #1e293b);
-      margin-bottom: 0.25rem;
+      font-size: 0.8125rem;
+      color: #1f2937;
+      margin-bottom: 0.125rem;
     }
 
     .sample-info-voicebank {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      font-size: 0.6875rem;
+      color: #9ca3af;
     }
 
     .loading-overlay {
@@ -245,13 +221,13 @@ export class UvmEditorView extends LitElement {
       justify-content: center;
       padding: 2rem;
       text-align: center;
-      color: var(--sl-color-neutral-500, #64748b);
+      color: #6b7280;
     }
 
     .loading-overlay sl-spinner {
-      font-size: 2rem;
-      --indicator-color: var(--sl-color-primary-500, #3b82f6);
-      margin-bottom: 0.75rem;
+      font-size: 1.75rem;
+      --indicator-color: #3b82f6;
+      margin-bottom: 0.625rem;
     }
 
     .empty-state {
@@ -259,25 +235,26 @@ export class UvmEditorView extends LitElement {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 2rem;
+      padding: 2rem 1rem;
       text-align: center;
       flex: 1;
-      min-height: 200px;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border: 1px solid var(--sl-color-neutral-200, #e2e8f0);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
+      min-height: 180px;
+      background-color: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
     }
 
     .empty-state sl-icon {
-      font-size: 3rem;
-      color: var(--sl-color-neutral-300, #cbd5e1);
-      margin-bottom: 1rem;
+      font-size: 2rem;
+      color: #d1d5db;
+      margin-bottom: 0.625rem;
     }
 
     .empty-state-text {
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-500, #64748b);
-      max-width: 250px;
+      font-size: 0.8125rem;
+      color: #6b7280;
+      max-width: 180px;
       line-height: 1.5;
     }
 
@@ -298,6 +275,8 @@ export class UvmEditorView extends LitElement {
       flex-direction: column;
       gap: 0.5rem;
       margin-top: 0.5rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid #e5e7eb;
     }
 
     .action-buttons sl-button-group {
@@ -310,11 +289,12 @@ export class UvmEditorView extends LitElement {
 
     .action-buttons sl-button-group sl-button::part(base) {
       width: 100%;
+      padding: 0.5rem 0.75rem;
     }
 
     .save-hint {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-400, #9ca3af);
+      font-size: 0.6875rem;
+      color: #9ca3af;
       text-align: center;
     }
 
@@ -325,7 +305,7 @@ export class UvmEditorView extends LitElement {
     }
 
     .confidence-badge sl-badge {
-      font-size: 0.75rem;
+      font-size: 0.6875rem;
     }
 
     .dialog-footer {
@@ -340,7 +320,7 @@ export class UvmEditorView extends LitElement {
 
     #unsaved-dialog p {
       margin: 0;
-      color: var(--sl-color-neutral-700, #334155);
+      color: #374151;
     }
 
     .skeleton-params {
@@ -373,71 +353,71 @@ export class UvmEditorView extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
-      padding: 0.75rem;
-      background: var(--sl-color-neutral-50, #f8fafc);
-      border-radius: var(--sl-border-radius-medium, 0.375rem);
-      border: 1px solid var(--sl-color-neutral-100, #f1f5f9);
+      padding: 0.625rem;
+      background: #f9fafb;
+      border-radius: 6px;
+      border: 1px solid #f3f4f6;
     }
 
     .marker-legend-title {
-      font-size: 0.6875rem;
+      font-size: 0.625rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: var(--sl-color-neutral-400, #94a3b8);
-      margin-bottom: 0.25rem;
+      color: #9ca3af;
+      margin-bottom: 0.125rem;
     }
 
     .marker-legend-item {
       display: flex;
       align-items: center;
-      gap: 0.625rem;
-      font-size: 0.8125rem;
-      color: var(--sl-color-neutral-600, #475569);
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: #6b7280;
     }
 
     .marker-legend-dot {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
     }
 
     .marker-legend-name {
       font-weight: 500;
-      color: var(--sl-color-neutral-700, #334155);
-      min-width: 5.5rem;
+      color: #374151;
+      min-width: 5rem;
     }
 
     .marker-legend-hint {
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-400, #94a3b8);
+      font-size: 0.6875rem;
+      color: #9ca3af;
     }
 
     /* Precise values toggle section */
     .precise-values-toggle {
-      margin-top: 0.5rem;
+      margin-top: 0.375rem;
     }
 
     .precise-values-toggle sl-details::part(summary) {
-      font-size: 0.8125rem;
+      font-size: 0.75rem;
       font-weight: 500;
-      color: var(--sl-color-neutral-500, #64748b);
-      padding: 0.5rem 0;
+      color: #6b7280;
+      padding: 0.375rem 0;
     }
 
     .precise-values-toggle sl-details::part(summary-icon) {
-      color: var(--sl-color-neutral-400, #94a3b8);
+      color: #9ca3af;
     }
 
     .precise-values-toggle sl-details::part(content) {
-      padding-top: 0.5rem;
+      padding-top: 0.375rem;
     }
 
     .precise-values-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0.5rem;
+      gap: 0.375rem;
     }
 
     .precise-values-grid .param-group {
@@ -445,11 +425,11 @@ export class UvmEditorView extends LitElement {
     }
 
     .precise-values-grid sl-input::part(base) {
-      font-size: 0.75rem;
+      font-size: 0.6875rem;
     }
 
     .precise-values-grid .param-label {
-      font-size: 0.6875rem;
+      font-size: 0.625rem;
     }
 
     /* Simplified waveform hint */
@@ -458,16 +438,16 @@ export class UvmEditorView extends LitElement {
       align-items: center;
       justify-content: center;
       gap: 0.5rem;
-      padding: 0.625rem;
-      background: var(--sl-color-neutral-50, #f8fafc);
-      border-radius: var(--sl-border-radius-medium);
-      font-size: 0.75rem;
-      color: var(--sl-color-neutral-500, #64748b);
+      padding: 0.5rem;
+      background: #f9fafb;
+      border-radius: 6px;
+      font-size: 0.6875rem;
+      color: #6b7280;
     }
 
     .waveform-hint sl-icon {
-      font-size: 0.875rem;
-      color: var(--sl-color-neutral-400, #94a3b8);
+      font-size: 0.8125rem;
+      color: #9ca3af;
     }
   `;
 
@@ -1327,8 +1307,6 @@ export class UvmEditorView extends LitElement {
               </div>
             </sl-details>
           </div>
-
-          <sl-divider></sl-divider>
 
           <div class="action-buttons">
             <sl-button-group>
