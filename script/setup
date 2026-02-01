@@ -6,8 +6,12 @@ cd "$(dirname "$0")/.."
 
 script/bootstrap
 
+echo "==> Initializing git submodules..."
+git submodule update --init --recursive
+
 echo "==> Creating data directories..."
 mkdir -p data/voicebanks data/sessions models
 
 echo "==> Setup complete!"
 echo "    Run 'script/server' to start development servers"
+echo "    Run 'script/models' to download ML models (optional)"

@@ -34,10 +34,10 @@ logger = logging.getLogger(__name__)
 # Target sample rate for SOFA (16kHz mono, same as most forced aligners)
 SOFA_SAMPLE_RATE = 16000
 
-# Default SOFA paths
-SOFA_MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models" / "sofa"
-SOFA_CHECKPOINTS_DIR = SOFA_MODELS_DIR / "checkpoints"
-SOFA_DICTIONARY_DIR = SOFA_MODELS_DIR / "dictionary"
+# Default SOFA paths - use git submodule in vendor/SOFA
+SOFA_SUBMODULE_DIR = Path(__file__).parent.parent.parent.parent / "vendor" / "SOFA"
+SOFA_CHECKPOINTS_DIR = SOFA_SUBMODULE_DIR / "ckpt"
+SOFA_DICTIONARY_DIR = SOFA_SUBMODULE_DIR / "dictionary"
 
 
 class SOFAForcedAligner(ForcedAligner):
@@ -112,16 +112,22 @@ class SOFAForcedAligner(ForcedAligner):
     def _find_sofa_installation(self) -> Path | None:
         """Try to find SOFA installation in common locations.
 
+        Checks the git submodule first (vendor/SOFA), then falls back
+        to common installation paths.
+
         Returns:
             Path to SOFA directory or None if not found
         """
+        # Check submodule first (preferred)
+        if SOFA_SUBMODULE_DIR.exists() and (SOFA_SUBMODULE_DIR / "infer.py").exists():
+            return SOFA_SUBMODULE_DIR
+
+        # Fallback to common paths
         common_paths = [
             Path.home() / "SOFA",
             Path.home() / "sofa",
             Path("/opt/SOFA"),
             Path("/opt/sofa"),
-            # Check if there's a sofa directory in models/
-            SOFA_MODELS_DIR / "SOFA",
         ]
 
         for path in common_paths:

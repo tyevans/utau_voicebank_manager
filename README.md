@@ -180,15 +180,17 @@ The app uses AI models for phoneme detection. Basic models download automaticall
 
 **Optional: SOFA for Singing Voice**
 
-[SOFA (Singing-Oriented Forced Aligner)](https://github.com/qiuqiao/SOFA) provides better detection for sustained vowels in singing samples. Setup requires manual steps:
+[SOFA (Singing-Oriented Forced Aligner)](https://github.com/qiuqiao/SOFA) provides better detection for sustained vowels in singing samples. SOFA is included as a git submodule and models download automatically:
 
-1. Clone SOFA: `git clone https://github.com/qiuqiao/SOFA`
-2. Download models from [SOFA GitHub Discussions](https://github.com/qiuqiao/SOFA/discussions/categories/pretrained-model-sharing)
-3. Place checkpoints in `models/sofa/checkpoints/`
-4. Place dictionaries in `models/sofa/dictionary/`
-5. Set environment variable: `export SOFA_PATH=/path/to/SOFA`
+```bash
+# Initialize the SOFA submodule (if not already done)
+git submodule update --init
 
-Run `./script/models` for detailed setup instructions.
+# Download SOFA models (~400MB for English)
+./script/models
+```
+
+The English model downloads automatically. Additional languages may require manual setup - run `./script/models` for details.
 
 ### Running Tests
 

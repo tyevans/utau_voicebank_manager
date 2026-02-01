@@ -1,0 +1,3 @@
+[submodule "vendor/SOFA"]
+	path = vendor/SOFA
+	url = https://github.com/qiuqiao/SOFA.git
