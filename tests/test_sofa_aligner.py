@@ -1,12 +1,23 @@
 """Tests for the SOFA (Singing-Oriented Forced Aligner) integration."""
 
-import pytest
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.backend.domain.phoneme import PhonemeSegment
 from src.backend.ml.forced_aligner import AlignmentError, AlignmentResult
-from src.backend.ml.sofa_aligner import SOFAForcedAligner, get_sofa_aligner, is_sofa_available
+from src.backend.ml.sofa_aligner import (
+    MODEL_CACHE_TTL_SECONDS,
+    CachedSOFAModel,
+    SOFAForcedAligner,
+    SOFAModelManager,
+    clear_sofa_model_cache,
+    get_model_manager,
+    get_sofa_aligner,
+    is_sofa_available,
+)
 
 
 class TestSOFAForcedAlignerBatchAlign:
@@ -119,7 +130,7 @@ class TestSOFAForcedAlignerBatchAlign:
 
         parse_call_count = 0
 
-        async def mock_parse_textgrid(textgrid_path, original_path):
+        async def mock_parse_textgrid(textgrid_path, _original_path):
             nonlocal parse_call_count
             # Map temp filename back to original path based on index
             idx = int(textgrid_path.stem.split("_")[1])
@@ -169,7 +180,7 @@ class TestSOFAForcedAlignerBatchAlign:
             (audio_paths[2], "t a"),
         ]
 
-        async def mock_parse_textgrid(textgrid_path, original_path):
+        async def mock_parse_textgrid(textgrid_path, _original_path):
             # Simulate failure for _sa.wav by raising exception
             idx = int(textgrid_path.stem.split("_")[1])
             if idx == 1:  # _sa.wav
@@ -218,7 +229,7 @@ class TestSOFAForcedAlignerBatchAlign:
             (audio_paths[1], "s a"),
         ]
 
-        async def mock_parse_textgrid_always_fail(textgrid_path, original_path):
+        async def mock_parse_textgrid_always_fail(_textgrid_path, _original_path):
             raise ValueError("Failed to parse TextGrid")
 
         with patch.object(aligner, "is_available", return_value=True), \
@@ -324,3 +335,233 @@ class TestSOFALanguageSupport:
         aligner = SOFAForcedAligner()
         with pytest.raises(AlignmentError, match="Unsupported language"):
             aligner._get_model_paths("xyz")
+
+
+class TestCachedSOFAModel:
+    """Tests for CachedSOFAModel TTL caching."""
+
+    def test_touch_updates_last_accessed(self) -> None:
+        """touch() updates the last_accessed timestamp."""
+        mock_device = MagicMock()
+        cached = CachedSOFAModel(
+            model=MagicMock(),
+            g2p=MagicMock(),
+            device=mock_device,
+            checkpoint_path=Path("/fake/ckpt"),
+            dictionary_path=Path("/fake/dict"),
+            last_accessed=time.time() - 100,  # Set old timestamp
+        )
+        old_time = cached.last_accessed
+
+        cached.touch()
+
+        assert cached.last_accessed > old_time
+        assert cached.last_accessed <= time.time()
+
+    def test_is_expired_returns_false_for_fresh_entry(self) -> None:
+        """is_expired returns False for recently accessed entries."""
+        mock_device = MagicMock()
+        cached = CachedSOFAModel(
+            model=MagicMock(),
+            g2p=MagicMock(),
+            device=mock_device,
+            checkpoint_path=Path("/fake/ckpt"),
+            dictionary_path=Path("/fake/dict"),
+        )
+        # Just created, should not be expired
+        assert cached.is_expired() is False
+
+    def test_is_expired_returns_true_for_old_entry(self) -> None:
+        """is_expired returns True for entries older than TTL."""
+        mock_device = MagicMock()
+        # Set last_accessed to well beyond TTL
+        old_time = time.time() - MODEL_CACHE_TTL_SECONDS - 100
+        cached = CachedSOFAModel(
+            model=MagicMock(),
+            g2p=MagicMock(),
+            device=mock_device,
+            checkpoint_path=Path("/fake/ckpt"),
+            dictionary_path=Path("/fake/dict"),
+            last_accessed=old_time,
+        )
+        assert cached.is_expired() is True
+
+    def test_is_expired_custom_ttl(self) -> None:
+        """is_expired respects custom TTL parameter."""
+        mock_device = MagicMock()
+        # 10 seconds old entry
+        old_time = time.time() - 10
+        cached = CachedSOFAModel(
+            model=MagicMock(),
+            g2p=MagicMock(),
+            device=mock_device,
+            checkpoint_path=Path("/fake/ckpt"),
+            dictionary_path=Path("/fake/dict"),
+            last_accessed=old_time,
+        )
+        # Not expired with 60s TTL
+        assert cached.is_expired(ttl_seconds=60) is False
+        # Expired with 5s TTL
+        assert cached.is_expired(ttl_seconds=5) is True
+
+
+class TestSOFAModelManager:
+    """Tests for SOFAModelManager caching behavior."""
+
+    def test_get_cache_key_unique_per_paths(self) -> None:
+        """Cache keys are unique for different checkpoint/dictionary combinations."""
+        manager = SOFAModelManager()
+
+        key1 = manager._get_cache_key(Path("/ckpt1"), Path("/dict1"))
+        key2 = manager._get_cache_key(Path("/ckpt2"), Path("/dict1"))
+        key3 = manager._get_cache_key(Path("/ckpt1"), Path("/dict2"))
+
+        assert key1 != key2
+        assert key1 != key3
+        assert key2 != key3
+
+    def test_singleton_pattern(self) -> None:
+        """SOFAModelManager uses singleton pattern."""
+        manager1 = SOFAModelManager()
+        manager2 = SOFAModelManager()
+        assert manager1 is manager2
+
+    def test_clear_cache_empties_cache(self) -> None:
+        """clear_cache removes all cached models."""
+        # Use the module function to ensure we're testing the global manager
+        with patch("torch.cuda.is_available", return_value=False):
+            manager = get_model_manager()
+            # Manually add something to cache for testing
+            manager._cache["test_key"] = MagicMock()
+            assert len(manager._cache) > 0
+
+            clear_sofa_model_cache()
+
+            assert len(manager._cache) == 0
+
+
+class TestSOFANativeMode:
+    """Tests for native model loading mode."""
+
+    def test_aligner_use_native_flag_default_true(self) -> None:
+        """SOFAForcedAligner defaults to use_native=True."""
+        aligner = SOFAForcedAligner()
+        assert aligner._use_native is True
+
+    def test_aligner_use_native_flag_can_be_disabled(self) -> None:
+        """use_native can be set to False to force subprocess mode."""
+        aligner = SOFAForcedAligner(use_native=False)
+        assert aligner._use_native is False
+
+    def test_get_sofa_aligner_use_native_parameter(self) -> None:
+        """get_sofa_aligner passes use_native parameter."""
+        aligner = get_sofa_aligner(use_native=False)
+        assert aligner._use_native is False
+
+        aligner = get_sofa_aligner(use_native=True)
+        assert aligner._use_native is True
+
+    @pytest.mark.asyncio
+    async def test_align_falls_back_to_subprocess_on_native_failure(self) -> None:
+        """align() falls back to subprocess when native mode fails."""
+        aligner = SOFAForcedAligner(use_native=True)
+
+        mock_result = AlignmentResult(
+            segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+            audio_duration_ms=250.0,
+            method="sofa",
+        )
+
+        with patch.object(aligner, "is_available", return_value=True), \
+             patch.object(aligner, "_infer_native", side_effect=RuntimeError("Native failed")), \
+             patch.object(aligner, "_infer_subprocess", new_callable=AsyncMock, return_value=mock_result) as mock_subprocess:
+
+            result = await aligner.align(Path("/test/audio.wav"), "ka", "ja")
+
+            # Should have fallen back to subprocess
+            mock_subprocess.assert_called_once()
+            assert result.method == "sofa"
+
+    @pytest.mark.asyncio
+    async def test_align_uses_subprocess_when_native_disabled(self) -> None:
+        """align() uses subprocess directly when use_native=False."""
+        aligner = SOFAForcedAligner(use_native=False)
+
+        mock_result = AlignmentResult(
+            segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+            audio_duration_ms=250.0,
+            method="sofa",
+        )
+
+        with patch.object(aligner, "is_available", return_value=True), \
+             patch.object(aligner, "_infer_native", new_callable=AsyncMock) as mock_native, \
+             patch.object(aligner, "_infer_subprocess", new_callable=AsyncMock, return_value=mock_result):
+
+            await aligner.align(Path("/test/audio.wav"), "ka", "ja")
+
+            # Native should not have been called
+            mock_native.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_align_native_processes_sequentially(self) -> None:
+        """batch_align in native mode processes files sequentially with cached model."""
+        aligner = SOFAForcedAligner(use_native=True)
+
+        audio_paths = [Path(f"/test/audio_{i}.wav") for i in range(3)]
+        items = [(p, "ka") for p in audio_paths]
+
+        call_count = 0
+
+        async def mock_infer_native(_audio_path, _transcript, _language):
+            nonlocal call_count
+            call_count += 1
+            return AlignmentResult(
+                segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+                audio_duration_ms=250.0,
+                method="sofa",
+            )
+
+        with patch.object(aligner, "is_available", return_value=True), \
+             patch.object(aligner, "_infer_native", side_effect=mock_infer_native):
+
+            result = await aligner.batch_align(items, language="ja")
+
+            # All 3 files processed
+            assert len(result) == 3
+            assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_batch_align_native_partial_failure(self) -> None:
+        """batch_align in native mode handles partial failures."""
+        aligner = SOFAForcedAligner(use_native=True)
+
+        audio_paths = [Path(f"/test/audio_{i}.wav") for i in range(3)]
+        items = [(p, "ka") for p in audio_paths]
+
+        async def mock_infer_native(audio_path, _transcript, _language):
+            if "audio_1" in str(audio_path):
+                raise RuntimeError("Failed for audio_1")
+            return AlignmentResult(
+                segments=[PhonemeSegment(phoneme="k", start_ms=20.0, end_ms=60.0, confidence=1.0)],
+                audio_duration_ms=250.0,
+                method="sofa",
+            )
+
+        with patch.object(aligner, "is_available", return_value=True), \
+             patch.object(aligner, "_infer_native", side_effect=mock_infer_native):
+
+            result = await aligner.batch_align(items, language="ja")
+
+            # 2 out of 3 should succeed
+            assert len(result) == 2
+            assert audio_paths[0] in result
+            assert audio_paths[1] not in result  # Failed
+            assert audio_paths[2] in result
+
+
+class TestSOFAModelCacheTTL:
+    """Tests for model cache TTL behavior."""
+
+    def test_model_cache_ttl_is_5_minutes(self) -> None:
+        """MODEL_CACHE_TTL_SECONDS is set to 5 minutes (300 seconds)."""
+        assert MODEL_CACHE_TTL_SECONDS == 300

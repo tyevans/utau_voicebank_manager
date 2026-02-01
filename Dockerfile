@@ -67,6 +67,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Done BEFORE copying source so source changes don't invalidate this layer
 RUN git clone --depth 1 https://github.com/tyevans/SOFA.git vendor/SOFA
 
+# Install SOFA Python dependencies
+# Note: torch/torchaudio already installed above, skip those
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+    click \
+    einops==0.6.1 \
+    h5py \
+    "librosa<0.10.0" \
+    "lightning>=2.0.0" \
+    "matplotlib~=3.7.3" \
+    textgrid \
+    chardet
+
 # Download SOFA checkpoint and dictionary files with caching
 # English: checkpoint ~387MB, dictionary ~3MB
 # Japanese: zip ~1.1GB containing checkpoint and dictionary
