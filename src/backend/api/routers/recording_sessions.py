@@ -7,13 +7,23 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 
 from src.backend.domain.generated_voicebank import (
     GeneratedVoicebank,
     GenerateVoicebankRequest,
 )
+from src.backend.domain.paragraph_prompt import ParagraphRecordingProgress
 from src.backend.domain.recording_session import (
     RecordingSegment,
     RecordingSession,
@@ -28,6 +38,17 @@ from src.backend.repositories.recording_session_repository import (
 )
 from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.services.alignment_service import AlignmentService
+from src.backend.services.paragraph_library_service import (
+    ParagraphLibraryNotFoundError,
+    ParagraphLibraryService,
+    get_paragraph_library_service,
+)
+from src.backend.services.paragraph_segmentation_service import (
+    ParagraphSegmentationResult,
+    ParagraphSegmentationService,
+    SegmentationError,
+    get_paragraph_segmentation_service,
+)
 from src.backend.services.recording_session_service import (
     RecordingSessionService,
     SessionNotFoundError,
@@ -92,6 +113,21 @@ def get_voicebank_generator(
         alignment_service=alignment_service,
         oto_suggester=oto_suggester,
         output_base_path=GENERATED_BASE_PATH,
+    )
+
+
+def get_library_service() -> ParagraphLibraryService:
+    """Dependency provider for ParagraphLibraryService."""
+    return get_paragraph_library_service()
+
+
+def get_segmentation_service(
+    session_service: Annotated[RecordingSessionService, Depends(get_session_service)],
+) -> ParagraphSegmentationService:
+    """Dependency provider for ParagraphSegmentationService."""
+    return get_paragraph_segmentation_service(
+        session_service=session_service,
+        prefer_mfa=True,
     )
 
 
@@ -623,6 +659,240 @@ async def download_voicebank(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
+        ) from e
+
+
+# =============================================================================
+# Paragraph Recording Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/paragraph",
+    response_model=RecordingSession,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_paragraph_session(
+    service: Annotated[RecordingSessionService, Depends(get_session_service)],
+    library_service: Annotated[ParagraphLibraryService, Depends(get_library_service)],
+    voicebank_id: Annotated[
+        str,
+        Form(description="Target voicebank name for the recording session"),
+    ],
+    library_id: Annotated[
+        str,
+        Form(description="Paragraph library ID (e.g., 'ja-cv-paragraphs-v1')"),
+    ],
+    use_minimal_set: Annotated[
+        bool,
+        Form(
+            description="If true, use only the minimal paragraphs needed "
+            "for full phoneme coverage"
+        ),
+    ] = True,
+) -> RecordingSession:
+    """Create a paragraph-mode recording session.
+
+    Creates a recording session using paragraph prompts from a library.
+    Paragraph prompts contain natural sentences that cover multiple phonemes,
+    enabling efficient voicebank recording.
+
+    The session will use the specified paragraph library to generate prompts.
+    If use_minimal_set is true, only the minimal number of paragraphs needed
+    for complete phoneme coverage will be used.
+
+    Args:
+        voicebank_id: Target voicebank name for generated samples
+        library_id: Paragraph library identifier
+        use_minimal_set: Use minimal paragraph set for full coverage
+
+    Returns:
+        Created recording session in paragraph mode
+
+    Raises:
+        HTTPException 400: If validation fails
+        HTTPException 404: If paragraph library not found
+    """
+    try:
+        # Get the paragraph library
+        library = library_service.get_library(library_id)
+
+        # Create session using the library
+        session = await service.create_paragraph_session(
+            voicebank_id=voicebank_id,
+            paragraph_library=library,
+            use_minimal_set=use_minimal_set,
+        )
+
+        logger.info(
+            f"Created paragraph recording session {session.id} for voicebank "
+            f"'{voicebank_id}' using library '{library_id}' with "
+            f"{len(session.prompts)} prompts (minimal={use_minimal_set})"
+        )
+        return session
+
+    except ParagraphLibraryNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except SessionValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+@router.get(
+    "/{session_id}/paragraph-progress",
+    response_model=ParagraphRecordingProgress,
+)
+async def get_paragraph_progress(
+    session_id: UUID,
+    service: Annotated[RecordingSessionService, Depends(get_session_service)],
+    library_service: Annotated[ParagraphLibraryService, Depends(get_library_service)],
+    library_id: Annotated[
+        str | None,
+        Query(
+            description="Paragraph library ID for phoneme coverage calculation. "
+            "If not provided, coverage stats may be incomplete."
+        ),
+    ] = None,
+) -> ParagraphRecordingProgress:
+    """Get paragraph recording progress with phoneme coverage.
+
+    Returns detailed progress for a paragraph-mode recording session,
+    including phoneme coverage statistics.
+
+    Args:
+        session_id: Session UUID
+        library_id: Optional library ID for accurate phoneme tracking
+
+    Returns:
+        Paragraph recording progress with coverage stats
+
+    Raises:
+        HTTPException 400: If session is not in paragraph mode
+        HTTPException 404: If session not found or library not found
+    """
+    try:
+        # Get library if specified
+        paragraph_library = None
+        if library_id:
+            paragraph_library = library_service.get_library(library_id)
+
+        progress = await service.get_paragraph_progress(
+            session_id=session_id,
+            paragraph_library=paragraph_library,
+        )
+
+        logger.debug(
+            f"Paragraph progress for session {session_id}: "
+            f"{progress.completed_paragraphs}/{progress.total_paragraphs} paragraphs, "
+            f"{progress.phoneme_coverage_percent:.1f}% phoneme coverage"
+        )
+        return progress
+
+    except SessionNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except SessionValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except ParagraphLibraryNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+
+
+@router.post(
+    "/{session_id}/process-paragraphs",
+    response_model=list[ParagraphSegmentationResult],
+)
+async def process_paragraph_recordings(
+    session_id: UUID,
+    service: Annotated[RecordingSessionService, Depends(get_session_service)],
+    library_service: Annotated[ParagraphLibraryService, Depends(get_library_service)],
+    segmentation_service: Annotated[
+        ParagraphSegmentationService, Depends(get_segmentation_service)
+    ],
+    library_id: Annotated[
+        str,
+        Form(description="Paragraph library ID for phoneme extraction"),
+    ],
+) -> list[ParagraphSegmentationResult]:
+    """Process recorded paragraphs into phoneme samples.
+
+    Uses forced alignment (MFA/Wav2Vec2) to segment recorded paragraph
+    audio into individual phoneme samples. The extracted samples can
+    then be used for voicebank generation.
+
+    This endpoint processes all accepted recordings in the session,
+    using the paragraph library to identify expected phonemes and
+    word boundaries.
+
+    Args:
+        session_id: Session UUID
+        library_id: Paragraph library ID for phoneme data
+
+    Returns:
+        List of segmentation results for each processed paragraph
+
+    Raises:
+        HTTPException 400: If session is not in paragraph mode or processing fails
+        HTTPException 404: If session or library not found
+    """
+    try:
+        # Get the paragraph library
+        library = library_service.get_library(library_id)
+
+        # Create output directory for extracted samples
+        output_dir = GENERATED_BASE_PATH / "segments" / str(session_id)
+
+        # Process paragraph recordings
+        results = await service.process_paragraph_recordings(
+            session_id=session_id,
+            paragraph_library=library,
+            output_dir=output_dir,
+            segmentation_service=segmentation_service,
+        )
+
+        # Count successes and extract phonemes
+        successes = sum(1 for r in results if r.success)
+        total_samples = sum(len(r.extracted_samples) for r in results)
+
+        logger.info(
+            f"Processed paragraph recordings for session {session_id}: "
+            f"{successes}/{len(results)} paragraphs successful, "
+            f"{total_samples} phoneme samples extracted"
+        )
+
+        return results
+
+    except SessionNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except SessionValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except ParagraphLibraryNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except SegmentationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Segmentation failed: {e}",
         ) from e
 
 

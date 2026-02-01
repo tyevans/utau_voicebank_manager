@@ -60,8 +60,10 @@ class RecordingSessionRepository:
             "voicebank_id": session.voicebank_id,
             "recording_style": session.recording_style,
             "language": session.language,
+            "recording_mode": session.recording_mode,
             "status": session.status.value,
             "prompts": session.prompts,
+            "paragraph_ids": session.paragraph_ids,
             "segments": [
                 {
                     "id": str(seg.id),
@@ -101,8 +103,10 @@ class RecordingSessionRepository:
             voicebank_id=data["voicebank_id"],
             recording_style=data["recording_style"],
             language=data["language"],
+            recording_mode=data.get("recording_mode", "individual"),
             status=SessionStatus(data["status"]),
             prompts=data["prompts"],
+            paragraph_ids=data.get("paragraph_ids"),
             segments=segments,
             current_prompt_index=data.get("current_prompt_index", 0),
             created_at=datetime.fromisoformat(data["created_at"]),

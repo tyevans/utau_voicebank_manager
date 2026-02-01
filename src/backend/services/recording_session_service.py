@@ -1,8 +1,13 @@
 """Service layer for recording session business logic."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
+from src.backend.domain.paragraph_prompt import (
+    ParagraphLibrary,
+    ParagraphRecordingProgress,
+)
 from src.backend.domain.recording_session import (
     RecordingSegment,
     RecordingSession,
@@ -16,6 +21,17 @@ from src.backend.repositories.recording_session_repository import (
     RecordingSessionRepository,
 )
 from src.backend.repositories.voicebank_repository import VoicebankRepository
+from src.backend.utils.audio_converter import (
+    AudioConversionError,
+    convert_to_wav,
+    is_wav,
+)
+
+if TYPE_CHECKING:
+    from src.backend.services.paragraph_segmentation_service import (
+        ParagraphSegmentationResult,
+        ParagraphSegmentationService,
+    )
 
 
 class SessionNotFoundError(Exception):
@@ -43,6 +59,7 @@ class RecordingSessionService:
 
     Manages the lifecycle of guided recording sessions, including
     creating sessions, uploading audio segments, and tracking progress.
+    Supports both individual phoneme prompts and paragraph-based recording modes.
     """
 
     # Supported recording styles
@@ -50,6 +67,13 @@ class RecordingSessionService:
 
     # Supported languages
     SUPPORTED_LANGUAGES = {"ja", "en", "zh", "ko"}
+
+    # Supported recording modes
+    SUPPORTED_MODES = {"individual", "paragraph"}
+
+    # Duration limits for paragraph recordings (ms)
+    PARAGRAPH_MIN_DURATION_MS = 500.0
+    PARAGRAPH_MAX_DURATION_MS = 30000.0
 
     def __init__(
         self,
@@ -68,12 +92,22 @@ class RecordingSessionService:
     def _validate_create_request(self, request: RecordingSessionCreate) -> None:
         """Validate session creation request.
 
+        Validates both individual and paragraph recording modes with
+        mode-specific validation rules.
+
         Args:
             request: Creation request to validate
 
         Raises:
             SessionValidationError: If validation fails
         """
+        # Validate recording mode
+        if request.recording_mode not in self.SUPPORTED_MODES:
+            raise SessionValidationError(
+                f"Unsupported recording mode: {request.recording_mode}. "
+                f"Supported: {', '.join(self.SUPPORTED_MODES)}"
+            )
+
         if request.recording_style.lower() not in self.SUPPORTED_STYLES:
             raise SessionValidationError(
                 f"Unsupported recording style: {request.recording_style}. "
@@ -86,14 +120,58 @@ class RecordingSessionService:
                 f"Supported: {', '.join(self.SUPPORTED_LANGUAGES)}"
             )
 
+        # Mode-specific validation
+        if request.recording_mode == "paragraph":
+            self._validate_paragraph_request(request)
+        else:
+            self._validate_individual_request(request)
+
+    def _validate_individual_request(self, request: RecordingSessionCreate) -> None:
+        """Validate individual mode session creation request.
+
+        Args:
+            request: Creation request to validate
+
+        Raises:
+            SessionValidationError: If validation fails
+        """
         if not request.prompts:
             raise SessionValidationError("At least one prompt is required")
 
         if len(request.prompts) > 10000:
             raise SessionValidationError("Maximum 10000 prompts per session")
 
+    def _validate_paragraph_request(self, request: RecordingSessionCreate) -> None:
+        """Validate paragraph mode session creation request.
+
+        Args:
+            request: Creation request to validate
+
+        Raises:
+            SessionValidationError: If validation fails
+        """
+        if not request.prompts:
+            raise SessionValidationError("At least one paragraph prompt is required")
+
+        if len(request.prompts) > 500:
+            raise SessionValidationError("Maximum 500 paragraph prompts per session")
+
+        # Paragraph mode requires paragraph_ids for tracking
+        if not request.paragraph_ids:
+            raise SessionValidationError(
+                "paragraph_ids required for paragraph recording mode"
+            )
+
+        if len(request.paragraph_ids) != len(request.prompts):
+            raise SessionValidationError(
+                f"paragraph_ids count ({len(request.paragraph_ids)}) must match "
+                f"prompts count ({len(request.prompts)})"
+            )
+
     async def create(self, request: RecordingSessionCreate) -> RecordingSession:
         """Create a new recording session.
+
+        Supports both individual phoneme and paragraph recording modes.
 
         Args:
             request: Session creation parameters
@@ -111,16 +189,67 @@ class RecordingSessionService:
         # The actual voicebank will be created during generateVoicebank
         # We don't require it to exist beforehand
 
-        # Create session
+        # Create session with mode-specific fields
         session = RecordingSession(
             voicebank_id=request.voicebank_id,
             recording_style=request.recording_style.lower(),
             language=request.language.lower(),
+            recording_mode=request.recording_mode,
             prompts=request.prompts,
+            paragraph_ids=request.paragraph_ids,
             status=SessionStatus.PENDING,
         )
 
         return await self._session_repo.create(session)
+
+    async def create_paragraph_session(
+        self,
+        voicebank_id: str,
+        paragraph_library: ParagraphLibrary,
+        recording_style: str | None = None,
+        language: str | None = None,
+        use_minimal_set: bool = False,
+    ) -> RecordingSession:
+        """Create a session using paragraph prompts from a library.
+
+        Convenience method for creating paragraph-mode sessions directly
+        from a ParagraphLibrary, extracting prompts and IDs automatically.
+
+        Args:
+            voicebank_id: Target voicebank name
+            paragraph_library: Library containing paragraph prompts
+            recording_style: Override style (defaults to library style)
+            language: Override language (defaults to library language)
+            use_minimal_set: If True, use only the minimal paragraphs
+                            needed for full phoneme coverage
+
+        Returns:
+            Created recording session
+
+        Raises:
+            SessionValidationError: If validation fails
+        """
+        # Select paragraphs to use
+        if use_minimal_set:
+            paragraphs = paragraph_library.get_minimal_set()
+        else:
+            paragraphs = paragraph_library.paragraphs
+
+        # Extract prompts (sentence texts) and IDs
+        prompts = [p.text for p in paragraphs]
+        paragraph_ids = [p.id for p in paragraphs]
+
+        # Create request with library defaults
+        request = RecordingSessionCreate(
+            voicebank_id=voicebank_id,
+            recording_style=recording_style or paragraph_library.style,
+            language=language or paragraph_library.language,
+            recording_mode="paragraph",
+            prompts=prompts,
+            paragraph_ids=paragraph_ids,
+        )
+
+        return await self.create(request)
 
     async def get(self, session_id: UUID) -> RecordingSession:
         """Get a recording session by ID.
@@ -163,6 +292,8 @@ class RecordingSessionService:
     async def get_progress(self, session_id: UUID) -> SessionProgress:
         """Get detailed progress for a session.
 
+        Works for both individual and paragraph recording modes.
+
         Args:
             session_id: Session UUID
 
@@ -190,6 +321,67 @@ class RecordingSessionService:
             progress_percent=session.progress_percent,
             current_prompt_index=session.current_prompt_index,
             current_prompt_text=current_prompt_text,
+        )
+
+    async def get_paragraph_progress(
+        self,
+        session_id: UUID,
+        paragraph_library: ParagraphLibrary | None = None,
+    ) -> ParagraphRecordingProgress:
+        """Get detailed progress for a paragraph-mode session.
+
+        Provides phoneme coverage statistics in addition to paragraph progress.
+
+        Args:
+            session_id: Session UUID
+            paragraph_library: Optional library for phoneme coverage tracking
+
+        Returns:
+            Paragraph recording progress with coverage stats
+
+        Raises:
+            SessionNotFoundError: If session not found
+            SessionValidationError: If session is not in paragraph mode
+        """
+        session = await self.get(session_id)
+
+        if session.recording_mode != "paragraph":
+            raise SessionValidationError(
+                f"Session {session_id} is not in paragraph mode "
+                f"(mode: {session.recording_mode})"
+            )
+
+        accepted_segments = [s for s in session.segments if s.is_accepted]
+        completed_paragraphs = len(accepted_segments)
+
+        # Determine target and recorded phonemes
+        target_phonemes: list[str] = []
+        recorded_phonemes: list[str] = []
+
+        if paragraph_library:
+            target_phonemes = paragraph_library.target_phonemes
+
+            # Calculate phonemes covered by completed paragraphs
+            paragraph_map = {p.id: p for p in paragraph_library.paragraphs}
+
+            for segment in accepted_segments:
+                if session.paragraph_ids and segment.prompt_index < len(
+                    session.paragraph_ids
+                ):
+                    para_id = session.paragraph_ids[segment.prompt_index]
+                    if para_id in paragraph_map:
+                        recorded_phonemes.extend(
+                            paragraph_map[para_id].expected_phonemes
+                        )
+
+            # Deduplicate
+            recorded_phonemes = list(set(recorded_phonemes))
+
+        return ParagraphRecordingProgress(
+            total_paragraphs=len(session.prompts),
+            completed_paragraphs=completed_paragraphs,
+            target_phonemes=target_phonemes,
+            recorded_phonemes=recorded_phonemes,
         )
 
     async def start_recording(self, session_id: UUID) -> RecordingSession:
@@ -223,6 +415,9 @@ class RecordingSessionService:
     ) -> RecordingSegment:
         """Upload a recorded audio segment.
 
+        Handles both individual phoneme and paragraph recordings with
+        appropriate validation and filename generation for each mode.
+
         Args:
             session_id: Session UUID
             segment_info: Metadata about the segment
@@ -252,21 +447,27 @@ class RecordingSessionService:
                 f"Invalid prompt index: {segment_info.prompt_index}"
             )
 
-        # Validate audio data (basic WAV check)
-        if len(audio_data) < 44:  # Minimum WAV header size
-            raise SessionValidationError("Invalid audio data: too small for WAV")
+        # Validate audio data size
+        if len(audio_data) < 44:
+            raise SessionValidationError("Invalid audio data: too small")
 
-        if audio_data[:4] != b"RIFF" or audio_data[8:12] != b"WAVE":
-            raise SessionValidationError("Invalid audio data: not a WAV file")
+        # Mode-specific duration validation
+        if session.recording_mode == "paragraph":
+            self._validate_paragraph_duration(segment_info.duration_ms)
 
-        # Generate filename
-        safe_prompt = (
-            segment_info.prompt_text[:20]
-            .replace(" ", "_")
-            .replace("/", "_")
-            .replace("\\", "_")
+        # Convert to WAV if needed (browser sends WebM/Opus)
+        if not is_wav(audio_data):
+            try:
+                audio_data = await convert_to_wav(audio_data)
+            except AudioConversionError as e:
+                raise SessionValidationError(f"Audio conversion failed: {e}") from e
+
+        # Generate filename based on mode
+        filename = self._generate_segment_filename(
+            session=session,
+            prompt_index=segment_info.prompt_index,
+            prompt_text=segment_info.prompt_text,
         )
-        filename = f"{segment_info.prompt_index:04d}_{safe_prompt}.wav"
 
         # Save audio
         await self._session_repo.save_segment_audio(session_id, filename, audio_data)
@@ -297,6 +498,66 @@ class RecordingSessionService:
         await self._session_repo.update(session)
 
         return segment
+
+    def _validate_paragraph_duration(self, duration_ms: float) -> None:
+        """Validate duration for paragraph recordings.
+
+        Paragraph recordings are longer (full sentences) and should
+        fall within reasonable bounds.
+
+        Args:
+            duration_ms: Recording duration in milliseconds
+
+        Raises:
+            SessionValidationError: If duration is out of bounds
+        """
+        if duration_ms < self.PARAGRAPH_MIN_DURATION_MS:
+            raise SessionValidationError(
+                f"Paragraph recording too short: {duration_ms:.0f}ms. "
+                f"Minimum is {self.PARAGRAPH_MIN_DURATION_MS:.0f}ms"
+            )
+
+        if duration_ms > self.PARAGRAPH_MAX_DURATION_MS:
+            raise SessionValidationError(
+                f"Paragraph recording too long: {duration_ms:.0f}ms. "
+                f"Maximum is {self.PARAGRAPH_MAX_DURATION_MS:.0f}ms"
+            )
+
+    def _generate_segment_filename(
+        self,
+        session: RecordingSession,
+        prompt_index: int,
+        prompt_text: str,
+    ) -> str:
+        """Generate filename for a recorded segment.
+
+        Uses different naming conventions for individual vs paragraph modes.
+
+        Args:
+            session: Recording session
+            prompt_index: Index of the prompt
+            prompt_text: Text of the prompt
+
+        Returns:
+            Generated filename (e.g., "0000_ka.wav" or "para_001_akai_hana.wav")
+        """
+        if session.recording_mode == "paragraph":
+            # For paragraph mode: use paragraph ID if available
+            if session.paragraph_ids and prompt_index < len(session.paragraph_ids):
+                para_id = session.paragraph_ids[prompt_index]
+                # Extract a safe version of the paragraph ID
+                safe_id = self._sanitize_name(para_id)[:30]
+            else:
+                # Fallback to prompt text
+                safe_id = self._sanitize_name(prompt_text[:30])
+
+            return f"para_{prompt_index:03d}_{safe_id}.wav"
+        else:
+            # Individual mode: original filename format
+            safe_prompt = (
+                prompt_text[:20].replace(" ", "_").replace("/", "_").replace("\\", "_")
+            )
+            return f"{prompt_index:04d}_{safe_prompt}.wav"
 
     async def reject_segment(
         self,
@@ -486,3 +747,91 @@ class RecordingSessionService:
             safe = "sample"
 
         return safe[:50]  # Limit length
+
+    async def process_paragraph_recordings(
+        self,
+        session_id: UUID,
+        paragraph_library: ParagraphLibrary,
+        output_dir: Path,
+        segmentation_service: "ParagraphSegmentationService",
+    ) -> list["ParagraphSegmentationResult"]:
+        """Process all paragraph recordings in a session.
+
+        Uses forced alignment to segment recorded paragraphs into individual
+        phoneme samples for the voicebank.
+
+        For each recorded paragraph segment:
+        1. Get the matching ParagraphPrompt from library
+        2. Run ParagraphSegmentationService.segment_paragraph()
+        3. Store extracted samples in output_dir
+        4. Return segmentation results
+
+        Args:
+            session_id: Session UUID
+            paragraph_library: Library with paragraph prompts and phoneme data
+            output_dir: Directory to store extracted phoneme samples
+            segmentation_service: Service for paragraph segmentation
+
+        Returns:
+            List of segmentation results for each processed paragraph
+
+        Raises:
+            SessionNotFoundError: If session not found
+            SessionValidationError: If session is not in paragraph mode
+        """
+        session = await self.get(session_id)
+
+        if session.recording_mode != "paragraph":
+            raise SessionValidationError(
+                f"Session {session_id} is not in paragraph mode "
+                f"(mode: {session.recording_mode})"
+            )
+
+        if not session.paragraph_ids:
+            raise SessionValidationError(
+                f"Session {session_id} has no paragraph IDs for processing"
+            )
+
+        # Build paragraph lookup
+        paragraph_map = {p.id: p for p in paragraph_library.paragraphs}
+
+        results: list[ParagraphSegmentationResult] = []
+
+        for segment in session.segments:
+            # Skip rejected segments
+            if not segment.is_accepted:
+                continue
+
+            # Get paragraph ID for this segment
+            if segment.prompt_index >= len(session.paragraph_ids):
+                continue
+
+            para_id = session.paragraph_ids[segment.prompt_index]
+
+            # Get paragraph prompt
+            paragraph = paragraph_map.get(para_id)
+            if not paragraph:
+                # Skip if paragraph not found in library
+                continue
+
+            # Get audio path
+            try:
+                audio_path = await self.get_segment_audio_path(
+                    session_id, segment.audio_filename
+                )
+            except SessionNotFoundError:
+                # Audio file missing, skip
+                continue
+
+            # Create output directory for this paragraph
+            segment_output_dir = output_dir / para_id
+
+            # Run segmentation
+            result = await segmentation_service.segment_paragraph(
+                audio_path=audio_path,
+                paragraph=paragraph,
+                output_dir=segment_output_dir,
+            )
+            results.append(result)
+
+        return results

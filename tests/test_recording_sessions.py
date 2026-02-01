@@ -22,7 +22,6 @@ from src.backend.services.recording_session_service import (
     SessionNotFoundError,
     SessionStateError,
     SessionValidationError,
-    VoicebankNotFoundError,
 )
 
 
@@ -318,18 +317,20 @@ class TestRecordingSessionService:
         assert session.status == SessionStatus.PENDING
 
     @pytest.mark.asyncio
-    async def test_create_session_invalid_voicebank(
+    async def test_create_session_with_new_voicebank_name(
         self, service: RecordingSessionService
     ) -> None:
-        """Test creating a session with nonexistent voicebank."""
+        """Test creating a session with a new voicebank name (doesn't need to exist)."""
         request = RecordingSessionCreate(
-            voicebank_id="nonexistent",
+            voicebank_id="my_new_voicebank",
             recording_style="cv",
             language="ja",
             prompts=["ka"],
         )
-        with pytest.raises(VoicebankNotFoundError):
-            await service.create(request)
+        # Sessions can be created with any voicebank_id - it's the target name
+        # for the voicebank that will be generated later
+        session = await service.create(request)
+        assert session.voicebank_id == "my_new_voicebank"
 
     @pytest.mark.asyncio
     async def test_create_session_invalid_style(

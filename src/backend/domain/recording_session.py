@@ -1,11 +1,13 @@
 """Pydantic models for recording sessions.
 
 Recording sessions track guided recording flows where users record audio
-segments against prompts to build voicebank samples.
+segments against prompts to build voicebank samples. Supports both
+individual phoneme prompts and paragraph-based recording modes.
 """
 
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -66,9 +68,17 @@ class RecordingSessionCreate(BaseModel):
         default="ja",
         description="Language code (ja, en, etc.)",
     )
+    recording_mode: Literal["individual", "paragraph"] = Field(
+        default="individual",
+        description="Recording mode: individual phoneme prompts or paragraph sentences",
+    )
     prompts: list[str] = Field(
         min_length=1,
         description="List of text prompts to record",
+    )
+    paragraph_ids: list[str] | None = Field(
+        default=None,
+        description="Paragraph prompt IDs when using paragraph mode (for tracking)",
     )
 
 
@@ -78,6 +88,10 @@ class RecordingSessionSummary(BaseModel):
     id: UUID = Field(description="Unique session identifier")
     voicebank_id: str = Field(description="Associated voicebank")
     status: SessionStatus = Field(description="Current session status")
+    recording_mode: Literal["individual", "paragraph"] = Field(
+        default="individual",
+        description="Recording mode used for this session",
+    )
     total_prompts: int = Field(ge=0, description="Total prompts in session")
     completed_segments: int = Field(ge=0, description="Segments recorded so far")
     created_at: datetime = Field(description="When session was created")
@@ -87,18 +101,27 @@ class RecordingSession(BaseModel):
     """Full recording session with all details.
 
     Tracks progress through a set of prompts, storing recorded
-    audio segments and their metadata.
+    audio segments and their metadata. Supports both individual
+    phoneme prompts and paragraph-based recording modes.
     """
 
     id: UUID = Field(default_factory=uuid4, description="Unique session identifier")
     voicebank_id: str = Field(description="Target voicebank for recordings")
     recording_style: str = Field(description="Recording style (cv, vcv, etc.)")
     language: str = Field(description="Language code")
+    recording_mode: Literal["individual", "paragraph"] = Field(
+        default="individual",
+        description="Recording mode: individual phoneme prompts or paragraph sentences",
+    )
     status: SessionStatus = Field(
         default=SessionStatus.PENDING,
         description="Current session status",
     )
     prompts: list[str] = Field(description="Text prompts to record")
+    paragraph_ids: list[str] | None = Field(
+        default=None,
+        description="Paragraph prompt IDs when using paragraph mode",
+    )
     segments: list[RecordingSegment] = Field(
         default_factory=list,
         description="Recorded audio segments",
@@ -124,6 +147,7 @@ class RecordingSession(BaseModel):
             id=self.id,
             voicebank_id=self.voicebank_id,
             status=self.status,
+            recording_mode=self.recording_mode,
             total_prompts=len(self.prompts),
             completed_segments=len([s for s in self.segments if s.is_accepted]),
             created_at=self.created_at,

@@ -74,6 +74,29 @@ export interface PhonemePrompt {
 }
 
 /**
+ * Word structure within a paragraph prompt.
+ */
+export interface ParagraphWord {
+  text: string;         // Word: "akai"
+  romaji: string;       // Word romaji: "akai"
+  phonemes: string[];   // ["a", "ka", "i"]
+  start_char: number;   // Position in sentence
+}
+
+/**
+ * Paragraph prompt data structure for sentence-based recording.
+ */
+export interface ParagraphPrompt {
+  id: string;
+  text: string;           // Full sentence: "akai hana ga saku"
+  romaji: string;         // Full romaji: "akai hana ga saku"
+  words: ParagraphWord[];
+  style: 'cv' | 'vcv' | 'cvvc';
+  category: string;
+  difficulty: 'basic' | 'intermediate' | 'advanced';
+}
+
+/**
  * Recording state type.
  */
 type RecordingState = 'idle' | 'listening' | 'recording' | 'processing';
@@ -488,6 +511,101 @@ export class UvmRecordingPrompter extends LitElement {
       border-radius: 3px;
       font-weight: 500;
     }
+
+    /* Paragraph mode styles */
+    .paragraph-sentence {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1.5rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .paragraph-word {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      transition: all 0.25s ease;
+    }
+
+    .paragraph-word-text {
+      font-size: 2.25rem;
+      font-weight: 300;
+      color: var(--sl-color-neutral-900, #0f172a);
+      letter-spacing: 0.08em;
+      transition: color 0.25s ease, transform 0.25s ease;
+    }
+
+    .paragraph-word-romaji {
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      letter-spacing: 0.15em;
+      font-weight: 300;
+      transition: color 0.25s ease;
+    }
+
+    .paragraph-word.active {
+      background: var(--sl-color-neutral-100, #f1f5f9);
+    }
+
+    .paragraph-word.active .paragraph-word-text {
+      color: var(--sl-color-neutral-900, #0f172a);
+      transform: scale(1.08);
+    }
+
+    .paragraph-word.active .paragraph-word-romaji {
+      color: var(--sl-color-neutral-600, #475569);
+    }
+
+    .paragraph-word.spoken .paragraph-word-text {
+      color: var(--sl-color-neutral-300, #cbd5e1);
+    }
+
+    .paragraph-word.spoken .paragraph-word-romaji {
+      color: var(--sl-color-neutral-300, #cbd5e1);
+    }
+
+    .paragraph-progress {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+      font-size: 0.8125rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+    }
+
+    .paragraph-progress-bar {
+      width: 120px;
+      height: 4px;
+      background: var(--sl-color-neutral-200, #e2e8f0);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .paragraph-progress-fill {
+      height: 100%;
+      background: var(--sl-color-neutral-600, #475569);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    .paragraph-phoneme-coverage {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      font-size: 0.75rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      margin-top: 0.5rem;
+    }
+
+    .paragraph-phoneme-coverage sl-icon {
+      font-size: 0.875rem;
+    }
   `;
 
   /**
@@ -520,6 +638,18 @@ export class UvmRecordingPrompter extends LitElement {
   @property({ type: String })
   language = 'ja';
 
+  /**
+   * Recording mode: 'individual' for single phoneme prompts, 'paragraph' for full sentences.
+   */
+  @property({ type: String })
+  mode: 'individual' | 'paragraph' = 'individual';
+
+  /**
+   * The current paragraph prompt to display (only used when mode='paragraph').
+   */
+  @property({ attribute: false })
+  paragraphPrompt?: ParagraphPrompt;
+
   @query('.waveform-canvas')
   private _canvas!: HTMLCanvasElement;
 
@@ -528,6 +658,9 @@ export class UvmRecordingPrompter extends LitElement {
 
   @state()
   private _spokenWords: Set<number> = new Set();
+
+  @state()
+  private _paragraphSpokenWordCount = 0;
 
   @state()
   private _speechSupported = true;
@@ -662,16 +795,29 @@ export class UvmRecordingPrompter extends LitElement {
    */
   private _handleSpeechResult(event: SpeechRecognitionEvent): void {
     // Event type comes from our interface definition
-    if (!this.prompt) return;
+    if (this.mode === 'paragraph') {
+      if (!this.paragraphPrompt) return;
 
-    const romajiWords = this.prompt.romaji.toLowerCase().split(/\s+/);
+      const romajiWords = this.paragraphPrompt.words.map(w => w.romaji.toLowerCase());
 
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      const transcript = result[0].transcript.toLowerCase().trim();
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0].transcript.toLowerCase().trim();
 
-      // Try to match spoken words with romaji
-      this._matchSpokenWords(transcript, romajiWords);
+        this._matchSpokenWords(transcript, romajiWords);
+      }
+    } else {
+      if (!this.prompt) return;
+
+      const romajiWords = this.prompt.romaji.toLowerCase().split(/\s+/);
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0].transcript.toLowerCase().trim();
+
+        // Try to match spoken words with romaji
+        this._matchSpokenWords(transcript, romajiWords);
+      }
     }
   }
 
@@ -684,6 +830,11 @@ export class UvmRecordingPrompter extends LitElement {
       const word = romajiWords[i];
       if (transcript.includes(word) && !this._spokenWords.has(i)) {
         this._spokenWords = new Set([...this._spokenWords, i]);
+
+        // Update paragraph spoken word count
+        if (this.mode === 'paragraph') {
+          this._paragraphSpokenWordCount = this._spokenWords.size;
+        }
 
         // Update current word index to the next unspoken word
         const nextUnspoken = romajiWords.findIndex(
@@ -757,6 +908,7 @@ export class UvmRecordingPrompter extends LitElement {
     // Reset state
     this._currentWordIndex = 0;
     this._spokenWords = new Set();
+    this._paragraphSpokenWordCount = 0;
     this._audioChunks = [];
     this._recordingDuration = 0;
     this._liveAudioData = [];
@@ -893,11 +1045,13 @@ export class UvmRecordingPrompter extends LitElement {
     }
 
     // Emit recording complete event
+    const promptId = this.mode === 'paragraph' ? this.paragraphPrompt?.id : this.prompt?.id;
     this.dispatchEvent(new CustomEvent('recording-complete', {
       detail: {
         audioBlob,
         duration: this._recordingDuration,
-        promptId: this.prompt?.id,
+        promptId,
+        mode: this.mode,
       },
       bubbles: true,
       composed: true,
@@ -913,8 +1067,9 @@ export class UvmRecordingPrompter extends LitElement {
     this._cleanup();
     this._updateState('idle');
 
+    const promptId = this.mode === 'paragraph' ? this.paragraphPrompt?.id : this.prompt?.id;
     this.dispatchEvent(new CustomEvent('recording-cancelled', {
-      detail: { promptId: this.prompt?.id },
+      detail: { promptId, mode: this.mode },
       bubbles: true,
       composed: true,
     }));
@@ -930,12 +1085,14 @@ export class UvmRecordingPrompter extends LitElement {
     this._cleanup();
     this._currentWordIndex = -1;
     this._spokenWords = new Set();
+    this._paragraphSpokenWordCount = 0;
     this._audioChunks = [];
     this._liveAudioData = [];
     this._recordedAudioBuffer = null;
 
+    const promptId = this.mode === 'paragraph' ? this.paragraphPrompt?.id : this.prompt?.id;
     this.dispatchEvent(new CustomEvent('re-record-requested', {
-      detail: { promptId: this.prompt?.id },
+      detail: { promptId, mode: this.mode },
       bubbles: true,
       composed: true,
     }));
@@ -1439,6 +1596,90 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
+   * Render paragraph prompt content.
+   */
+  private _renderParagraphPrompt() {
+    if (!this.paragraphPrompt) {
+      return html`
+        <div class="empty-prompt">
+          <sl-icon name="mic-mute"></sl-icon>
+          <p>No paragraph prompt loaded</p>
+        </div>
+      `;
+    }
+
+    const totalWords = this.paragraphPrompt.words.length;
+    const spokenCount = this._paragraphSpokenWordCount;
+    const progressPercent = totalWords > 0 ? (spokenCount / totalWords) * 100 : 0;
+
+    // Calculate total phonemes for coverage display
+    const totalPhonemes = this.paragraphPrompt.words.reduce(
+      (sum, w) => sum + w.phonemes.length, 0
+    );
+    const spokenPhonemes = this.paragraphPrompt.words
+      .filter((_, idx) => this._spokenWords.has(idx))
+      .reduce((sum, w) => sum + w.phonemes.length, 0);
+
+    return html`
+      <div class="prompt-text-container">
+        <div class="paragraph-sentence">
+          ${this.paragraphPrompt.words.map((word, idx) => {
+            const isActive = idx === this._currentWordIndex;
+            const isSpoken = this._spokenWords.has(idx);
+
+            return html`
+              <div class="paragraph-word ${isActive ? 'active' : ''} ${isSpoken ? 'spoken' : ''}">
+                <span class="paragraph-word-text">${word.text}</span>
+                <span class="paragraph-word-romaji">${word.romaji}</span>
+              </div>
+            `;
+          })}
+        </div>
+
+        <div class="paragraph-progress">
+          <span>Word ${Math.min(spokenCount + 1, totalWords)} of ${totalWords}</span>
+          <div class="paragraph-progress-bar">
+            <div class="paragraph-progress-fill" style="width: ${progressPercent}%"></div>
+          </div>
+        </div>
+
+        <div class="paragraph-phoneme-coverage">
+          <sl-icon name="diagram-3"></sl-icon>
+          <span>${spokenPhonemes}/${totalPhonemes} phonemes covered</span>
+        </div>
+      </div>
+      ${this._renderStateIndicator()}
+    `;
+  }
+
+  /**
+   * Render individual prompt content (existing behavior refactored).
+   */
+  private _renderIndividualPrompt() {
+    if (!this.prompt) {
+      return html`
+        <div class="empty-prompt">
+          <sl-icon name="mic-mute"></sl-icon>
+          <p>No prompt loaded</p>
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="prompt-text-container">
+        <div class="prompt-japanese">
+          ${this._renderJapaneseText()}
+        </div>
+        <div class="prompt-romaji">
+          ${this._renderRomajiText()}
+        </div>
+        ${this._renderPronunciationHints()}
+      </div>
+      ${this._renderStateIndicator()}
+    `;
+  }
+
+  /**
    * Convert markdown bold (**text**) to HTML mark tags.
    */
   private _markdownToMark(text: string): ReturnType<typeof html> {
@@ -1571,12 +1812,38 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
+   * Render metadata row showing prompt details.
+   */
+  private _renderMetadataRow() {
+    const promptData = this.mode === 'paragraph' ? this.paragraphPrompt : this.prompt;
+    if (!promptData) return null;
+
+    return html`
+      <div class="metadata-row">
+        <div class="metadata-item">
+          <sl-icon name="tag"></sl-icon>
+          Category: ${promptData.category}
+        </div>
+        <div class="metadata-item">
+          <sl-icon name="speedometer2"></sl-icon>
+          Difficulty: ${promptData.difficulty}
+        </div>
+        <div class="metadata-item">
+          <sl-icon name="diagram-3"></sl-icon>
+          Style: ${promptData.style.toUpperCase()}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
    * Render control buttons.
    */
   private _renderControls() {
     const isRecording = this.state === 'recording';
     const isProcessing = this.state === 'processing';
-    const canRecord = this.state === 'idle' && this.prompt;
+    const hasPrompt = this.mode === 'paragraph' ? !!this.paragraphPrompt : !!this.prompt;
+    const canRecord = this.state === 'idle' && hasPrompt;
 
     return html`
       <div class="controls-section">
@@ -1639,22 +1906,7 @@ export class UvmRecordingPrompter extends LitElement {
           `}
         </div>
 
-        ${this.prompt && html`
-          <div class="metadata-row">
-            <div class="metadata-item">
-              <sl-icon name="tag"></sl-icon>
-              Category: ${this.prompt.category}
-            </div>
-            <div class="metadata-item">
-              <sl-icon name="speedometer2"></sl-icon>
-              Difficulty: ${this.prompt.difficulty}
-            </div>
-            <div class="metadata-item">
-              <sl-icon name="diagram-3"></sl-icon>
-              Style: ${this.prompt.style.toUpperCase()}
-            </div>
-          </div>
-        `}
+        ${this._renderMetadataRow()}
       </div>
     `;
   }
@@ -1696,25 +1948,9 @@ export class UvmRecordingPrompter extends LitElement {
         </div>
 
         <div class="prompt-section">
-          ${this.prompt
-            ? html`
-                <div class="prompt-text-container">
-                  <div class="prompt-japanese">
-                    ${this._renderJapaneseText()}
-                  </div>
-                  <div class="prompt-romaji">
-                    ${this._renderRomajiText()}
-                  </div>
-                  ${this._renderPronunciationHints()}
-                </div>
-                ${this._renderStateIndicator()}
-              `
-            : html`
-                <div class="empty-prompt">
-                  <sl-icon name="mic-mute"></sl-icon>
-                  <p>No prompt loaded</p>
-                </div>
-              `
+          ${this.mode === 'paragraph'
+            ? this._renderParagraphPrompt()
+            : this._renderIndividualPrompt()
           }
         </div>
 
