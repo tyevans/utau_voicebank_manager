@@ -18,6 +18,7 @@ from src.backend.ml.phoneme_detector import PhonemeDetector, preprocess_audio
 from src.backend.ml.sofa_aligner import (
     AlignmentError,
     AlignmentResult,
+    DictionaryValidationError,
     SOFAForcedAligner,
     get_sofa_aligner,
     is_sofa_available,
@@ -245,6 +246,14 @@ class OtoSuggester:
                 logger.info(
                     f"SOFA alignment succeeded for {filename}: "
                     f"{len(segments)} segments detected"
+                )
+            except DictionaryValidationError as e:
+                # Phonemes not in SOFA dictionary - expected for some samples
+                # Log at info level and fall back to other methods
+                logger.info(
+                    f"SOFA dictionary validation failed for {filename}: "
+                    f"unrecognized phonemes {e.unrecognized_phonemes}. "
+                    "Falling back to forced alignment."
                 )
             except AlignmentError as e:
                 logger.warning(

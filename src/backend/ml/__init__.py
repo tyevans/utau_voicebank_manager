@@ -14,8 +14,10 @@ from src.backend.ml.forced_alignment_detector import (
     ForcedAlignmentDetector,
     ForcedAlignmentError,
     TranscriptExtractionError,
+    TranscriptResult,
     detect_phonemes_forced,
     extract_transcript_from_filename,
+    extract_transcript_with_metadata,
     get_forced_alignment_detector,
 )
 from src.backend.ml.oto_suggester import OtoSuggester, get_oto_suggester
@@ -26,6 +28,7 @@ from src.backend.ml.phoneme_detector import (
     get_phoneme_detector,
 )
 from src.backend.ml.sofa_aligner import (
+    DictionaryValidationError,
     SOFAForcedAligner,
     get_sofa_aligner,
     is_sofa_available,
@@ -42,6 +45,7 @@ __all__ = [
     "align_audio",
     "get_forced_aligner",
     # SOFA (Singing-Oriented Forced Aligner)
+    "DictionaryValidationError",
     "SOFAForcedAligner",
     "get_sofa_aligner",
     "is_sofa_available",
@@ -49,8 +53,10 @@ __all__ = [
     "ForcedAlignmentDetector",
     "ForcedAlignmentError",
     "TranscriptExtractionError",
+    "TranscriptResult",
     "detect_phonemes_forced",
     "extract_transcript_from_filename",
+    "extract_transcript_with_metadata",
     "get_forced_alignment_detector",
     # Oto suggestion
     "OtoSuggester",

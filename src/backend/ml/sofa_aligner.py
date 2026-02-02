@@ -53,6 +53,103 @@ SOFA_DICTIONARY_DIR = SOFA_SUBMODULE_DIR / "dictionary"
 MODEL_CACHE_TTL_SECONDS = 300
 
 
+class DictionaryValidationError(AlignmentError):
+    """Raised when transcript contains phonemes not in the SOFA dictionary.
+
+    This error indicates the alignment cannot proceed because none of the
+    phonemes in the transcript are recognized by the dictionary. The caller
+    should fall back to an alternative alignment method (e.g., VAD/energy-based).
+
+    Attributes:
+        unrecognized_phonemes: Set of phonemes not found in dictionary
+        transcript: The original transcript that failed validation
+    """
+
+    def __init__(
+        self,
+        message: str,
+        unrecognized_phonemes: set[str] | None = None,
+        transcript: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.unrecognized_phonemes = unrecognized_phonemes or set()
+        self.transcript = transcript
+
+
+def load_dictionary(dict_path: Path) -> set[str]:
+    """Load SOFA dictionary and return set of known words.
+
+    Args:
+        dict_path: Path to dictionary file (tab-separated word/phoneme mappings)
+
+    Returns:
+        Set of words recognized by the dictionary
+    """
+    words = set()
+    try:
+        with open(dict_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and "\t" in line:
+                    word = line.split("\t")[0].strip()
+                    if word:
+                        words.add(word)
+    except Exception as e:
+        logger.warning(f"Failed to load dictionary {dict_path}: {e}")
+    return words
+
+
+def validate_transcript_against_dictionary(
+    transcript: str,
+    dict_path: Path,
+    *,
+    require_all: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Validate transcript phonemes against SOFA dictionary.
+
+    Args:
+        transcript: Space-separated phoneme/word sequence
+        dict_path: Path to the dictionary file
+        require_all: If True, raise error if ANY phoneme is unrecognized.
+                    If False, only raise if ALL phonemes are unrecognized.
+
+    Returns:
+        Tuple of (recognized_words, unrecognized_words)
+
+    Raises:
+        DictionaryValidationError: If validation fails based on require_all setting
+    """
+    dictionary = load_dictionary(dict_path)
+    words = transcript.strip().split()
+
+    recognized = []
+    unrecognized = []
+
+    for word in words:
+        if word in dictionary:
+            recognized.append(word)
+        else:
+            unrecognized.append(word)
+
+    # Check validation criteria
+    if require_all and unrecognized:
+        raise DictionaryValidationError(
+            f"Unrecognized phonemes in transcript: {unrecognized}",
+            unrecognized_phonemes=set(unrecognized),
+            transcript=transcript,
+        )
+
+    if not recognized:
+        raise DictionaryValidationError(
+            f"No recognized phonemes in transcript '{transcript}'. "
+            f"All words are unknown: {unrecognized}",
+            unrecognized_phonemes=set(unrecognized),
+            transcript=transcript,
+        )
+
+    return recognized, unrecognized
+
+
 @dataclass
 class CachedSOFAModel:
     """Cached SOFA model with metadata for TTL tracking."""
@@ -268,12 +365,17 @@ class SOFAForcedAligner(ForcedAligner):
     }
 
     # Dictionary file mappings
+    # For Japanese, we use the extended dictionary which includes:
+    # - All basic CV syllables from the original japanese.txt
+    # - VCV-compatible entries (space-separated phonemes)
+    # - Single consonants for English loanwords (b, d, f, g, etc.)
+    # - Extended vowel combinations (ae, ay, ey, ow, etc.)
     DICTIONARIES = {
         "en": "english.txt",
         "zh": "opencpop-extension.txt",
         "ko": "korean.txt",
         "fr": "french.txt",
-        "ja": "japanese.txt",
+        "ja": "japanese_extended.txt",
     }
 
     def __init__(
@@ -456,6 +558,21 @@ class SOFAForcedAligner(ForcedAligner):
 
         ckpt_path, dict_path = self._get_model_paths(language)
 
+        # Validate transcript against dictionary before loading model
+        # This prevents loading heavy models only to fail on unknown phonemes
+        try:
+            recognized, unrecognized = validate_transcript_against_dictionary(
+                transcript, dict_path
+            )
+            if unrecognized:
+                logger.info(
+                    f"Transcript '{transcript}' has unrecognized phonemes: {unrecognized}. "
+                    f"Proceeding with recognized: {recognized}"
+                )
+        except DictionaryValidationError:
+            # Re-raise to let caller handle fallback
+            raise
+
         # Get cached model (this ensures SOFA is in sys.path)
         manager = get_model_manager()
         cached = manager.get_or_load(ckpt_path, dict_path)
@@ -472,6 +589,15 @@ class SOFAForcedAligner(ForcedAligner):
             ph_seq, word_seq, ph_idx_to_word_idx = g2p(transcript)
         except Exception as e:
             raise AlignmentError(f"G2P failed for transcript '{transcript}': {e}") from e
+
+        # After G2P processing, check if we have any valid phonemes
+        # word_seq contains recognized words, ph_seq contains phonemes
+        if not word_seq:
+            raise DictionaryValidationError(
+                f"No words recognized after G2P processing for transcript '{transcript}'",
+                unrecognized_phonemes=set(transcript.split()),
+                transcript=transcript,
+            )
 
         # Load and preprocess audio
         waveform = load_wav(str(audio_path), device, model.melspec_config["sample_rate"])
@@ -709,14 +835,31 @@ class SOFAForcedAligner(ForcedAligner):
         """Batch align using native mode (sequential, but model cached)."""
         results: dict[Path, AlignmentResult] = {}
         failed: list[tuple[Path, Exception]] = []
+        skipped_dictionary: list[Path] = []
 
         for audio_path, transcript in items:
             try:
                 result = await self._infer_native(audio_path, transcript, language)
                 results[audio_path] = result
+            except DictionaryValidationError as e:
+                # Log at info level - this is expected for samples with
+                # phonemes not in the dictionary (e.g., English samples
+                # in Japanese voicebank)
+                logger.info(
+                    f"Skipping {audio_path.name}: phonemes not in dictionary "
+                    f"({e.unrecognized_phonemes})"
+                )
+                skipped_dictionary.append(audio_path)
+                failed.append((audio_path, e))
             except Exception as e:
                 logger.warning(f"Native alignment failed for {audio_path}: {e}")
                 failed.append((audio_path, e))
+
+        if skipped_dictionary:
+            logger.info(
+                f"Batch alignment: {len(skipped_dictionary)} files skipped due to "
+                "unrecognized phonemes (will use fallback alignment)"
+            )
 
         if not results and failed:
             raise AlignmentError(

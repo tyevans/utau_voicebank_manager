@@ -320,6 +320,15 @@ KANA_COMBINATIONS: dict[str, str] = {
 # Merge all single kana mappings
 _ALL_SINGLE_KANA = {**HIRAGANA_TO_ROMAJI, **KATAKANA_TO_ROMAJI}
 
+# Characters to skip during kana to romaji conversion
+# These are modifiers or markers that don't represent phonemes
+_SKIP_CHARACTERS = frozenset([
+    "゛",  # Standalone dakuten (voiced mark) - U+309B
+    "゜",  # Standalone handakuten (semi-voiced mark) - U+309C
+    "ﾞ",   # Halfwidth dakuten - U+FF9E
+    "ﾟ",   # Halfwidth handakuten - U+FF9F
+])
+
 
 def kana_to_romaji(text: str) -> str:
     """Convert Japanese kana (hiragana/katakana) to romaji.
@@ -363,6 +372,11 @@ def kana_to_romaji(text: str) -> str:
 
         # Check single character
         char = text[i]
+
+        # Skip standalone dakuten/handakuten markers (not phonemes)
+        if char in _SKIP_CHARACTERS:
+            i += 1
+            continue
 
         # Handle long vowel mark (ー) by repeating previous vowel
         if char == "ー" and result:

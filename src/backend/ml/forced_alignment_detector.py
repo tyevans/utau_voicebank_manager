@@ -18,6 +18,7 @@ sustained vowels lasting 1-3 seconds.
 
 import logging
 import re
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -62,6 +63,53 @@ class TranscriptExtractionError(Exception):
     """Raised when transcript cannot be extracted from filename."""
 
     pass
+
+
+@dataclass
+class TranscriptResult:
+    """Result of extracting transcript from UTAU filename.
+
+    Contains the clean phoneme transcript for alignment models, plus metadata
+    flags indicating special UTAU sample types that may require different
+    processing or should be skipped entirely.
+
+    Attributes:
+        transcript: Clean phonemes for alignment (space-separated romaji).
+                   Empty string if the sample should be skipped.
+        is_consonant_only: True if filename contained "子音" (shiin) suffix,
+                          indicating a consonant-only sample without vowel.
+        is_growl_variant: True if filename contained "゛" (standalone dakuten),
+                         indicating a growl/power vocal variant.
+        is_breath_sample: True if filename indicates a breath/inhale sample
+                         (息, 吸, or similar markers).
+        is_rest_marker: True if filename indicates a rest/silence marker
+                       (R, ・, or similar).
+        original_filename: The original filename before processing.
+    """
+
+    transcript: str
+    is_consonant_only: bool = False
+    is_growl_variant: bool = False
+    is_breath_sample: bool = False
+    is_rest_marker: bool = False
+    original_filename: str = ""
+
+
+# UTAU-specific notation markers to strip from filenames
+# These are suffixes/markers that modify the sample type but aren't phonemes
+
+# 子音 (shiin) = "consonant" - indicates consonant-only sample
+UTAU_CONSONANT_ONLY_MARKER = "子音"
+
+# Standalone dakuten (゛) at end indicates growl/power variant
+# Note: This is different from combined dakuten in voiced kana like が
+UTAU_GROWL_MARKER = "゛"
+
+# Breath/inhale sample markers
+UTAU_BREATH_MARKERS = frozenset(["息", "吸", "br", "breath"])
+
+# Rest/silence markers
+UTAU_REST_MARKERS = frozenset(["R", "・", "rest", "sil", "-"])
 
 
 @lru_cache(maxsize=1)
@@ -114,6 +162,11 @@ def extract_transcript_from_filename(filename: str) -> str:
     Handles both romaji and Japanese kana (hiragana/katakana) filenames.
     Japanese kana is automatically converted to romaji for SOFA alignment.
 
+    Also handles UTAU-specific notation markers:
+    - 子音 (shiin): Consonant-only sample suffix, stripped
+    - ゛ (standalone dakuten): Growl variant marker, stripped
+    - 息, 吸: Breath sample markers
+
     Args:
         filename: The audio filename (with or without path)
 
@@ -122,9 +175,52 @@ def extract_transcript_from_filename(filename: str) -> str:
 
     Raises:
         TranscriptExtractionError: If transcript cannot be extracted
+
+    Note:
+        For richer metadata including sample type flags, use
+        extract_transcript_with_metadata() instead.
     """
+    result = extract_transcript_with_metadata(filename)
+    return result.transcript
+
+
+def extract_transcript_with_metadata(filename: str) -> TranscriptResult:
+    """Extract transcript and metadata from UTAU filename.
+
+    This is the full-featured version that returns sample type metadata
+    in addition to the phoneme transcript. Use this when you need to know
+    if a sample is a consonant-only, growl variant, breath sample, etc.
+
+    UTAU sample files follow naming conventions like:
+    - _ka.wav -> transcript="ka"
+    - _shi.wav -> transcript="shi"
+    - _a_ka.wav -> transcript="a ka" (VCV style)
+    - あ.wav -> transcript="a" (hiragana)
+    - か子音.wav -> transcript="ka", is_consonant_only=True
+    - あ゛.wav -> transcript="a", is_growl_variant=True
+    - 息.wav -> transcript="", is_breath_sample=True
+
+    Args:
+        filename: The audio filename (with or without path)
+
+    Returns:
+        TranscriptResult with transcript and metadata flags
+
+    Raises:
+        TranscriptExtractionError: If transcript cannot be extracted
+            (except for special samples like breath/rest which return
+            empty transcript with appropriate flag set)
+    """
+    original_filename = filename
+
     # Get just the filename without path
     name = Path(filename).stem
+
+    # Initialize metadata flags
+    is_consonant_only = False
+    is_growl_variant = False
+    is_breath_sample = False
+    is_rest_marker = False
 
     # Remove leading underscore(s) common in UTAU files
     name = name.lstrip("_")
@@ -132,9 +228,51 @@ def extract_transcript_from_filename(filename: str) -> str:
     # Remove any numeric prefix (like "01_ka" -> "ka")
     name = re.sub(r"^\d+[_-]?", "", name)
 
+    # Check for breath sample markers (before other processing)
+    name_lower = name.lower()
+    if name in UTAU_BREATH_MARKERS or name_lower in UTAU_BREATH_MARKERS:
+        return TranscriptResult(
+            transcript="",
+            is_breath_sample=True,
+            original_filename=original_filename,
+        )
+
+    # Check for rest/silence markers
+    if name in UTAU_REST_MARKERS or name_lower in UTAU_REST_MARKERS:
+        return TranscriptResult(
+            transcript="",
+            is_rest_marker=True,
+            original_filename=original_filename,
+        )
+
+    # Check for and strip UTAU-specific suffixes BEFORE kana conversion
+    # Order matters: strip from right to left (outermost first)
+    # Example: "か子音゛" -> strip ゛ first, then 子音, leaving "か"
+
+    # Check for standalone ゛ (growl marker) at end FIRST
+    # This handles cases like "か子音゛" where ゛ is the outermost suffix
+    if name.endswith(UTAU_GROWL_MARKER):
+        is_growl_variant = True
+        name = name[: -len(UTAU_GROWL_MARKER)]
+        logger.debug(f"Stripped ゛ growl marker from {original_filename}")
+
+    # Check for 子音 (consonant-only) suffix AFTER growl marker
+    if name.endswith(UTAU_CONSONANT_ONLY_MARKER):
+        is_consonant_only = True
+        name = name[: -len(UTAU_CONSONANT_ONLY_MARKER)]
+        logger.debug(f"Stripped 子音 suffix from {original_filename}")
+
     # Handle special UTAU notation
-    # - Remove breath marks and special characters
-    name = re.sub(r"[-・。、]", "", name)
+    # - Remove breath marks and special characters (but not dakuten ゛ which was handled above)
+    # Note: We keep ・ for now as it might be part of VCV patterns
+    name = re.sub(r"[-。、]", "", name)
+
+    # After stripping markers, check if anything meaningful remains
+    if not name.strip():
+        # The entire filename was markers (e.g., just "息" which was already handled)
+        raise TranscriptExtractionError(
+            f"Could not extract transcript from filename: {filename}"
+        )
 
     # Check if name contains Japanese kana
     if contains_kana(name):
@@ -150,12 +288,20 @@ def extract_transcript_from_filename(filename: str) -> str:
     # Clean up whitespace
     name = " ".join(name.split())
 
+    # Final validation
     if not name:
         raise TranscriptExtractionError(
             f"Could not extract transcript from filename: {filename}"
         )
 
-    return name
+    return TranscriptResult(
+        transcript=name,
+        is_consonant_only=is_consonant_only,
+        is_growl_variant=is_growl_variant,
+        is_breath_sample=is_breath_sample,
+        is_rest_marker=is_rest_marker,
+        original_filename=original_filename,
+    )
 
 
 def preprocess_audio_for_alignment(
