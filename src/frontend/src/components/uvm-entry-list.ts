@@ -76,7 +76,7 @@ export class UvmEntryList extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.5rem 0.75rem;
+      padding: 0.625rem 0.875rem;
       background-color: var(--sl-color-neutral-100, #f1f5f9);
       border-bottom: 1px solid var(--sl-color-neutral-200, #e2e8f0);
       font-weight: 600;
@@ -104,7 +104,7 @@ export class UvmEntryList extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.5rem 0.75rem;
+      padding: 0.625rem 0.875rem;
       cursor: pointer;
       border-bottom: 1px solid var(--sl-color-neutral-100, #f1f5f9);
       transition: background-color 0.15s ease;
@@ -125,7 +125,7 @@ export class UvmEntryList extends LitElement {
     .entry-item.selected {
       background-color: var(--sl-color-primary-50, #eff6ff);
       border-left: 3px solid var(--sl-color-primary-500, #3b82f6);
-      padding-left: calc(0.75rem - 3px);
+      padding-left: calc(0.875rem - 3px);
     }
 
     .entry-item.selected:hover {

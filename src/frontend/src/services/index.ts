@@ -9,8 +9,34 @@
 export { api, ApiClient, ApiError } from './api.js';
 
 // Audio synthesis
-export { MelodyPlayer } from './melody-player.js';
-export type { NoteEvent, SynthesisOptions } from './melody-player.js';
+export { MelodyPlayer, DEFAULT_ENVELOPE } from './melody-player.js';
+export type {
+  ADSREnvelope,
+  CrossfadeType,
+  NoteEvent,
+  PhraseNote,
+  SampleData,
+  SpectralDistanceOptions,
+  SpectralDistanceResult,
+  SynthesisOptions,
+  VibratoParams,
+} from './melody-player.js';
+
+// Granular pitch shifting
+export {
+  GranularPitchShifter,
+  getGranularPitchShifter,
+} from './granular-pitch-shifter.js';
+export type {
+  ADSREnvelope as GranularADSREnvelope,
+  CrossfadeType as GranularCrossfadeType,
+  PitchShiftOptions,
+  PlaybackHandle,
+} from './granular-pitch-shifter.js';
+
+// Sample preloading
+export { SampleLoader, loadSamplesForPhrase } from './sample-loader.js';
+export type { LoadSamplesResult } from './sample-loader.js';
 
 // Melody patterns for preview
 export { MELODY_PATTERNS, getMelodyPattern } from './melody-patterns.js';
