@@ -462,7 +462,8 @@ class TestVoicebankGeneratorIntegration:
         oto_file = result.path / "oto.ini"
         assert oto_file.exists()
         content = oto_file.read_text()
-        assert "- ka" in content
+        # CV aliases use hiragana format: "- か" not "- ka"
+        assert "- か" in content
 
         # Check character.txt
         char_file = result.path / "character.txt"

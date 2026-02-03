@@ -25,6 +25,7 @@ from src.backend.services.recording_session_service import (
     RecordingSessionService,
     SessionNotFoundError,
 )
+from src.backend.utils.kana_romaji import format_cv_alias, format_vcv_alias
 from src.backend.utils.oto_parser import write_oto_file
 
 logger = logging.getLogger(__name__)
@@ -355,7 +356,8 @@ class VoicebankGenerator:
         # Generate filename from prompt
         safe_prompt = self._sanitize_name(prompt_text)
         filename = f"_{safe_prompt}.wav"
-        alias = f"- {prompt_text}"
+        # Format alias with hiragana: "- ka" -> "- か"
+        alias = format_cv_alias(prompt_text)
 
         # Use full audio with padding trimmed
         if phonemes:
@@ -470,13 +472,16 @@ class VoicebankGenerator:
             end_idx = vowel_indices[i + 1]
 
             # Build alias from phonemes (prev_vowel + consonant(s) + next_vowel)
-            prev_vowel = phonemes[start_idx].phoneme
+            prev_vowel = phonemes[start_idx].phoneme.lower()
             next_vowel = phonemes[end_idx].phoneme
             middle_phones = [ph.phoneme for ph in phonemes[start_idx + 1 : end_idx]]
             middle_str = "".join(middle_phones) if middle_phones else ""
 
-            alias = f"{prev_vowel} {middle_str}{next_vowel}".strip()
-            safe_alias = self._sanitize_name(alias)
+            # Build the syllable (consonants + next vowel) for hiragana conversion
+            syllable = f"{middle_str}{next_vowel}"
+            # Format alias with hiragana: "a ka" -> "a か"
+            alias = format_vcv_alias(prev_vowel, syllable)
+            safe_alias = self._sanitize_name(f"{prev_vowel}_{syllable}")
             filename = f"_{safe_alias}.wav"
 
             # Calculate slice boundaries

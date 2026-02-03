@@ -46,6 +46,15 @@ ENERGY_HOP_LENGTH = 256  # ~16ms at 16kHz
 ENERGY_ATTACK_THRESHOLD_RATIO = 0.03  # 3% above noise floor for onset detection
 ENERGY_RELEASE_THRESHOLD_RATIO = 0.05  # 5% above noise floor for offset detection
 
+# Hysteresis thresholds to prevent rapid on/off switching at boundary
+# Once "on" (above on_threshold), require energy to drop below off_threshold to go "off"
+ENERGY_HYSTERESIS_ON_RATIO = 0.03  # Threshold to turn "on" (start of sound)
+ENERGY_HYSTERESIS_OFF_RATIO = 0.02  # Threshold to turn "off" (must drop lower)
+
+# Minimum silence duration to treat as actual boundary (milliseconds)
+# Brief dips shorter than this are ignored (merged as continuous sound)
+MIN_SILENCE_DURATION_MS = 80.0  # 80ms - typical note sustain dips are shorter
+
 # Legacy constant for backwards compatibility (not used internally)
 ENERGY_THRESHOLD_RATIO = 0.03
 
@@ -368,8 +377,9 @@ def detect_energy_boundaries(
     attack_threshold_ratio: float | None = None,
     release_threshold_ratio: float | None = None,
     alignment_params: AlignmentParams | None = None,
+    min_silence_duration_ms: float = MIN_SILENCE_DURATION_MS,
 ) -> tuple[float, float]:
-    """Detect sound boundaries using RMS energy analysis.
+    """Detect sound boundaries using RMS energy analysis with continuity detection.
 
     For UTAU voicebank samples with sustained vowels, this provides the actual
     sound duration that CTC-based alignment misses.
@@ -377,6 +387,11 @@ def detect_energy_boundaries(
     Uses asymmetric thresholds for attack (onset) vs release (offset) detection:
     - Attack threshold is lower to capture quiet consonants (m, n, h, f, s)
     - Release threshold can be slightly higher as vowel endings are louder
+
+    Includes continuity detection to prevent splitting notes at brief energy dips:
+    - Uses hysteresis to prevent rapid on/off switching at threshold boundary
+    - Merges adjacent sound regions if the gap is shorter than min_silence_duration_ms
+    - This prevents sustained vowels with natural amplitude variation from being split
 
     Args:
         audio: Raw audio samples (numpy array)
@@ -392,6 +407,10 @@ def detect_energy_boundaries(
         alignment_params: Optional AlignmentParams for energy threshold.
                          If provided, overrides attack_threshold_ratio and
                          release_threshold_ratio with params.energy_threshold_ratio.
+        min_silence_duration_ms: Minimum duration of silence (in ms) required to
+                                treat as an actual boundary. Brief dips shorter
+                                than this are merged as continuous sound.
+                                Defaults to MIN_SILENCE_DURATION_MS (80ms).
 
     Returns:
         Tuple of (start_ms, end_ms) representing sound boundaries
@@ -441,12 +460,42 @@ def detect_energy_boundaries(
     attack_threshold = noise_rms + (signal_rms - noise_rms) * attack_threshold_ratio
     release_threshold = noise_rms + (signal_rms - noise_rms) * release_threshold_ratio
 
-    # Find onset: first frame above attack threshold
+    # Calculate hysteresis thresholds for continuity detection
+    # Once sound is "on", it must drop below off_threshold to go "off"
+    hysteresis_on = noise_rms + (signal_rms - noise_rms) * ENERGY_HYSTERESIS_ON_RATIO
+    hysteresis_off = noise_rms + (signal_rms - noise_rms) * ENERGY_HYSTERESIS_OFF_RATIO
+
+    # Find sound regions using hysteresis state machine
+    # This prevents rapid on/off switching at threshold boundary
+    sound_regions = _find_sound_regions_with_hysteresis(
+        rms, times, hysteresis_on, hysteresis_off
+    )
+
+    if not sound_regions:
+        # No sound detected, return full duration
+        return 0.0, len(audio) / sample_rate * 1000
+
+    # Merge adjacent regions if the gap is shorter than min_silence_duration_ms
+    # This prevents splitting notes at brief energy dips during sustain
+    merged_regions = _merge_adjacent_regions(sound_regions, min_silence_duration_ms)
+
+    if not merged_regions:
+        return 0.0, len(audio) / sample_rate * 1000
+
+    # Use the first and last merged region for overall boundaries
+    # For single continuous sounds, this will be one region spanning the whole note
+    overall_start_ms = merged_regions[0][0]
+    overall_end_ms = merged_regions[-1][1]
+
+    # Now refine boundaries using attack/release thresholds for precision
+    # Find onset: first frame above attack threshold within the overall region
     above_attack = rms > attack_threshold
 
     if not any(above_attack):
-        # No sound detected, return full duration
-        return 0.0, len(audio) / sample_rate * 1000
+        # No sound detected with attack threshold, use hysteresis boundaries
+        start_ms = max(0.0, overall_start_ms - ENERGY_ONSET_PADDING_MS)
+        end_ms = overall_end_ms + ENERGY_END_PADDING_MS
+        return start_ms, end_ms
 
     # Find first frame above attack threshold (sensitive to quiet consonants)
     first_frame = int(np.argmax(above_attack))
@@ -465,6 +514,95 @@ def detect_energy_boundaries(
     end_ms = float(times[last_frame]) + ENERGY_END_PADDING_MS
 
     return start_ms, end_ms
+
+
+def _find_sound_regions_with_hysteresis(
+    rms: np.ndarray,
+    times: np.ndarray,
+    on_threshold: float,
+    off_threshold: float,
+) -> list[tuple[float, float]]:
+    """Find sound regions using hysteresis to prevent rapid on/off switching.
+
+    Uses a state machine approach:
+    - Start in "off" state
+    - Transition to "on" when energy exceeds on_threshold
+    - Stay "on" until energy drops below off_threshold
+    - This prevents chattering at the threshold boundary
+
+    Args:
+        rms: RMS energy array
+        times: Time array in milliseconds corresponding to RMS frames
+        on_threshold: Energy threshold to transition from off to on
+        off_threshold: Energy threshold to transition from on to off
+
+    Returns:
+        List of (start_ms, end_ms) tuples representing sound regions
+    """
+    regions: list[tuple[float, float]] = []
+    is_on = False
+    region_start_ms = 0.0
+
+    for energy, time_ms in zip(rms, times, strict=True):
+        if not is_on:
+            # Currently off, check if we should turn on
+            if energy > on_threshold:
+                is_on = True
+                region_start_ms = time_ms
+        else:
+            # Currently on, check if we should turn off
+            if energy < off_threshold:
+                is_on = False
+                regions.append((region_start_ms, time_ms))
+
+    # If still on at end, close the final region
+    if is_on and len(times) > 0:
+        regions.append((region_start_ms, float(times[-1])))
+
+    return regions
+
+
+def _merge_adjacent_regions(
+    regions: list[tuple[float, float]],
+    min_gap_ms: float,
+) -> list[tuple[float, float]]:
+    """Merge adjacent sound regions if the gap between them is too short.
+
+    Brief energy dips during sustained notes should not create new boundaries.
+    This function merges regions that are separated by less than min_gap_ms.
+
+    Args:
+        regions: List of (start_ms, end_ms) tuples representing sound regions
+        min_gap_ms: Minimum gap duration to treat as actual silence
+
+    Returns:
+        List of merged (start_ms, end_ms) tuples
+    """
+    if not regions:
+        return []
+
+    merged: list[tuple[float, float]] = []
+    current_start, current_end = regions[0]
+
+    for next_start, next_end in regions[1:]:
+        gap = next_start - current_end
+
+        if gap < min_gap_ms:
+            # Gap is too short, merge with current region
+            # Extend current region to include the next one
+            current_end = next_end
+            logger.debug(
+                f"Merging regions: gap of {gap:.1f}ms < {min_gap_ms:.1f}ms threshold"
+            )
+        else:
+            # Gap is long enough, save current region and start new one
+            merged.append((current_start, current_end))
+            current_start, current_end = next_start, next_end
+
+    # Don't forget the last region
+    merged.append((current_start, current_end))
+
+    return merged
 
 
 def tokenize_transcript(

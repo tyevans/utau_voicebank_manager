@@ -375,7 +375,7 @@ class SOFAForcedAligner(ForcedAligner):
         "zh": "opencpop-extension.txt",
         "ko": "korean.txt",
         "fr": "french.txt",
-        "ja": "japanese_extended.txt",
+        "ja": "japanese.txt",
     }
 
     def __init__(
