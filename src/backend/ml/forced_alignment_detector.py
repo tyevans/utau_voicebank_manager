@@ -18,7 +18,7 @@ sustained vowels lasting 1-3 seconds.
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -28,6 +28,7 @@ import torch
 import torchaudio
 import torchaudio.functional as F
 
+from src.backend.domain.alignment_config import AlignmentParams
 from src.backend.domain.phoneme import PhonemeDetectionResult, PhonemeSegment
 from src.backend.utils.kana_romaji import contains_kana, kana_to_romaji
 
@@ -38,7 +39,20 @@ MMS_FA_SAMPLE_RATE = 16000
 
 # Energy analysis parameters for extending segments
 ENERGY_HOP_LENGTH = 256  # ~16ms at 16kHz
-ENERGY_THRESHOLD_RATIO = 0.1  # 10% above noise floor
+
+# Threshold ratios for energy-based boundary detection
+# Attack threshold is lower to capture quiet consonants (m, n, h, f, s, etc.)
+# Release threshold can be slightly higher as vowel endings are typically louder
+ENERGY_ATTACK_THRESHOLD_RATIO = 0.03  # 3% above noise floor for onset detection
+ENERGY_RELEASE_THRESHOLD_RATIO = 0.05  # 5% above noise floor for offset detection
+
+# Legacy constant for backwards compatibility (not used internally)
+ENERGY_THRESHOLD_RATIO = 0.03
+
+# Padding values for energy boundaries
+ENERGY_ONSET_PADDING_MS = (
+    15.0  # Padding before detected onset to ensure consonant capture
+)
 ENERGY_END_PADDING_MS = 20.0  # Padding after energy drops
 
 # Maximum allowed offset between FA onset and energy onset
@@ -351,24 +365,69 @@ def detect_energy_boundaries(
     sample_rate: int,
     hop_length: int = ENERGY_HOP_LENGTH,
     threshold_ratio: float = ENERGY_THRESHOLD_RATIO,
+    attack_threshold_ratio: float | None = None,
+    release_threshold_ratio: float | None = None,
+    alignment_params: AlignmentParams | None = None,
 ) -> tuple[float, float]:
     """Detect sound boundaries using RMS energy analysis.
 
     For UTAU voicebank samples with sustained vowels, this provides the actual
     sound duration that CTC-based alignment misses.
 
+    Uses asymmetric thresholds for attack (onset) vs release (offset) detection:
+    - Attack threshold is lower to capture quiet consonants (m, n, h, f, s)
+    - Release threshold can be slightly higher as vowel endings are louder
+
     Args:
         audio: Raw audio samples (numpy array)
         sample_rate: Audio sample rate
         hop_length: Hop length for RMS calculation
-        threshold_ratio: Ratio above noise floor to consider as sound
+        threshold_ratio: Legacy parameter, used as fallback if attack/release
+                        thresholds are not provided
+        attack_threshold_ratio: Ratio above noise floor for onset detection.
+                               Lower values capture quieter consonants.
+                               Defaults to ENERGY_ATTACK_THRESHOLD_RATIO (0.03).
+        release_threshold_ratio: Ratio above noise floor for offset detection.
+                                Defaults to ENERGY_RELEASE_THRESHOLD_RATIO (0.05).
+        alignment_params: Optional AlignmentParams for energy threshold.
+                         If provided, overrides attack_threshold_ratio and
+                         release_threshold_ratio with params.energy_threshold_ratio.
 
     Returns:
         Tuple of (start_ms, end_ms) representing sound boundaries
     """
+    # threshold_ratio is a legacy parameter kept for backwards compatibility
+    _ = threshold_ratio
+
+    # Use alignment_params if provided, otherwise fall back to explicit args or defaults
+    if alignment_params is not None:
+        # Use energy_threshold_ratio from params for both attack and release
+        # (slightly adjusted for the asymmetric behavior)
+        base_ratio = alignment_params.energy_threshold_ratio
+        # Attack is typically more sensitive than release
+        attack_threshold_ratio = (
+            base_ratio * 0.6
+            if attack_threshold_ratio is None
+            else attack_threshold_ratio
+        )
+        release_threshold_ratio = (
+            base_ratio if release_threshold_ratio is None else release_threshold_ratio
+        )
+    else:
+        # Use specific thresholds or fall back to legacy/defaults
+        if attack_threshold_ratio is None:
+            attack_threshold_ratio = ENERGY_ATTACK_THRESHOLD_RATIO
+        if release_threshold_ratio is None:
+            release_threshold_ratio = ENERGY_RELEASE_THRESHOLD_RATIO
+
     # Calculate RMS energy
     rms = librosa.feature.rms(y=audio, hop_length=hop_length)[0]
-    times = librosa.frames_to_time(np.arange(len(rms)), sr=sample_rate, hop_length=hop_length) * 1000
+    times = (
+        librosa.frames_to_time(
+            np.arange(len(rms)), sr=sample_rate, hop_length=hop_length
+        )
+        * 1000
+    )
 
     if len(rms) == 0:
         return 0.0, len(audio) / sample_rate * 1000
@@ -377,21 +436,32 @@ def detect_energy_boundaries(
     noise_rms = np.percentile(rms, 10)  # Bottom 10% is likely silence
     signal_rms = np.percentile(rms, 90)  # Top 90% is likely signal
 
-    # Threshold is threshold_ratio above noise floor
-    threshold = noise_rms + (signal_rms - noise_rms) * threshold_ratio
+    # Calculate separate thresholds for attack (onset) and release (offset)
+    # Attack threshold is lower to capture quiet consonants
+    attack_threshold = noise_rms + (signal_rms - noise_rms) * attack_threshold_ratio
+    release_threshold = noise_rms + (signal_rms - noise_rms) * release_threshold_ratio
 
-    # Find where sound is above threshold
-    above_threshold = rms > threshold
+    # Find onset: first frame above attack threshold
+    above_attack = rms > attack_threshold
 
-    if not any(above_threshold):
+    if not any(above_attack):
         # No sound detected, return full duration
         return 0.0, len(audio) / sample_rate * 1000
 
-    # Find first and last frames above threshold
-    first_frame = int(np.argmax(above_threshold))
-    last_frame = len(rms) - 1 - int(np.argmax(above_threshold[::-1]))
+    # Find first frame above attack threshold (sensitive to quiet consonants)
+    first_frame = int(np.argmax(above_attack))
 
-    start_ms = float(times[first_frame])
+    # Find offset: last frame above release threshold
+    above_release = rms > release_threshold
+    if any(above_release):
+        last_frame = len(rms) - 1 - int(np.argmax(above_release[::-1]))
+    else:
+        # Fall back to attack threshold if release threshold finds nothing
+        last_frame = len(rms) - 1 - int(np.argmax(above_attack[::-1]))
+
+    # Apply padding to ensure we don't clip the consonant
+    # Subtract padding from start time (move earlier)
+    start_ms = max(0.0, float(times[first_frame]) - ENERGY_ONSET_PADDING_MS)
     end_ms = float(times[last_frame]) + ENERGY_END_PADDING_MS
 
     return start_ms, end_ms
@@ -474,6 +544,7 @@ class ForcedAlignmentDetector:
     async def detect_phonemes(
         self,
         audio_path: Path,
+        alignment_params: AlignmentParams | None = None,
     ) -> PhonemeDetectionResult:
         """Detect phonemes using forced alignment with auto-extracted transcript.
 
@@ -482,6 +553,9 @@ class ForcedAlignmentDetector:
 
         Args:
             audio_path: Path to the audio file (WAV recommended)
+            alignment_params: Optional alignment parameters for energy threshold
+                tuning. If provided, uses params.energy_threshold_ratio for
+                silence/sound boundary detection.
 
         Returns:
             PhonemeDetectionResult containing aligned segments
@@ -491,12 +565,15 @@ class ForcedAlignmentDetector:
             TranscriptExtractionError: If transcript cannot be extracted
         """
         transcript = extract_transcript_from_filename(audio_path.name)
-        return await self.detect_phonemes_with_transcript(audio_path, transcript)
+        return await self.detect_phonemes_with_transcript(
+            audio_path, transcript, alignment_params=alignment_params
+        )
 
     async def detect_phonemes_with_transcript(
         self,
         audio_path: Path,
         transcript: str,
+        alignment_params: AlignmentParams | None = None,
     ) -> PhonemeDetectionResult:
         """Detect phonemes using forced alignment with provided transcript.
 
@@ -507,6 +584,9 @@ class ForcedAlignmentDetector:
         Args:
             audio_path: Path to the audio file (WAV recommended)
             transcript: Expected text/phonemes in the audio
+            alignment_params: Optional alignment parameters for energy threshold
+                tuning. If provided, uses params.energy_threshold_ratio for
+                silence/sound boundary detection.
 
         Returns:
             PhonemeDetectionResult containing aligned segments
@@ -524,7 +604,9 @@ class ForcedAlignmentDetector:
         waveform = waveform.to(device)
 
         # Detect energy-based sound boundaries for extending segments
-        energy_start_ms, energy_end_ms = detect_energy_boundaries(raw_audio, sample_rate)
+        energy_start_ms, energy_end_ms = detect_energy_boundaries(
+            raw_audio, sample_rate, alignment_params=alignment_params
+        )
 
         # Tokenize transcript
         tokens = tokenize_transcript(transcript, dictionary)
@@ -642,7 +724,9 @@ class ForcedAlignmentDetector:
                 gap = start_ms - prev_segment.end_ms
                 if gap > MAX_SEGMENT_GAP_MS:
                     # Gap is too large, assume phoneme should follow previous
-                    adjusted_start = prev_segment.end_ms + 10  # Small gap for transition
+                    adjusted_start = (
+                        prev_segment.end_ms + 10
+                    )  # Small gap for transition
                     logger.debug(
                         f"Gap ({gap:.1f}ms) after '{prev_segment.phoneme}' is too large, "
                         f"adjusting '{phoneme}' start from {start_ms:.1f}ms to {adjusted_start:.1f}ms"

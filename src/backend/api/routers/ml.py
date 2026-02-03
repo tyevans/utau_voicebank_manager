@@ -4,10 +4,12 @@ import contextlib
 import logging
 import tempfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel, Field
 
+from src.backend.domain.alignment_config import AlignmentConfig
 from src.backend.domain.batch_oto import BatchOtoRequest, BatchOtoResult
 from src.backend.domain.oto_suggestion import OtoSuggestion
 from src.backend.domain.phoneme import PhonemeSegment
@@ -32,6 +34,80 @@ router = APIRouter(prefix="/ml", tags=["ml"])
 
 # Allowed audio file extensions
 ALLOWED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+
+
+# -----------------------------------------------------------------------------
+# Alignment Config Request/Response Models
+# -----------------------------------------------------------------------------
+
+
+class AlignmentConfigResponse(BaseModel):
+    """Response model for alignment configuration."""
+
+    tightness: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Alignment tightness (0.0 = loose, 1.0 = tight)",
+    )
+    method_override: Literal["sofa", "fa", "blind"] | None = Field(
+        default=None,
+        description="Manual override for alignment method, or None for auto-select",
+    )
+    computed_params: dict[str, float] = Field(
+        description="Computed alignment parameters for UI display"
+    )
+
+
+class AlignmentPreviewRequest(BaseModel):
+    """Request model for previewing alignment parameters."""
+
+    tightness: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.5,
+        description="Tightness value to preview",
+    )
+    recording_style: Literal["cv", "vcv", "cvvc"] | None = Field(
+        default=None,
+        description="Optional recording style for style-specific adjustments",
+    )
+
+
+class AlignmentPreviewResponse(BaseModel):
+    """Response showing computed params for a tightness value."""
+
+    tightness: float = Field(description="The tightness value used for preview")
+    recording_style: str | None = Field(description="Recording style applied, if any")
+    params: dict[str, float] = Field(description="Computed alignment parameters")
+
+
+class AlignmentMethodInfo(BaseModel):
+    """Information about an alignment method."""
+
+    name: str = Field(description="Method identifier")
+    display_name: str = Field(description="Human-readable name")
+    available: bool = Field(description="Whether this method is currently available")
+    description: str = Field(description="Brief description of the method")
+    languages: list[str] = Field(
+        default_factory=list,
+        description="Supported languages (if applicable)",
+    )
+
+
+class AlignmentMethodsResponse(BaseModel):
+    """Response listing available alignment methods."""
+
+    methods: list[AlignmentMethodInfo] = Field(
+        description="List of all alignment methods and their availability"
+    )
+    recommended: str = Field(description="Recommended method for best results")
+
+
+# -----------------------------------------------------------------------------
+# Module-level Alignment Config Storage
+# -----------------------------------------------------------------------------
+
+_alignment_config: AlignmentConfig = AlignmentConfig()
 
 # Maximum file size (50MB)
 MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -66,9 +142,29 @@ def get_batch_oto_service(
     voicebank_service: Annotated[VoicebankService, Depends(get_voicebank_service)],
     oto_repository: Annotated[OtoRepository, Depends(get_oto_repository)],
 ) -> BatchOtoService:
-    """Dependency provider for BatchOtoService."""
-    # Use SOFA-enabled suggester for batch processing (optimized for singing)
-    oto_suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
+    """Dependency provider for BatchOtoService.
+
+    Uses the current module-level alignment config for method selection.
+    """
+    # Determine alignment method from config
+    use_sofa = True  # Default to SOFA
+    if _alignment_config.method_override == "blind":
+        use_forced_alignment = False
+        use_sofa = False
+    elif _alignment_config.method_override == "fa":
+        use_forced_alignment = True
+        use_sofa = False
+    elif _alignment_config.method_override == "sofa":
+        use_forced_alignment = True
+        use_sofa = True
+    else:
+        # Auto-select: prefer SOFA if available
+        use_forced_alignment = True
+        use_sofa = is_sofa_available()
+
+    oto_suggester = OtoSuggester(
+        use_forced_alignment=use_forced_alignment, use_sofa=use_sofa
+    )
     return BatchOtoService(voicebank_service, oto_suggester, oto_repository)
 
 
@@ -469,3 +565,166 @@ async def batch_generate_oto(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {e}",
         ) from e
+
+
+# -----------------------------------------------------------------------------
+# Alignment Config Endpoints
+# -----------------------------------------------------------------------------
+
+
+def _params_to_dict(params) -> dict[str, float]:
+    """Convert AlignmentParams to a dictionary."""
+    return {
+        "offset_padding_ms": params.offset_padding_ms,
+        "cutoff_padding_ms": params.cutoff_padding_ms,
+        "overlap_ratio": params.overlap_ratio,
+        "energy_threshold_ratio": params.energy_threshold_ratio,
+        "consonant_vowel_extension_ratio": params.consonant_vowel_extension_ratio,
+        "min_confidence_threshold": params.min_confidence_threshold,
+    }
+
+
+@router.get("/alignment/config", response_model=AlignmentConfigResponse)
+async def get_alignment_config() -> AlignmentConfigResponse:
+    """Get the current default alignment configuration.
+
+    Returns the current tightness setting, any method override, and the
+    computed alignment parameters for UI display.
+
+    Returns:
+        AlignmentConfigResponse with current config and computed params
+    """
+    params = _alignment_config.get_params()
+    return AlignmentConfigResponse(
+        tightness=_alignment_config.tightness,
+        method_override=_alignment_config.method_override,
+        computed_params=_params_to_dict(params),
+    )
+
+
+@router.post("/alignment/config", response_model=AlignmentConfigResponse)
+async def update_alignment_config(config: AlignmentConfig) -> AlignmentConfigResponse:
+    """Update the default alignment configuration.
+
+    Sets the alignment tightness and optional method override that will be
+    used for subsequent alignment operations.
+
+    Args:
+        config: New alignment configuration with tightness and optional method override
+
+    Returns:
+        AlignmentConfigResponse with updated config and computed params
+    """
+    global _alignment_config
+    _alignment_config = config
+
+    logger.info(
+        f"Updated alignment config: tightness={config.tightness}, "
+        f"method_override={config.method_override}"
+    )
+
+    params = _alignment_config.get_params()
+    return AlignmentConfigResponse(
+        tightness=_alignment_config.tightness,
+        method_override=_alignment_config.method_override,
+        computed_params=_params_to_dict(params),
+    )
+
+
+@router.post("/alignment/config/preview", response_model=AlignmentPreviewResponse)
+async def preview_alignment_config(
+    request: AlignmentPreviewRequest,
+) -> AlignmentPreviewResponse:
+    """Preview alignment parameters for a given tightness and style.
+
+    Computes what parameters would be used for a given tightness value
+    without changing the current default configuration. Useful for UI
+    sliders to show real-time parameter updates.
+
+    Args:
+        request: Preview request with tightness and optional recording style
+
+    Returns:
+        AlignmentPreviewResponse with computed params for the given settings
+    """
+    preview_config = AlignmentConfig(tightness=request.tightness)
+    params = preview_config.get_params(recording_style=request.recording_style)
+
+    return AlignmentPreviewResponse(
+        tightness=request.tightness,
+        recording_style=request.recording_style,
+        params=_params_to_dict(params),
+    )
+
+
+@router.get("/alignment/methods", response_model=AlignmentMethodsResponse)
+async def get_alignment_methods() -> AlignmentMethodsResponse:
+    """Get available alignment methods and their status.
+
+    Returns a list of all supported alignment methods, whether they are
+    currently available (installed and configured), and which is recommended.
+
+    Returns:
+        AlignmentMethodsResponse with method availability and recommendation
+    """
+    # Check SOFA availability and languages
+    sofa_available = is_sofa_available()
+    sofa_languages: list[str] = []
+    if sofa_available:
+        sofa = get_sofa_aligner()
+        sofa_languages = sofa.get_available_languages()
+
+    # Check MFA availability (basic check - could be expanded)
+    mfa_available = False
+    try:
+        import shutil
+
+        mfa_available = shutil.which("mfa") is not None
+    except Exception:
+        pass
+
+    methods = [
+        AlignmentMethodInfo(
+            name="sofa",
+            display_name="SOFA Neural Aligner",
+            available=sofa_available,
+            description=(
+                "Singing-Oriented Forced Aligner using neural networks. "
+                "Best accuracy for singing voice recordings."
+            ),
+            languages=sofa_languages,
+        ),
+        AlignmentMethodInfo(
+            name="fa",
+            display_name="Montreal Forced Aligner",
+            available=mfa_available,
+            description=(
+                "Traditional forced alignment using GMM-HMM models. "
+                "Good for speech, supports many languages."
+            ),
+            languages=["en", "ja", "zh"] if mfa_available else [],
+        ),
+        AlignmentMethodInfo(
+            name="blind",
+            display_name="Energy-based Detection",
+            available=True,  # Always available as fallback
+            description=(
+                "Simple energy-based phoneme boundary detection. "
+                "No ML required, works offline, but less accurate."
+            ),
+            languages=[],  # Language-agnostic
+        ),
+    ]
+
+    # Determine recommended method
+    if sofa_available:
+        recommended = "sofa"
+    elif mfa_available:
+        recommended = "fa"
+    else:
+        recommended = "blind"
+
+    return AlignmentMethodsResponse(
+        methods=methods,
+        recommended=recommended,
+    )

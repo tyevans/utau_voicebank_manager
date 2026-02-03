@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from src.backend.domain.alignment_config import AlignmentConfig, AlignmentParams
 from src.backend.domain.oto_suggestion import OtoSuggestion
 from src.backend.domain.phoneme import PhonemeSegment
 from src.backend.ml.forced_alignment_detector import (
@@ -161,6 +162,7 @@ class OtoSuggester:
         phoneme_detector: PhonemeDetector | None = None,
         use_forced_alignment: bool = True,
         use_sofa: bool = False,
+        alignment_config: AlignmentConfig | None = None,
     ):
         """Initialize the oto suggester.
 
@@ -174,12 +176,15 @@ class OtoSuggester:
                      SOFA is optimized for singing voice and produces better results
                      for sustained vowels. Falls back to forced alignment if unavailable.
                      Defaults to False.
+            alignment_config: Optional AlignmentConfig for controlling alignment
+                             parameters. If not provided, uses default config.
         """
         self._phoneme_detector = phoneme_detector
         self._forced_alignment_detector: ForcedAlignmentDetector | None = None
         self._sofa_aligner: SOFAForcedAligner | None = None
         self.use_forced_alignment = use_forced_alignment
         self.use_sofa = use_sofa
+        self._alignment_config = alignment_config or AlignmentConfig()
 
     @property
     def phoneme_detector(self) -> PhonemeDetector:
@@ -204,11 +209,24 @@ class OtoSuggester:
             self._sofa_aligner = get_sofa_aligner()
         return self._sofa_aligner
 
+    def _get_params(self, recording_style: str | None = None) -> AlignmentParams:
+        """Get alignment parameters for the given recording style.
+
+        Args:
+            recording_style: Optional recording style (cv, vcv, cvvc) for
+                style-specific adjustments.
+
+        Returns:
+            AlignmentParams with values derived from tightness setting.
+        """
+        return self._alignment_config.get_params(recording_style)
+
     async def suggest_oto(
         self,
         audio_path: Path,
         alias: str | None = None,
         sofa_language: str = "ja",
+        recording_style: str | None = None,
     ) -> OtoSuggestion:
         """Analyze audio and suggest oto parameters.
 
@@ -216,6 +234,8 @@ class OtoSuggester:
             audio_path: Path to WAV file
             alias: Optional alias override (defaults to filename-based)
             sofa_language: Language code for SOFA alignment (ja, en, zh, ko, fr)
+            recording_style: Optional recording style (cv, vcv, cvvc) for
+                style-specific parameter adjustments.
 
         Returns:
             OtoSuggestion with suggested parameters
@@ -227,13 +247,32 @@ class OtoSuggester:
         if alias is None:
             alias = self._generate_alias_from_filename(filename)
 
+        # Get alignment parameters for this recording style
+        params = self._get_params(recording_style)
+
         # Run phoneme detection
         segments = []
         audio_duration_ms = 0.0
         detection_method = "none"
 
+        # Determine which methods to try based on method_override
+        method_override = self._alignment_config.method_override
+        try_sofa = self.use_sofa and is_sofa_available()
+        try_fa = self.use_forced_alignment
+        try_blind = True
+
+        if method_override == "sofa":
+            try_fa = False
+            try_blind = False
+        elif method_override == "fa":
+            try_sofa = False
+            try_blind = False
+        elif method_override == "blind":
+            try_sofa = False
+            try_fa = False
+
         # Try SOFA alignment first if enabled and available
-        if self.use_sofa and is_sofa_available():
+        if try_sofa:
             try:
                 # Extract transcript from filename for SOFA
                 transcript = extract_transcript_from_filename(filename)
@@ -262,10 +301,10 @@ class OtoSuggester:
                 )
 
         # Try forced alignment if SOFA didn't work and forced alignment is enabled
-        if not segments and self.use_forced_alignment:
+        if not segments and try_fa:
             try:
                 detection_result = await self.forced_alignment_detector.detect_phonemes(
-                    audio_path
+                    audio_path, alignment_params=params
                 )
                 segments = detection_result.segments
                 audio_duration_ms = detection_result.audio_duration_ms
@@ -281,7 +320,7 @@ class OtoSuggester:
                 )
 
         # Fall back to blind detection if forced alignment failed or is disabled
-        if not segments:
+        if not segments and try_blind:
             try:
                 detection_result = await self.phoneme_detector.detect_phonemes(
                     audio_path
@@ -308,13 +347,15 @@ class OtoSuggester:
         # Calculate confidence based on detection quality
         confidence = self._calculate_confidence(segments, audio_duration_ms)
 
-        # Estimate parameters
-        if segments and confidence >= MIN_CONFIDENCE_THRESHOLD:
-            offset = self._estimate_offset(segments)
-            consonant_end = self._estimate_consonant_end(segments, classification)
+        # Estimate parameters using alignment params from config
+        if segments and confidence >= params.min_confidence_threshold:
+            offset = self._estimate_offset(segments, params)
+            consonant_end = self._estimate_consonant_end(
+                segments, classification, params
+            )
             preutterance = self._estimate_preutterance(segments, classification)
-            cutoff = self._estimate_cutoff(audio_duration_ms, segments)
-            overlap = self._estimate_overlap(offset, preutterance)
+            cutoff = self._estimate_cutoff(audio_duration_ms, segments, params)
+            overlap = self._estimate_overlap(offset, preutterance, params)
         else:
             # Use reasonable defaults
             logger.info(
@@ -513,6 +554,7 @@ class OtoSuggester:
         segments: list[PhonemeSegment],
         audio_duration_ms: float,
         detection_method: str,
+        params: AlignmentParams | None = None,
     ) -> OtoSuggestion:
         """Build an OtoSuggestion from alignment results.
 
@@ -524,11 +566,16 @@ class OtoSuggester:
             segments: Detected phoneme segments
             audio_duration_ms: Total audio duration
             detection_method: Detection method used (for logging)
+            params: Optional alignment params. If not provided, uses default config.
 
         Returns:
             OtoSuggestion with estimated parameters
         """
         logger.debug(f"Detection method for {filename}: {detection_method}")
+
+        # Use provided params or get default
+        if params is None:
+            params = self._get_params()
 
         # Classify phonemes
         classification = self._classify_phonemes(segments)
@@ -536,13 +583,15 @@ class OtoSuggester:
         # Calculate confidence based on detection quality
         confidence = self._calculate_confidence(segments, audio_duration_ms)
 
-        # Estimate parameters
-        if segments and confidence >= MIN_CONFIDENCE_THRESHOLD:
-            offset = self._estimate_offset(segments)
-            consonant_end = self._estimate_consonant_end(segments, classification)
+        # Estimate parameters using alignment params from config
+        if segments and confidence >= params.min_confidence_threshold:
+            offset = self._estimate_offset(segments, params)
+            consonant_end = self._estimate_consonant_end(
+                segments, classification, params
+            )
             preutterance = self._estimate_preutterance(segments, classification)
-            cutoff = self._estimate_cutoff(audio_duration_ms, segments)
-            overlap = self._estimate_overlap(offset, preutterance)
+            cutoff = self._estimate_cutoff(audio_duration_ms, segments, params)
+            overlap = self._estimate_overlap(offset, preutterance, params)
         else:
             # Use reasonable defaults
             logger.info(
@@ -715,11 +764,17 @@ class OtoSuggester:
             "by",
         }
 
-    def _estimate_offset(self, segments: list[PhonemeSegment]) -> float:
+    def _estimate_offset(
+        self,
+        segments: list[PhonemeSegment],
+        params: AlignmentParams | None = None,
+    ) -> float:
         """Find where meaningful sound starts (skip initial silence).
 
         Args:
             segments: List of detected phoneme segments
+            params: Optional alignment params for padding values.
+                   If not provided, uses module-level defaults.
 
         Returns:
             Estimated offset in milliseconds
@@ -727,20 +782,27 @@ class OtoSuggester:
         if not segments:
             return DEFAULT_OFFSET_MS
 
+        # Use params or fall back to module-level constants
+        offset_padding = params.offset_padding_ms if params else OFFSET_PADDING_MS
+        min_confidence = (
+            params.min_confidence_threshold if params else MIN_CONFIDENCE_THRESHOLD
+        )
+
         # Find the first segment with reasonable confidence
         for segment in segments:
-            if segment.confidence >= MIN_CONFIDENCE_THRESHOLD:
+            if segment.confidence >= min_confidence:
                 # Add padding before the first sound
-                offset = max(0, segment.start_ms - OFFSET_PADDING_MS)
+                offset = max(0, segment.start_ms - offset_padding)
                 return offset
 
         # Fall back to first segment regardless of confidence
-        return max(0, segments[0].start_ms - OFFSET_PADDING_MS)
+        return max(0, segments[0].start_ms - offset_padding)
 
     def _estimate_consonant_end(
         self,
         segments: list[PhonemeSegment],
         classification: dict[str, list[PhonemeSegment]],
+        params: AlignmentParams | None = None,
     ) -> float:
         """Find end of consonant/fixed region.
 
@@ -750,12 +812,21 @@ class OtoSuggester:
         Args:
             segments: List of detected phoneme segments
             classification: Phoneme classification result
+            params: Optional alignment params for extension ratio.
+                   If not provided, uses module-level defaults.
 
         Returns:
             Estimated consonant end time in milliseconds
         """
         if not segments:
             return DEFAULT_CONSONANT_MS
+
+        # Use params or fall back to module-level constant
+        cv_extension_ratio = (
+            params.consonant_vowel_extension_ratio
+            if params
+            else CONSONANT_VOWEL_EXTENSION_RATIO
+        )
 
         consonants = classification.get("consonants", [])
         vowels = classification.get("vowels", [])
@@ -777,13 +848,11 @@ class OtoSuggester:
 
             if last_consonant_before_vowel:
                 # Extend into vowel by ratio
-                vowel_extension = (
-                    first_vowel.duration_ms * CONSONANT_VOWEL_EXTENSION_RATIO
-                )
+                vowel_extension = first_vowel.duration_ms * cv_extension_ratio
                 return last_consonant_before_vowel.end_ms + vowel_extension
 
             # No consonant before vowel - use vowel start + extension
-            vowel_extension = first_vowel.duration_ms * CONSONANT_VOWEL_EXTENSION_RATIO
+            vowel_extension = first_vowel.duration_ms * cv_extension_ratio
             return first_vowel.start_ms + vowel_extension
 
         elif consonants:
@@ -853,7 +922,12 @@ class OtoSuggester:
         # Fallback: use first segment end
         return segments[0].end_ms if segments else DEFAULT_PREUTTERANCE_MS
 
-    def _estimate_overlap(self, offset: float, preutterance: float) -> float:
+    def _estimate_overlap(
+        self,
+        offset: float,
+        preutterance: float,
+        params: AlignmentParams | None = None,
+    ) -> float:
         """Estimate overlap position (absolute position from audio start).
 
         Overlap is the position where crossfade with the previous note occurs,
@@ -862,23 +936,31 @@ class OtoSuggester:
         Args:
             offset: Estimated offset position (from audio start)
             preutterance: Estimated preutterance position (from audio start)
+            params: Optional alignment params for overlap ratio.
+                   If not provided, uses module-level defaults.
 
         Returns:
             Estimated overlap position in milliseconds (from audio start)
         """
+        # Use params or fall back to module-level constant
+        overlap_ratio = params.overlap_ratio if params else OVERLAP_RATIO
+
         # Overlap is typically positioned between offset and preutterance
-        # Use OVERLAP_RATIO to position it partway between them
+        # Use overlap_ratio to position it partway between them
         if preutterance <= offset:
             # Edge case: preutterance at or before offset
             return offset
 
-        # Position overlap at OVERLAP_RATIO of the way from offset to preutterance
-        overlap = offset + (preutterance - offset) * OVERLAP_RATIO
+        # Position overlap at overlap_ratio of the way from offset to preutterance
+        overlap = offset + (preutterance - offset) * overlap_ratio
 
         return overlap
 
     def _estimate_cutoff(
-        self, audio_duration_ms: float, segments: list[PhonemeSegment]
+        self,
+        audio_duration_ms: float,
+        segments: list[PhonemeSegment],
+        params: AlignmentParams | None = None,
     ) -> float:
         """Find where to cut off (detect trailing silence).
 
@@ -887,6 +969,8 @@ class OtoSuggester:
         Args:
             audio_duration_ms: Total audio duration
             segments: List of detected phoneme segments
+            params: Optional alignment params for padding values.
+                   If not provided, uses module-level defaults.
 
         Returns:
             Estimated cutoff in milliseconds (negative)
@@ -894,10 +978,16 @@ class OtoSuggester:
         if not segments:
             return -DEFAULT_CUTOFF_PADDING_MS
 
+        # Use params or fall back to module-level constants
+        cutoff_padding = params.cutoff_padding_ms if params else CUTOFF_PADDING_MS
+        min_confidence = (
+            params.min_confidence_threshold if params else MIN_CONFIDENCE_THRESHOLD
+        )
+
         # Find the last segment with reasonable confidence
         last_segment = None
         for segment in reversed(segments):
-            if segment.confidence >= MIN_CONFIDENCE_THRESHOLD:
+            if segment.confidence >= min_confidence:
                 last_segment = segment
                 break
 
@@ -906,7 +996,7 @@ class OtoSuggester:
 
         # Calculate cutoff as negative offset from end
         # Add padding after last phoneme
-        sound_end = last_segment.end_ms + CUTOFF_PADDING_MS
+        sound_end = last_segment.end_ms + cutoff_padding
 
         # Cutoff is negative, representing distance from audio end
         cutoff = -(audio_duration_ms - sound_end)
@@ -985,6 +1075,7 @@ def get_oto_suggester(
     phoneme_detector: PhonemeDetector | None = None,
     use_forced_alignment: bool = True,
     use_sofa: bool = True,
+    alignment_config: AlignmentConfig | None = None,
 ) -> OtoSuggester:
     """Get the default oto suggester singleton.
 
@@ -997,6 +1088,8 @@ def get_oto_suggester(
         use_sofa: If True, attempt SOFA (Singing-Oriented Forced Aligner) first.
                   SOFA is optimized for singing voice and produces better results
                   for sustained vowels. Defaults to True.
+        alignment_config: Optional AlignmentConfig for controlling alignment
+                         parameters. If not provided, uses default config.
 
     Returns:
         OtoSuggester instance
@@ -1013,6 +1106,7 @@ def get_oto_suggester(
             phoneme_detector=phoneme_detector,
             use_forced_alignment=use_forced_alignment,
             use_sofa=use_sofa,
+            alignment_config=alignment_config,
         )
 
     return _default_suggester

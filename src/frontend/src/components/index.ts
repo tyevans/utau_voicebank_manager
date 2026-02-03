@@ -77,3 +77,7 @@ export type { BatchSampleResult, BatchReviewCompleteDetail } from './uvm-batch-r
 
 // Validation view for reviewing and exporting oto.ini
 export { UvmValidationView } from './uvm-validation-view.js';
+
+// Alignment settings for configuring auto-detection parameters
+export { UvmAlignmentSettings } from './uvm-alignment-settings.js';
+export type { AlignmentMethod, AlignmentChangeDetail } from './uvm-alignment-settings.js';
