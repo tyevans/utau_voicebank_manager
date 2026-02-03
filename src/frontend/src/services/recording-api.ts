@@ -467,6 +467,28 @@ export class RecordingApiService {
       method: 'POST',
     });
   }
+
+  /**
+   * Reject a recorded segment for re-recording.
+   *
+   * Marks the segment as rejected so it can be recorded again.
+   */
+  async rejectSegment(
+    sessionId: string,
+    segmentId: string,
+    reason = 'Re-recording requested'
+  ): Promise<RecordingSegment> {
+    const formData = new FormData();
+    formData.append('reason', reason);
+
+    return this.request<RecordingSegment>(
+      `/sessions/${sessionId}/segments/${segmentId}/reject`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
 }
 
 /**

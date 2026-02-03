@@ -45,6 +45,14 @@ interface RecordingCompleteDetail {
 }
 
 /**
+ * Re-record request event detail from the prompter.
+ */
+interface ReRecordRequestDetail {
+  promptId?: string;
+  mode: 'individual' | 'paragraph';
+}
+
+/**
  * Processing step for detailed progress display.
  */
 interface ProcessingStep {
@@ -637,6 +645,13 @@ export class UvmRecordingSession extends LitElement {
   @state()
   private _processingSteps: ProcessingStep[] = [];
 
+  /**
+   * Map of prompt index to the last uploaded segment ID.
+   * Used for rejecting segments when re-recording.
+   */
+  @state()
+  private _segmentIdsByPromptIndex: Map<number, string> = new Map();
+
   private _pollIntervalId?: number;
 
   disconnectedCallback(): void {
@@ -694,6 +709,10 @@ export class UvmRecordingSession extends LitElement {
 
   /**
    * Handle recording complete from the prompter.
+   *
+   * Note: This does NOT advance to the next prompt. The user must click
+   * "Accept & Next" to proceed, allowing them to preview and optionally
+   * re-record before moving on.
    */
   private async _onRecordingComplete(
     e: CustomEvent<RecordingCompleteDetail>
@@ -705,7 +724,7 @@ export class UvmRecordingSession extends LitElement {
 
     try {
       // Upload the segment to the backend
-      await recordingApi.uploadSegment(
+      const segment = await recordingApi.uploadSegment(
         this._sessionId,
         this._currentPromptIndex,
         currentPrompt.romaji,
@@ -713,8 +732,12 @@ export class UvmRecordingSession extends LitElement {
         duration * 1000 // Convert to ms
       );
 
-      // Move to next prompt
-      this._advanceToNextPrompt();
+      // Store the segment ID for potential re-recording
+      this._segmentIdsByPromptIndex.set(this._currentPromptIndex, segment.id);
+
+      // Note: We do NOT advance to the next prompt here.
+      // The user must click "Accept & Next" to proceed.
+      // This allows them to preview and optionally re-record.
     } catch (error) {
       console.error('Failed to upload segment:', error);
       if (error instanceof ApiError) {
@@ -723,6 +746,57 @@ export class UvmRecordingSession extends LitElement {
         UvmToastManager.error('Failed to upload recording');
       }
     }
+  }
+
+  /**
+   * Handle proceed-to-next from the prompter.
+   *
+   * Called when the user accepts their recording and wants to move
+   * to the next prompt.
+   */
+  private _onProceedToNext(): void {
+    this._advanceToNextPrompt();
+  }
+
+  /**
+   * Handle re-record request from the prompter.
+   *
+   * This is called when the user clicks "Re-record" after completing a recording.
+   * We need to reject the previous segment on the backend and allow a new recording.
+   */
+  private async _onReRecordRequested(
+    _e: CustomEvent<ReRecordRequestDetail>
+  ): Promise<void> {
+    if (!this._sessionId) return;
+
+    // Get the segment ID for the current prompt (the one just recorded)
+    const segmentId = this._segmentIdsByPromptIndex.get(this._currentPromptIndex);
+
+    if (segmentId) {
+      try {
+        // Reject the segment on the backend
+        await recordingApi.rejectSegment(
+          this._sessionId,
+          segmentId,
+          'Re-recording requested by user'
+        );
+
+        // Remove the segment ID since it's been rejected
+        this._segmentIdsByPromptIndex.delete(this._currentPromptIndex);
+
+        UvmToastManager.info('Previous recording rejected. Record again.');
+      } catch (error) {
+        console.error('Failed to reject segment:', error);
+        // Even if rejection fails, allow the re-recording to proceed
+        // The new upload will overwrite or add a new segment
+        if (error instanceof ApiError) {
+          console.warn(`Segment rejection failed: ${error.message}`);
+        }
+      }
+    }
+
+    // The prompter component already auto-starts recording after emitting this event,
+    // so we don't need to do anything else here
   }
 
   /**
@@ -912,6 +986,7 @@ export class UvmRecordingSession extends LitElement {
     this._errorMessage = '';
     this._skippedPrompts = new Set();
     this._processingSteps = [];
+    this._segmentIdsByPromptIndex = new Map();
   }
 
   /**
@@ -1110,6 +1185,8 @@ export class UvmRecordingSession extends LitElement {
           .totalPrompts=${this._prompts.length}
           language=${this._language}
           @recording-complete=${this._onRecordingComplete}
+          @re-record-requested=${this._onReRecordRequested}
+          @proceed-to-next=${this._onProceedToNext}
         ></uvm-recording-prompter>
       </div>
     `;

@@ -111,6 +111,7 @@ type RecordingState = 'idle' | 'listening' | 'recording' | 'processing';
  * @fires recording-complete - Fired when user finishes recording with audio blob
  * @fires recording-cancelled - Fired when user cancels the recording
  * @fires re-record-requested - Fired when user wants to redo the current prompt
+ * @fires proceed-to-next - Fired when user accepts the recording and wants to move to the next prompt
  *
  * @example
  * ```html
@@ -119,6 +120,7 @@ type RecordingState = 'idle' | 'listening' | 'recording' | 'processing';
  *   .promptIndex=${3}
  *   .totalPrompts=${12}
  *   @recording-complete=${this._onRecordingComplete}
+ *   @proceed-to-next=${this._onProceedToNext}
  * ></uvm-recording-prompter>
  * ```
  */
@@ -1171,6 +1173,29 @@ export class UvmRecordingPrompter extends LitElement {
   }
 
   /**
+   * Accept the recording and proceed to the next prompt.
+   */
+  private _proceedToNext(): void {
+    // Stop any preview playback first
+    this._stopPreviewPlayback();
+
+    const promptId = this.mode === 'paragraph' ? this.paragraphPrompt?.id : this.prompt?.id;
+    this.dispatchEvent(new CustomEvent('proceed-to-next', {
+      detail: { promptId, mode: this.mode },
+      bubbles: true,
+      composed: true,
+    }));
+
+    // Reset internal state for the next prompt
+    this._audioChunks = [];
+    this._liveAudioData = [];
+    this._recordedAudioBuffer = null;
+    this._currentWordIndex = -1;
+    this._spokenWords = new Set();
+    this._paragraphSpokenWordCount = 0;
+  }
+
+  /**
    * Update the component state.
    */
   private _updateState(newState: RecordingState): void {
@@ -2061,6 +2086,14 @@ export class UvmRecordingPrompter extends LitElement {
           `}
 
           ${this.state === 'idle' && this._audioChunks.length > 0 && html`
+            <sl-button
+              variant="primary"
+              size="large"
+              @click=${this._proceedToNext}
+            >
+              <sl-icon slot="prefix" name="check-lg"></sl-icon>
+              Accept & Next
+            </sl-button>
             <sl-tooltip content="Record again">
               <sl-button
                 variant="neutral"
