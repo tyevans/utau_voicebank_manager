@@ -32,6 +32,7 @@ import {
   analyzeLoudnessForNormalization,
   type NormalizationOptions,
   type JoinCorrectionOptions,
+  type JoinGainCorrection,
 } from '../utils/loudness-analysis.js';
 
 // Re-export spectral analysis types for consumers using dynamic overlap
@@ -620,6 +621,13 @@ export class MelodyPlayer {
       await this._audioContext.resume();
     }
 
+    // Pre-initialize granular shifter before capturing start time.
+    // This avoids async Tone.js initialization during note scheduling,
+    // which would cause the first notes to start late and overlap.
+    if (useGranular) {
+      await this._getGranularShifter().ensureInitialized();
+    }
+
     // Calculate sample boundaries from oto parameters (convert ms to seconds)
     const sampleStart = otoEntry.offset / 1000;
     const sampleEnd = this._calculateSampleEnd(otoEntry, audioBuffer.duration);
@@ -637,9 +645,17 @@ export class MelodyPlayer {
     // Sort notes by start time for proper overlap handling
     const sortedNotes = [...notes].sort((a, b) => a.startTime - b.startTime);
 
-    // Record sequence start time for position tracking
-    this._sequenceStartTime = this._audioContext.currentTime;
+    // Record sequence start time for position tracking.
+    // Offset by preutterance so that the first note's effective start
+    // (startTime - preutterance) lands at currentTime instead of being
+    // clamped forward, which would collapse early notes onto the same time.
+    this._sequenceStartTime = this._audioContext.currentTime + preutterance;
     this._isPlaying = true;
+
+    console.group('[MelodyPlayer] playSequence diagnostics');
+    console.log('sequenceStartTime:', this._sequenceStartTime.toFixed(4));
+    console.log('oto params (s):', { sampleStart, sampleDuration, preutterance, overlap });
+    console.log('notes:', sortedNotes.length, '| granular:', this._useGranular, '| psola:', this._usePsola);
 
     // Schedule each note
     for (let i = 0; i < sortedNotes.length; i++) {
@@ -654,6 +670,7 @@ export class MelodyPlayer {
         audioBuffer,
       });
     }
+    console.groupEnd();
 
     // Individual node cleanup is handled by source.onended (playback-rate path)
     // and handle.onended (granular path). When the last ActiveNode is removed,
@@ -826,6 +843,13 @@ export class MelodyPlayer {
       await this._audioContext.resume();
     }
 
+    // Pre-initialize granular shifter before capturing start time.
+    // This avoids async Tone.js initialization during note scheduling,
+    // which would cause the first notes to start late and overlap.
+    if (useGranular) {
+      await this._getGranularShifter().ensureInitialized();
+    }
+
     // Sort notes by start time for proper overlap handling
     const sortedNotes = [...notes].sort((a, b) => a.startTime - b.startTime);
 
@@ -874,86 +898,126 @@ export class MelodyPlayer {
       }
     }
 
-    // Record sequence start time for position tracking
-    this._sequenceStartTime = this._audioContext.currentTime;
+    // Find the first schedulable note's preutterance to offset the start time.
+    let firstNotePreutterance = 0;
+    for (const note of sortedNotes) {
+      const sd = sampleMap.get(note.alias);
+      if (sd) {
+        firstNotePreutterance = sd.otoEntry.preutterance / 1000;
+        break;
+      }
+    }
+
+    // Record sequence start time for position tracking.
+    // Offset by first note's preutterance so its effective start lands at
+    // currentTime instead of being clamped forward (collapsing early notes).
+    this._sequenceStartTime = this._audioContext.currentTime + firstNotePreutterance;
     this._isPlaying = true;
 
-    // Schedule each note with its specific sample
-    let lastScheduledNote: PhraseNote | null = null;
-    let lastSampleData: SampleData | null = null;
+    console.group('[MelodyPlayer] playPhrase diagnostics');
+    console.log('sequenceStartTime:', this._sequenceStartTime.toFixed(4));
+    console.log('notes:', sortedNotes.length, '| granular:', this._useGranular, '| psola:', this._usePsola);
+
+    // Log normalization gains for volume diagnostics
+    if (useLoudnessNormalization && normalizationGains.size > 0) {
+      const gainEntries = [...normalizationGains.entries()].map(
+        ([alias, gain]) => `${alias}: ${(20 * Math.log10(gain)).toFixed(1)}dB (${gain.toFixed(3)}x)`
+      );
+      console.log('normalization gains:', gainEntries.join(', '));
+    }
+
+    // Filter to schedulable notes (those with samples in the map)
+    const schedulableNotes: Array<{ note: PhraseNote; sampleData: SampleData; grainSize: number }> = [];
+    for (const note of sortedNotes) {
+      const sampleData = sampleMap.get(note.alias);
+      if (sampleData) {
+        schedulableNotes.push({
+          note,
+          sampleData,
+          grainSize: grainSizeCache.get(note.alias) ?? grainSize,
+        });
+      }
+    }
+
+    // Pre-compute join corrections between all consecutive note pairs.
+    // This allows applying BOTH gainA (outgoing) and gainB (incoming) to
+    // each note, which the previous approach couldn't do because gainA needed
+    // to be applied to an already-scheduled note.
+    const joinCorrections: JoinGainCorrection[] = [];
+    if (useLoudnessNormalization) {
+      for (let i = 0; i < schedulableNotes.length - 1; i++) {
+        const dataA = schedulableNotes[i].sampleData;
+        const dataB = schedulableNotes[i + 1].sampleData;
+        joinCorrections.push(calculateJoinGainCorrection(
+          dataA.audioBuffer,
+          dataB.audioBuffer,
+          {
+            ...joinCorrectionOptions,
+            otoTimingA: {
+              offset: dataA.otoEntry.offset,
+              consonant: dataA.otoEntry.consonant,
+              cutoff: dataA.otoEntry.cutoff,
+            },
+            otoTimingB: {
+              offset: dataB.otoEntry.offset,
+              consonant: dataB.otoEntry.consonant,
+              cutoff: dataB.otoEntry.cutoff,
+            },
+          }
+        ));
+      }
+    }
 
     // Get spectral cache if using dynamic overlap
     const spectralCache = useDynamicOverlap ? this._getSpectralCache() : null;
 
-    for (const note of sortedNotes) {
-      const sampleData = sampleMap.get(note.alias);
-      if (!sampleData) {
-        // Skip notes with missing samples
-        continue;
-      }
-
-      // Get grain size for this sample (adaptive or default)
-      const noteGrainSize = grainSizeCache.get(note.alias) ?? grainSize;
+    // Schedule each note with its specific sample
+    for (let i = 0; i < schedulableNotes.length; i++) {
+      const { note, sampleData, grainSize: noteGrainSize } = schedulableNotes[i];
+      const prev = i > 0 ? schedulableNotes[i - 1] : null;
 
       // Calculate dynamic overlap if enabled and we have a previous sample
       let dynamicOverlapMs: number | undefined;
-      if (useDynamicOverlap && spectralCache && lastSampleData) {
+      if (useDynamicOverlap && spectralCache && prev) {
         const distanceResult = spectralCache.getDistance(
-          lastSampleData.audioBuffer,
+          prev.sampleData.audioBuffer,
           sampleData.audioBuffer,
           spectralDistanceOptions
         );
-        // Scale the current note's overlap based on spectral distance
         const baseOverlap = sampleData.otoEntry.overlap;
         const additionalFactor = (dynamicOverlapMaxScale - 1) * distanceResult.distance;
         dynamicOverlapMs = baseOverlap * (1 + additionalFactor);
       }
 
-      // Calculate loudness normalization gain and join correction
+      // Calculate loudness normalization gain and combined join correction
       let normalizationGain = 1;
-      let joinCorrection: { gainA: number; gainB: number } | undefined;
+      let joinGain = 1;
 
       if (useLoudnessNormalization) {
-        // Get global normalization gain for this sample
         normalizationGain = normalizationGains.get(note.alias) ?? 1;
 
-        // Calculate join correction if we have a previous sample
-        if (lastSampleData) {
-          const correction = calculateJoinGainCorrection(
-            lastSampleData.audioBuffer,
-            sampleData.audioBuffer,
-            {
-              ...joinCorrectionOptions,
-              otoTimingA: {
-                offset: lastSampleData.otoEntry.offset,
-                consonant: lastSampleData.otoEntry.consonant,
-                cutoff: lastSampleData.otoEntry.cutoff,
-              },
-              otoTimingB: {
-                offset: sampleData.otoEntry.offset,
-                consonant: sampleData.otoEntry.consonant,
-                cutoff: sampleData.otoEntry.cutoff,
-              },
-            }
-          );
-          joinCorrection = { gainA: correction.gainA, gainB: correction.gainB };
-        }
+        // Combine incoming gainB (from join with previous note) and
+        // outgoing gainA (from join with next note). This applies the
+        // full correction from both sides, unlike the previous approach
+        // which could only apply gainB and lost gainA entirely.
+        const incomingGainB = i > 0 ? joinCorrections[i - 1].gainB : 1;
+        const outgoingGainA = i < schedulableNotes.length - 1 ? joinCorrections[i].gainA : 1;
+        joinGain = incomingGainB * outgoingGainA;
       }
 
       this._schedulePhraseNote(
         note,
-        lastScheduledNote,
-        lastSampleData,
+        prev?.note ?? null,
+        prev?.sampleData ?? null,
         sampleData,
         noteGrainSize,
         dynamicOverlapMs,
         normalizationGain,
-        joinCorrection
+        joinGain
       );
-
-      lastScheduledNote = note;
-      lastSampleData = sampleData;
     }
+
+    console.groupEnd();
 
     // Individual node cleanup is handled by source.onended (playback-rate path)
     // and handle.onended (granular path). When the last ActiveNode is removed,
@@ -1052,19 +1116,21 @@ export class MelodyPlayer {
     const { sampleStart, sampleDuration, preutterance, overlap, audioBuffer } = params;
 
     // Adjust timing: the note's "attack point" should align with startTime,
-    // but the sample actually starts preutterance before that
-    const effectiveStartTime = prevNote
-      ? this._sequenceStartTime + note.startTime - preutterance
-      : this._sequenceStartTime + note.startTime;
+    // but the sample actually starts preutterance before that.
+    // Apply preutterance uniformly to ALL notes (including the first) so that
+    // every note gets the same duration and timing structure. Without this,
+    // the first note is shorter than subsequent notes because it misses the
+    // preutterance lead-in, making it sound rushed when the second note's
+    // crossfade starts early.
+    const effectiveStartTime = this._sequenceStartTime + note.startTime - preutterance;
     const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
 
     // Apply velocity (prepared for future dynamics support)
     const velocity = note.velocity ?? 1;
 
-    // Calculate note duration (for granular, we don't adjust for playback rate)
-    const noteDuration = prevNote
-      ? Math.min(note.duration + preutterance, sampleDuration)
-      : Math.min(note.duration, sampleDuration);
+    // Calculate note duration (for granular, we don't adjust for playback rate).
+    // Always include preutterance in duration for consistent note lengths.
+    const noteDuration = Math.min(note.duration + preutterance, sampleDuration);
 
     // Determine crossfade timing
     // For equal-power crossfade, both the outgoing note's fade-out and the
@@ -1076,13 +1142,25 @@ export class MelodyPlayer {
     // to maintain g_in(t)^2 + g_out(t)^2 = 1 (constant power).
     const fadeInTime = prevNote ? fadeTime : Math.min(fadeTime, 0.02);
 
-    // Use granular pitch shifting if enabled and pitch shift exceeds threshold.
-    // Small shifts (<=3 semitones) use playback-rate to avoid granular amplitude
-    // variability; formant distortion is negligible at these small intervals.
-    const shouldUseGranular = this._useGranular && Math.abs(note.pitch) > 3;
+    // Diagnostic logging for note scheduling
+    const clamped = whenToStart > effectiveStartTime;
+    const relEffective = (effectiveStartTime - this._sequenceStartTime).toFixed(4);
+    const relWhen = (whenToStart - this._sequenceStartTime).toFixed(4);
+    console.log(
+      `[Note] pitch=${note.pitch} start=${note.startTime.toFixed(3)} | effective=${relEffective} when=${relWhen} ${clamped ? '(CLAMPED) ' : ''}| dur=${noteDuration.toFixed(3)} fadeIn=${fadeInTime.toFixed(3)} fadeOut=${fadeTime.toFixed(3)}`
+    );
+    if (prevNote) {
+      const prevEffective = this._sequenceStartTime + prevNote.startTime - preutterance;
+      const prevWhen = Math.max(prevEffective, this._sequenceStartTime);
+      const gapFromPrev = whenToStart - prevWhen;
+      console.log(
+        `  -> gap from prev note start: ${gapFromPrev.toFixed(3)} s (requested: ${(note.startTime - prevNote.startTime).toFixed(3)} s)`
+      );
+    }
 
-    if (shouldUseGranular) {
-      // Granular pitch shifting - preserves formants
+    if (this._useGranular) {
+      // Granular pitch shifting - preserves formants and ensures consistent
+      // timbre across all notes in a sequence regardless of pitch interval
       this._scheduleGranularNote(note, {
         audioBuffer,
         sampleStart,
@@ -1400,7 +1478,7 @@ export class MelodyPlayer {
    * @param grainSize - Grain size to use for this note (optional, uses class default if not provided)
    * @param dynamicOverlapMs - Dynamic overlap in milliseconds calculated from spectral distance (optional)
    * @param normalizationGain - Global normalization gain for this sample (optional, default 1)
-   * @param joinCorrection - Gain correction for join with previous sample (optional)
+   * @param joinGain - Combined join correction gain (incoming gainB * outgoing gainA, default 1)
    */
   private _schedulePhraseNote(
     note: PhraseNote,
@@ -1410,7 +1488,7 @@ export class MelodyPlayer {
     grainSize?: number,
     dynamicOverlapMs?: number,
     normalizationGain = 1,
-    joinCorrection?: { gainA: number; gainB: number }
+    joinGain = 1
   ): void {
     const { audioBuffer, otoEntry } = sampleData;
 
@@ -1434,11 +1512,14 @@ export class MelodyPlayer {
       : otoEntry.overlap / 1000;
 
     // Adjust timing: the note's "attack point" should align with startTime,
-    // but the sample actually starts preutterance before that
+    // but the sample actually starts preutterance before that.
+    // Apply preutterance uniformly to ALL notes (including the first) so that
+    // every note gets the same duration and timing structure. Without this,
+    // the first note is shorter than subsequent notes because it misses the
+    // preutterance lead-in, making it sound rushed when the second note's
+    // crossfade starts early.
     const hasPrevNote = prevNote !== null && prevSampleData !== null;
-    const effectiveStartTime = hasPrevNote
-      ? this._sequenceStartTime + note.startTime - preutterance
-      : this._sequenceStartTime + note.startTime;
+    const effectiveStartTime = this._sequenceStartTime + note.startTime - preutterance;
     const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
 
     // Apply velocity and normalization gain
@@ -1447,16 +1528,11 @@ export class MelodyPlayer {
     // Apply normalization gain to the velocity
     const velocity = baseVelocity * normalizationGain;
 
-    // Apply join correction if available
-    // joinCorrection.gainB should be applied to the start of this note
-    // The gainB factor adjusts this note's level to match the end of the previous note
-    const joinGainB = joinCorrection?.gainB ?? 1;
-    const effectiveVelocity = velocity * joinGainB;
+    // Apply combined join correction (incoming gainB + outgoing gainA)
+    const effectiveVelocity = velocity * joinGain;
 
-    // Calculate note duration
-    const noteDuration = hasPrevNote
-      ? Math.min(note.duration + preutterance, sampleDuration)
-      : Math.min(note.duration, sampleDuration);
+    // Calculate note duration. Always include preutterance for consistent note lengths.
+    const noteDuration = Math.min(note.duration + preutterance, sampleDuration);
 
     // Determine crossfade timing using the (potentially dynamic) overlap.
     // For equal-power crossfade, the incoming note's fade-in and the outgoing
@@ -1468,16 +1544,29 @@ export class MelodyPlayer {
     // (no previous note to crossfade with), use a short anti-click fade.
     const fadeInTime = hasPrevNote ? fadeTime : Math.min(fadeTime, 0.02);
 
-    // Use granular pitch shifting if enabled and pitch shift exceeds threshold.
-    // Small shifts (<=3 semitones) use playback-rate to avoid granular amplitude
-    // variability; formant distortion is negligible at these small intervals.
-    const shouldUseGranular = this._useGranular && Math.abs(note.pitch) > 3;
+    // Diagnostic logging for phrase note scheduling
+    const clamped = whenToStart > effectiveStartTime;
+    const relEffective = (effectiveStartTime - this._sequenceStartTime).toFixed(4);
+    const relWhen = (whenToStart - this._sequenceStartTime).toFixed(4);
+    console.log(
+      `[PhraseNote] alias=${note.alias} pitch=${note.pitch} start=${note.startTime.toFixed(3)} | effective=${relEffective} when=${relWhen} ${clamped ? '(CLAMPED) ' : ''}| dur=${noteDuration.toFixed(3)} fadeIn=${fadeInTime.toFixed(3)} fadeOut=${fadeTime.toFixed(3)} preut=${preutterance.toFixed(3)} ovlp=${overlap.toFixed(3)}`
+    );
+    if (prevNote) {
+      const prevPreutterance = prevSampleData!.otoEntry.preutterance / 1000;
+      const prevEffective = this._sequenceStartTime + prevNote.startTime - prevPreutterance;
+      const prevWhen = Math.max(prevEffective, this._sequenceStartTime);
+      const gapFromPrev = whenToStart - prevWhen;
+      console.log(
+        `  -> gap from prev note start: ${gapFromPrev.toFixed(3)} s (requested: ${(note.startTime - prevNote.startTime).toFixed(3)} s)`
+      );
+    }
 
     // Use provided grain size or fall back to class default
     const effectiveGrainSize = grainSize ?? this._grainSize;
 
-    if (shouldUseGranular) {
-      // Granular pitch shifting - preserves formants
+    if (this._useGranular) {
+      // Granular pitch shifting - preserves formants and ensures consistent
+      // timbre across all notes in a phrase regardless of pitch interval
       this._scheduleGranularPhraseNote(note, {
         audioBuffer,
         sampleStart,

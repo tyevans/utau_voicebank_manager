@@ -469,26 +469,29 @@ export function analyzeLoudnessForNormalization(
     endTime: safePlaybackEnd,
   });
 
-  // Blend vowel-region and full-region RMS to prevent normalization from being
-  // entirely driven by the loudest sustained portion. For samples like "ku" where
-  // the consonant "k" is near-silent, the vowel-only RMS is much higher than the
-  // full-region RMS, causing normalization to over-attenuate the sample. Blending
-  // reduces this effect while still weighting toward the vowel (the "ra" fix).
-  const VOWEL_WEIGHT = 0.7;
-  const FULL_WEIGHT = 0.3;
-  const blendedRmsDb = vowelAnalysis.hasContent && fullAnalysis.hasContent
-    ? VOWEL_WEIGHT * vowelAnalysis.rmsDb + FULL_WEIGHT * fullAnalysis.rmsDb
-    : vowelAnalysis.rmsDb;
-  const blendedRms = blendedRmsDb > -Infinity ? dbToLinear(blendedRmsDb) : 0;
+  // Use vowel-region RMS as the sole loudness metric for normalization.
+  // The vowel is the sustained portion that determines perceived loudness.
+  //
+  // Previous approach blended 70% vowel + 30% full-region RMS, but this caused
+  // systematic volume bias in VCV samples: full-region RMS for VCV includes a
+  // preceding vowel (e.g., "u" in "u ra") which inflated the measured loudness,
+  // causing normalization to under-amplify VCV samples. Meanwhile, CV samples
+  // like "- sa" had lower full-region RMS (quiet consonant "s"), getting over-
+  // amplified. The result was "sa"/"ku" screaming while "ra" was inaudible.
+  //
+  // Pure vowel-region RMS treats all sample types (CV, VCV, CVVC) consistently
+  // by measuring only the target vowel, which is the portion the listener
+  // perceives at steady state. The peak limiter still uses full-region peak
+  // to protect against clipping from consonant transients.
 
-  // Combine: blended RMS for perceived loudness, full-region peak for headroom
+  // Combine: vowel-region RMS for perceived loudness, full-region peak for headroom
   return {
-    rms: blendedRms,
-    rmsDb: blendedRmsDb,
+    rms: vowelAnalysis.rms,
+    rmsDb: vowelAnalysis.rmsDb,
     peak: fullAnalysis.peak,
     peakDb: fullAnalysis.peakDb,
-    crestFactor: blendedRms > SILENCE_THRESHOLD
-      ? fullAnalysis.peak / blendedRms
+    crestFactor: vowelAnalysis.rms > SILENCE_THRESHOLD
+      ? fullAnalysis.peak / vowelAnalysis.rms
       : 0,
     hasContent: vowelAnalysis.hasContent,
   };
