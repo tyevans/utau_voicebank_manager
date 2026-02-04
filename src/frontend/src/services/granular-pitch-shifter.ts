@@ -191,6 +191,26 @@ export interface PitchShiftOptions {
 }
 
 /**
+ * Vibrato LFO nodes for cleanup tracking.
+ *
+ * When vibrato is active on the granular path, a native Web Audio OscillatorNode
+ * generates the LFO waveform at sample-accurate precision, connected through a
+ * GainNode for depth control and an AnalyserNode for value sampling. A Tone.js
+ * Transport-scheduled repeating event reads the LFO output and applies it to
+ * the GrainPlayer's detune property at grain-rate resolution.
+ */
+export interface VibratoLFONodes {
+  /** Native oscillator generating the LFO sine wave */
+  oscillator: OscillatorNode;
+  /** Gain node controlling vibrato depth (in cents) */
+  depthGain: GainNode;
+  /** AnalyserNode used to sample the current LFO value */
+  analyser: AnalyserNode;
+  /** Tone.js Transport scheduled event ID for the update loop */
+  transportEventId: number;
+}
+
+/**
  * Handle returned from playPitchShifted for controlling playback.
  */
 export interface PlaybackHandle {
@@ -200,8 +220,8 @@ export interface PlaybackHandle {
   player: Tone.GrainPlayer;
   /** The gain node for volume control */
   gainNode: Tone.Gain;
-  /** The LFO for vibrato (if vibrato is enabled) */
-  vibratoLFO?: Tone.LFO;
+  /** Native Web Audio LFO nodes for vibrato (if vibrato is enabled) */
+  vibratoLFO?: VibratoLFONodes;
 }
 
 /**
@@ -692,15 +712,20 @@ export class GranularPitchShifter {
 
     // Set up vibrato modulation if specified
     //
-    // Vibrato is implemented by scheduling periodic detune changes using Tone.Draw.
-    // While Tone.js has LFO, GrainPlayer.detune is typed as a number property
-    // rather than an AudioParam, so we use scheduled value updates instead.
+    // Vibrato uses a native Web Audio OscillatorNode as the LFO source for
+    // sample-accurate waveform generation. Since GrainPlayer.detune is a plain
+    // number property (not an AudioParam), we cannot connect the oscillator
+    // directly. Instead, the oscillator feeds through a GainNode (for depth
+    // control including delayed onset) into an AnalyserNode. A Tone.js
+    // Transport-scheduled repeating callback samples the AnalyserNode output
+    // and applies the value to player.detune. This is driven by the audio
+    // clock rather than requestAnimationFrame, avoiding rAF jitter and
+    // background-tab throttling.
     //
-    // This approach:
-    // 1. Calculates the sine wave LFO values manually
-    // 2. Schedules detune updates at ~60 FPS during the vibrato period
-    // 3. Supports delay before vibrato starts for natural note attacks
-    let vibratoLFO: Tone.LFO | undefined;
+    // The update rate is matched to the grain rate (1/grainSize) since that
+    // is the effective resolution -- each grain reads player.detune once at
+    // creation time.
+    let vibratoLFONodes: VibratoLFONodes | undefined;
 
     if (vibrato) {
       // Calculate vibrato timing
@@ -710,43 +735,95 @@ export class GranularPitchShifter {
 
       // Only apply vibrato if it starts before the note ends
       if (vibratoStartTime < vibratoEndTime) {
-        // Create a dummy LFO just for the PlaybackHandle interface
-        // (it won't actually be used for audio, just for cleanup tracking)
-        vibratoLFO = new Tone.LFO({
-          frequency: vibrato.rate,
-          type: 'sine',
-        });
+        const rawCtx = this._audioContext;
 
-        // Schedule periodic detune updates during the vibrato period
-        // Using ~60 updates per second for smooth modulation
-        const updateInterval = 1 / 60; // seconds
-        const vibratoDuration = vibratoEndTime - vibratoStartTime;
-        const numUpdates = Math.ceil(vibratoDuration / updateInterval);
+        // 1. Create native OscillatorNode as the LFO source
+        const lfoOscillator = rawCtx.createOscillator();
+        lfoOscillator.type = 'sine';
+        lfoOscillator.frequency.value = vibrato.rate;
 
-        for (let i = 0; i < numUpdates; i++) {
-          const updateTime = vibratoStartTime + i * updateInterval;
-          if (updateTime < vibratoEndTime) {
-            // Calculate LFO value at this time point using sine wave
-            // phase = time * frequency * 2 * PI
-            const elapsedTime = i * updateInterval;
-            const phase = elapsedTime * vibrato.rate * 2 * Math.PI;
-            const lfoValue = Math.sin(phase) * vibrato.depth;
-            // Use effectivePitchShift for base detune (0 when using PSOLA)
-            const newDetune = effectivePitchShift * 100 + lfoValue;
-
-            // Schedule the detune change using Tone.Draw
-            // This ensures updates happen in sync with the audio thread
-            Tone.Draw.schedule(() => {
-              try {
-                if (player.state === 'started') {
-                  player.detune = newDetune;
-                }
-              } catch {
-                // Player may have been disposed
-              }
-            }, updateTime);
-          }
+        // 2. Create GainNode for depth control (output in cents)
+        const depthGain = rawCtx.createGain();
+        // Handle vibrato delay: start at 0 depth, ramp to target depth
+        if (vibratoDelay > 0) {
+          depthGain.gain.setValueAtTime(0, startTime);
+          depthGain.gain.setValueAtTime(0, vibratoStartTime);
+          depthGain.gain.linearRampToValueAtTime(
+            vibrato.depth,
+            vibratoStartTime + Math.min(0.05, (vibratoEndTime - vibratoStartTime) * 0.1)
+          );
+        } else {
+          depthGain.gain.setValueAtTime(vibrato.depth, startTime);
         }
+        // Ramp down to 0 at note end to avoid abrupt cutoff
+        const rampDownStart = Math.max(vibratoStartTime, vibratoEndTime - 0.02);
+        if (rampDownStart > vibratoStartTime) {
+          depthGain.gain.setValueAtTime(vibrato.depth, rampDownStart);
+        }
+        depthGain.gain.linearRampToValueAtTime(0, vibratoEndTime);
+
+        // 3. Create AnalyserNode to sample the LFO output value
+        //    Using fftSize=32 (minimum) since we only need a single time-domain sample
+        const analyser = rawCtx.createAnalyser();
+        analyser.fftSize = 32;
+
+        // Connect: oscillator -> depthGain -> analyser
+        lfoOscillator.connect(depthGain);
+        depthGain.connect(analyser);
+
+        // Start the oscillator aligned with the note
+        lfoOscillator.start(startTime);
+        lfoOscillator.stop(vibratoEndTime + 0.1);
+
+        // 4. Schedule audio-clock-based updates via Tone.Transport
+        //    Update at grain rate since that is the effective resolution
+        //    (each grain reads player.detune once at creation)
+        const updateInterval = Math.max(grainSize * 0.5, 1 / 120); // At least 2x grain rate, cap at 120Hz
+        const baseDetune = effectivePitchShift * 100;
+        const sampleBuffer = new Float32Array(analyser.fftSize);
+
+        const transportEventId = Tone.getTransport().scheduleRepeat(
+          (time) => {
+            // Only update while the note is active
+            if (time < vibratoStartTime || time >= vibratoEndTime) {
+              // Before vibrato starts, ensure base detune
+              if (time < vibratoStartTime) {
+                try {
+                  player.detune = baseDetune;
+                } catch {
+                  // Player may have been disposed
+                }
+              }
+              return;
+            }
+            try {
+              if (player.state === 'started') {
+                // Sample the LFO value from the AnalyserNode
+                analyser.getFloatTimeDomainData(sampleBuffer);
+                // Use the first sample as the current LFO value (in cents, pre-scaled by depthGain)
+                const lfoValue = sampleBuffer[0];
+                player.detune = baseDetune + lfoValue;
+              }
+            } catch {
+              // Player may have been disposed
+            }
+          },
+          updateInterval,
+          startTime,
+          playDuration
+        );
+
+        // Ensure Transport is started for scheduling to work
+        if (Tone.getTransport().state !== 'started') {
+          Tone.getTransport().start();
+        }
+
+        vibratoLFONodes = {
+          oscillator: lfoOscillator,
+          depthGain,
+          analyser,
+          transportEventId,
+        };
       }
     }
 
@@ -761,10 +838,17 @@ export class GranularPitchShifter {
           player.stop();
           player.dispose();
           gainNode.dispose();
-          // Clean up vibrato LFO if present
-          if (vibratoLFO) {
-            vibratoLFO.stop();
-            vibratoLFO.dispose();
+          // Clean up vibrato LFO nodes if present
+          if (vibratoLFONodes) {
+            try {
+              vibratoLFONodes.oscillator.stop();
+            } catch {
+              // May already be stopped
+            }
+            vibratoLFONodes.oscillator.disconnect();
+            vibratoLFONodes.depthGain.disconnect();
+            vibratoLFONodes.analyser.disconnect();
+            Tone.getTransport().clear(vibratoLFONodes.transportEventId);
           }
         } catch {
           // Ignore errors if already disposed
@@ -773,7 +857,7 @@ export class GranularPitchShifter {
       },
       player,
       gainNode,
-      vibratoLFO,
+      vibratoLFO: vibratoLFONodes,
     };
 
     this._activePlayers.add(handle);

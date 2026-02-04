@@ -279,12 +279,30 @@ export interface SampleData {
 }
 
 /**
+ * Native Web Audio LFO nodes used for vibrato on the playback-rate path.
+ *
+ * The OscillatorNode generates a sine wave at the vibrato rate, routed
+ * through a GainNode that scales the output to the desired depth in cents.
+ * The GainNode output is connected directly to source.detune (a native
+ * AudioParam), providing sample-accurate pitch modulation without any
+ * polling or scheduling overhead.
+ */
+interface VibratoNodes {
+  /** Oscillator generating the LFO sine wave */
+  oscillator: OscillatorNode;
+  /** Gain node controlling vibrato depth (output in cents) */
+  depthGain: GainNode;
+}
+
+/**
  * Internal representation of an active audio node for cleanup tracking.
  */
 interface ActiveNode {
   source: AudioBufferSourceNode | null;
   gainNode: GainNode | null;
   granularHandle: PlaybackHandle | null;
+  /** Native LFO nodes for vibrato on the playback-rate path */
+  vibratoNodes: VibratoNodes | null;
   startTime: number;
   endTime: number;
 }
@@ -477,6 +495,8 @@ export class MelodyPlayer {
       } catch {
         // Ignore errors if already disconnected
       }
+      // Clean up vibrato LFO nodes
+      this._cleanupVibratoNodes(node.vibratoNodes);
     }
     this._activeNodes = [];
 
@@ -977,6 +997,8 @@ export class MelodyPlayer {
       } catch {
         // Ignore errors if already stopped
       }
+      // Clean up vibrato LFO nodes
+      this._cleanupVibratoNodes(node.vibratoNodes);
     }
 
     // Also stop any remaining granular playbacks
@@ -1161,6 +1183,7 @@ export class MelodyPlayer {
           source: null,
           gainNode: null,
           granularHandle: handle,
+          vibratoNodes: null,
           startTime: whenToStart,
           endTime: whenToStart + adjustedNoteDuration,
         };
@@ -1235,6 +1258,13 @@ export class MelodyPlayer {
       envelope,
     });
 
+    // Set up vibrato modulation if specified.
+    //
+    // On the playback-rate path, AudioBufferSourceNode.detune is a native
+    // AudioParam, so we can connect a Web Audio OscillatorNode LFO directly
+    // for sample-accurate pitch modulation with zero polling overhead.
+    const vibratoNodes = this._createVibratoLFO(note.vibrato, source.detune, whenToStart, noteDuration);
+
     // Schedule the source node.
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
@@ -1249,6 +1279,7 @@ export class MelodyPlayer {
       source,
       gainNode,
       granularHandle: null,
+      vibratoNodes,
       startTime: whenToStart,
       endTime: whenToStart + noteDuration,
     };
@@ -1323,6 +1354,9 @@ export class MelodyPlayer {
     const fadeOutCurve = this._generateCrossfadeCurve(safeFadeOutTime, false, velocity);
     gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, safeFadeOutTime);
 
+    // Set up vibrato modulation if specified (same native LFO approach as primary path)
+    const vibratoNodes = this._createVibratoLFO(note.vibrato, source.detune, whenToStart, noteDuration);
+
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
@@ -1335,6 +1369,7 @@ export class MelodyPlayer {
       source,
       gainNode,
       granularHandle: null,
+      vibratoNodes,
       startTime: whenToStart,
       endTime: whenToStart + noteDuration,
     };
@@ -1536,6 +1571,7 @@ export class MelodyPlayer {
           source: null,
           gainNode: null,
           granularHandle: handle,
+          vibratoNodes: null,
           startTime: whenToStart,
           endTime: whenToStart + adjustedNoteDuration,
         };
@@ -1603,6 +1639,9 @@ export class MelodyPlayer {
       envelope,
     });
 
+    // Set up vibrato modulation if specified (same native LFO approach as primary path)
+    const vibratoNodes = this._createVibratoLFO(note.vibrato, source.detune, whenToStart, noteDuration);
+
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
@@ -1615,6 +1654,7 @@ export class MelodyPlayer {
       source,
       gainNode,
       granularHandle: null,
+      vibratoNodes,
       startTime: whenToStart,
       endTime: whenToStart + noteDuration,
     };
@@ -1763,6 +1803,101 @@ export class MelodyPlayer {
   }
 
   /**
+   * Create a native Web Audio OscillatorNode LFO for vibrato modulation
+   * on the playback-rate path.
+   *
+   * Connects an OscillatorNode (LFO) through a GainNode (depth in cents)
+   * directly to the target AudioParam (source.detune). This provides
+   * sample-accurate pitch modulation with zero polling overhead.
+   *
+   * Vibrato delay is handled by scheduling the depth GainNode's gain:
+   * it starts at 0 and ramps to the target depth after the delay period.
+   *
+   * @param vibrato - Vibrato parameters (rate, depth, delay), or undefined to skip
+   * @param targetParam - The AudioParam to modulate (typically source.detune)
+   * @param noteStart - When the note starts (AudioContext time)
+   * @param noteDuration - Duration of the note in seconds
+   * @returns VibratoNodes for cleanup tracking, or null if no vibrato
+   */
+  private _createVibratoLFO(
+    vibrato: VibratoParams | undefined,
+    targetParam: AudioParam,
+    noteStart: number,
+    noteDuration: number
+  ): VibratoNodes | null {
+    if (!vibrato) {
+      return null;
+    }
+
+    const vibratoDelay = (vibrato.delay ?? 0) / 1000; // Convert ms to seconds
+    const vibratoStartTime = noteStart + vibratoDelay;
+    const vibratoEndTime = noteStart + noteDuration;
+
+    // Only apply vibrato if it starts before the note ends
+    if (vibratoStartTime >= vibratoEndTime) {
+      return null;
+    }
+
+    // 1. Create native OscillatorNode as the LFO source (sine wave at vibrato rate)
+    const oscillator = this._audioContext.createOscillator();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = vibrato.rate;
+
+    // 2. Create GainNode for depth control (scales oscillator output to cents)
+    const depthGain = this._audioContext.createGain();
+
+    // Handle vibrato delay: start at 0 depth, ramp to target after delay
+    if (vibratoDelay > 0) {
+      depthGain.gain.setValueAtTime(0, noteStart);
+      depthGain.gain.setValueAtTime(0, vibratoStartTime);
+      // Quick ramp-up to target depth (50ms or 10% of remaining vibrato duration)
+      const rampUpDuration = Math.min(0.05, (vibratoEndTime - vibratoStartTime) * 0.1);
+      depthGain.gain.linearRampToValueAtTime(vibrato.depth, vibratoStartTime + rampUpDuration);
+    } else {
+      depthGain.gain.setValueAtTime(vibrato.depth, noteStart);
+    }
+
+    // Ramp down to 0 at note end to avoid abrupt cutoff
+    const rampDownStart = Math.max(vibratoStartTime, vibratoEndTime - 0.02);
+    if (rampDownStart > vibratoStartTime) {
+      depthGain.gain.setValueAtTime(vibrato.depth, rampDownStart);
+    }
+    depthGain.gain.linearRampToValueAtTime(0, vibratoEndTime);
+
+    // 3. Connect: oscillator -> depthGain -> target AudioParam (source.detune)
+    //    This is a true native AudioParam connection -- sample-accurate modulation
+    //    with no polling, no scheduling callbacks, no jitter.
+    oscillator.connect(depthGain);
+    depthGain.connect(targetParam);
+
+    // 4. Schedule oscillator lifetime to match the note
+    oscillator.start(noteStart);
+    oscillator.stop(vibratoEndTime + 0.1); // Small buffer past note end
+
+    return { oscillator, depthGain };
+  }
+
+  /**
+   * Stop and disconnect vibrato LFO nodes.
+   */
+  private _cleanupVibratoNodes(vibratoNodes: VibratoNodes | null): void {
+    if (!vibratoNodes) {
+      return;
+    }
+    try {
+      vibratoNodes.oscillator.stop();
+    } catch {
+      // May already be stopped
+    }
+    try {
+      vibratoNodes.oscillator.disconnect();
+      vibratoNodes.depthGain.disconnect();
+    } catch {
+      // Ignore disconnect errors
+    }
+  }
+
+  /**
    * Remove a node from the active nodes list.
    */
   private _removeActiveNode(node: ActiveNode): void {
@@ -1782,6 +1917,9 @@ export class MelodyPlayer {
     } catch {
       // Ignore disconnect errors
     }
+
+    // Clean up vibrato LFO nodes
+    this._cleanupVibratoNodes(node.vibratoNodes);
 
     // If no more active nodes, mark as not playing
     if (this._activeNodes.length === 0) {
@@ -1804,6 +1942,8 @@ export class MelodyPlayer {
       } catch {
         // Ignore disconnect errors
       }
+      // Clean up vibrato LFO nodes
+      this._cleanupVibratoNodes(node.vibratoNodes);
     }
 
     // Also clean up granular shifter
