@@ -952,14 +952,18 @@ export class MelodyPlayer {
 
     // Adjust timing: the note's "attack point" should align with startTime,
     // but the sample actually starts preutterance before that
-    const effectiveStartTime = this._sequenceStartTime + note.startTime - preutterance;
+    const effectiveStartTime = prevNote
+      ? this._sequenceStartTime + note.startTime - preutterance
+      : this._sequenceStartTime + note.startTime;
     const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
 
     // Apply velocity (prepared for future dynamics support)
     const velocity = note.velocity ?? 1;
 
     // Calculate note duration (for granular, we don't adjust for playback rate)
-    const noteDuration = Math.min(note.duration + preutterance, sampleDuration);
+    const noteDuration = prevNote
+      ? Math.min(note.duration + preutterance, sampleDuration)
+      : Math.min(note.duration, sampleDuration);
 
     // Determine crossfade timing
     const fadeTime = Math.min(overlap, noteDuration * 0.5, 0.1);
@@ -991,7 +995,7 @@ export class MelodyPlayer {
         audioBuffer,
         sampleStart,
         sampleDuration,
-        preutterance,
+        preutterance: prevNote ? preutterance : 0,
         overlap,
         effectiveStartTime,
         velocity,
@@ -1033,12 +1037,19 @@ export class MelodyPlayer {
     // Get the envelope for this note (note-specific or default)
     const envelope = note.envelope ?? this._defaultEnvelope;
 
+    // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
+    // which means source material is consumed faster when pitching up. Adjust the
+    // maximum playable duration to prevent overlap with the next note.
+    const playbackRate = Math.pow(2, note.pitch / 12);
+    const adjustedSampleDuration = sampleDuration / playbackRate;
+    const adjustedNoteDuration = Math.min(noteDuration, adjustedSampleDuration);
+
     // Schedule granular playback
     shifter
       .playPitchShifted(audioBuffer, {
         pitchShift: note.pitch,
         startOffset: sampleStart,
-        duration: Math.min(noteDuration, sampleDuration),
+        duration: Math.min(adjustedNoteDuration, sampleDuration),
         when: whenToStart,
         grainSize: this._grainSize,
         overlap: this._grainOverlap,
@@ -1056,7 +1067,7 @@ export class MelodyPlayer {
           gainNode: null,
           granularHandle: handle,
           startTime: whenToStart,
-          endTime: whenToStart + noteDuration,
+          endTime: whenToStart + adjustedNoteDuration,
         };
         this._activeNodes.push(activeNode);
 
@@ -1279,7 +1290,10 @@ export class MelodyPlayer {
 
     // Adjust timing: the note's "attack point" should align with startTime,
     // but the sample actually starts preutterance before that
-    const effectiveStartTime = this._sequenceStartTime + note.startTime - preutterance;
+    const hasPrevNote = prevNote !== null && prevSampleData !== null;
+    const effectiveStartTime = hasPrevNote
+      ? this._sequenceStartTime + note.startTime - preutterance
+      : this._sequenceStartTime + note.startTime;
     const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
 
     // Apply velocity and normalization gain
@@ -1295,7 +1309,9 @@ export class MelodyPlayer {
     const effectiveVelocity = velocity * joinGainB;
 
     // Calculate note duration
-    const noteDuration = Math.min(note.duration + preutterance, sampleDuration);
+    const noteDuration = hasPrevNote
+      ? Math.min(note.duration + preutterance, sampleDuration)
+      : Math.min(note.duration, sampleDuration);
 
     // Determine crossfade timing using the (potentially dynamic) overlap
     const fadeTime = Math.min(overlap, noteDuration * 0.5, 0.1);
@@ -1336,7 +1352,7 @@ export class MelodyPlayer {
         audioBuffer,
         sampleStart,
         sampleDuration,
-        preutterance,
+        preutterance: hasPrevNote ? preutterance : 0,
         overlap,
         effectiveStartTime,
         velocity: effectiveVelocity,
@@ -1378,11 +1394,18 @@ export class MelodyPlayer {
     // Get the envelope for this note (note-specific or default)
     const envelope = note.envelope ?? this._defaultEnvelope;
 
+    // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
+    // which means source material is consumed faster when pitching up. Adjust the
+    // maximum playable duration to prevent overlap with the next note.
+    const playbackRate = Math.pow(2, note.pitch / 12);
+    const adjustedSampleDuration = sampleDuration / playbackRate;
+    const adjustedNoteDuration = Math.min(noteDuration, adjustedSampleDuration);
+
     shifter
       .playPitchShifted(audioBuffer, {
         pitchShift: note.pitch,
         startOffset: sampleStart,
-        duration: Math.min(noteDuration, sampleDuration),
+        duration: Math.min(adjustedNoteDuration, sampleDuration),
         when: whenToStart,
         grainSize,
         overlap: this._grainOverlap,
@@ -1399,7 +1422,7 @@ export class MelodyPlayer {
           gainNode: null,
           granularHandle: handle,
           startTime: whenToStart,
-          endTime: whenToStart + noteDuration,
+          endTime: whenToStart + adjustedNoteDuration,
         };
         this._activeNodes.push(activeNode);
       })
