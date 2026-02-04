@@ -29,7 +29,7 @@ import { SpectralDistanceCache, type SpectralDistanceOptions } from '../utils/sp
 import {
   calculateNormalizationGain,
   calculateJoinGainCorrection,
-  LoudnessAnalysisCache,
+  analyzeLoudnessForNormalization,
   type NormalizationOptions,
   type JoinCorrectionOptions,
 } from '../utils/loudness-analysis.js';
@@ -322,8 +322,8 @@ export class MelodyPlayer {
   // Dynamic overlap cache
   private _spectralDistanceCache: SpectralDistanceCache | null = null;
 
-  // Loudness analysis cache
-  private _loudnessAnalysisCache: LoudnessAnalysisCache | null = null;
+  // Note: Loudness analysis is computed per-phrase via analyzeLoudnessForNormalization()
+  // which uses oto consonant markers for accurate vowel-region RMS measurement.
 
   /**
    * Create a new MelodyPlayer.
@@ -448,15 +448,6 @@ export class MelodyPlayer {
     return this._spectralDistanceCache;
   }
 
-  /**
-   * Get or create the LoudnessAnalysisCache instance.
-   */
-  private _getLoudnessCache(): LoudnessAnalysisCache {
-    if (!this._loudnessAnalysisCache) {
-      this._loudnessAnalysisCache = new LoudnessAnalysisCache();
-    }
-    return this._loudnessAnalysisCache;
-  }
 
   /**
    * Calculate adaptive grain size based on detected pitch.
@@ -768,21 +759,22 @@ export class MelodyPlayer {
       }
     }
 
-    // Pre-compute loudness normalization factors if enabled
-    // IMPORTANT: Analyze only the oto-defined playback region (offset to cutoff),
-    // not the entire audio buffer. This ensures accurate normalization when samples
-    // have varying loudness across different regions of the file.
+    // Pre-compute loudness normalization factors if enabled.
+    // IMPORTANT: Analyze only the sustained vowel portion of each sample
+    // (from consonant marker to cutoff), not the full playback region.
+    // This prevents transient-heavy consonants like Japanese "ra" (alveolar flap)
+    // from being over-attenuated by the peak limiter. The consonant transient
+    // has high peak but low RMS; measuring RMS over just the vowel portion
+    // gives a more accurate representation of perceived loudness.
     const normalizationGains = new Map<string, number>();
-    const loudnessCache = useLoudnessNormalization ? this._getLoudnessCache() : null;
-    if (useLoudnessNormalization && loudnessCache) {
+    if (useLoudnessNormalization) {
       for (const [alias, data] of sampleMap) {
-        // Calculate the playable region from oto.ini parameters
-        const sampleStart = data.otoEntry.offset / 1000;
-        const sampleEnd = this._calculateSampleEnd(data.otoEntry, data.audioBuffer.duration);
-
-        const analysis = loudnessCache.getAnalysis(data.audioBuffer, {
-          startTime: sampleStart,
-          endTime: sampleEnd,
+        // Use vowel-region analysis that skips the consonant transient for RMS
+        // but still measures peak across the full playback region
+        const analysis = analyzeLoudnessForNormalization(data.audioBuffer, {
+          offset: data.otoEntry.offset,
+          consonant: data.otoEntry.consonant,
+          cutoff: data.otoEntry.cutoff,
         });
         const gain = calculateNormalizationGain(analysis, normalizationOptions);
         normalizationGains.set(alias, gain);

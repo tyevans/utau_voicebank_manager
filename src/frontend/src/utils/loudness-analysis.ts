@@ -155,11 +155,26 @@ export interface NormalizationOptions {
   minGainDb?: number;
 
   /**
-   * Maximum output peak in dB (default: -1dB).
+   * Maximum output peak in dB (default: -0.3dB).
    * Applies peak limiting to prevent clipping.
-   * The gain will be reduced if needed to keep peaks below this level.
+   * Uses a soft-knee approach: when the peak limiter would reduce gain
+   * by more than softKneeDb below the RMS-based target, only half the
+   * excess reduction is applied. This prevents transient-heavy samples
+   * (like Japanese "ra") from being over-attenuated.
    */
   maxPeakDb?: number;
+
+  /**
+   * Soft-knee threshold in dB (default: 6dB).
+   * When peak limiting would reduce the gain by more than this amount
+   * below what RMS normalization requested, only half of the excess
+   * reduction is applied. This preserves perceived loudness for samples
+   * with high crest factors (large peak-to-RMS ratio) like plosives
+   * and flap consonants.
+   *
+   * Set to 0 to disable soft-knee behavior and use hard limiting.
+   */
+  softKneeDb?: number;
 }
 
 /**
@@ -321,6 +336,134 @@ export function analyzeLoudness(
 }
 
 /**
+ * Oto.ini timing parameters for defining analysis regions.
+ * Mirrors the relevant fields from the OtoEntry type.
+ */
+export interface OtoTimingParams {
+  /** Playback start position in milliseconds */
+  offset: number;
+  /** Fixed region end in milliseconds (consonant boundary) */
+  consonant: number;
+  /** Playback end position in ms (negative = from audio end, 0 = play to end) */
+  cutoff: number;
+}
+
+/**
+ * Default duration in milliseconds to skip from the start of the playback
+ * region when oto consonant timing is not available. This skips the initial
+ * consonant transient which can inflate peak measurements.
+ */
+const DEFAULT_TRANSIENT_SKIP_MS = 40;
+
+/**
+ * Analyze loudness of the sustained (vowel) portion of a sample for normalization.
+ *
+ * For consonant-vowel samples, the initial consonant often has a sharp transient
+ * (high peak, low RMS) that causes the peak limiter in calculateNormalizationGain()
+ * to over-attenuate the sample. This is especially problematic for transient-heavy
+ * consonants like Japanese "ra" (alveolar flap/tap), plosives ("ta", "ka"), etc.
+ *
+ * This function analyzes two separate regions:
+ * 1. **RMS region**: The sustained vowel portion (from consonant marker to cutoff),
+ *    which better represents the perceived loudness of the sample.
+ * 2. **Peak region**: The full playback region (offset to cutoff), since peaks
+ *    anywhere in the sample can cause clipping.
+ *
+ * The returned LoudnessAnalysis uses the vowel RMS but the full-region peak,
+ * giving calculateNormalizationGain() the information it needs to set gain based
+ * on perceived loudness while still respecting peak headroom.
+ *
+ * @param buffer - The audio buffer to analyze
+ * @param otoParams - Oto.ini timing parameters (offset, consonant, cutoff)
+ * @returns Loudness analysis with vowel-region RMS and full-region peak
+ *
+ * @example
+ * ```typescript
+ * const analysis = analyzeLoudnessForNormalization(buffer, {
+ *   offset: 45,
+ *   consonant: 120,
+ *   cutoff: -140,
+ * });
+ * const gain = calculateNormalizationGain(analysis);
+ * ```
+ */
+export function analyzeLoudnessForNormalization(
+  buffer: AudioBuffer,
+  otoParams: OtoTimingParams
+): LoudnessAnalysis {
+  const { offset, consonant, cutoff } = otoParams;
+
+  // Calculate playback region boundaries in seconds
+  const playbackStart = offset / 1000;
+  let playbackEnd: number;
+  if (cutoff < 0) {
+    playbackEnd = buffer.duration + (cutoff / 1000);
+  } else if (cutoff > 0) {
+    playbackEnd = cutoff / 1000;
+  } else {
+    playbackEnd = buffer.duration;
+  }
+
+  // Clamp to buffer bounds
+  const safePlaybackStart = Math.max(0, playbackStart);
+  const safePlaybackEnd = Math.min(buffer.duration, playbackEnd);
+
+  if (safePlaybackEnd <= safePlaybackStart) {
+    return analyzeLoudness(buffer);
+  }
+
+  // Determine the RMS analysis start: skip the consonant transient.
+  // The oto "consonant" marker defines the end of the fixed (consonant) region,
+  // measured from the start of the file (not from offset). Use consonant marker
+  // if it falls within the playback region; otherwise skip a default amount.
+  const consonantEndSec = consonant / 1000;
+  let rmsStart: number;
+
+  if (consonantEndSec > safePlaybackStart && consonantEndSec < safePlaybackEnd) {
+    // Use the consonant marker -- this is the most accurate boundary
+    rmsStart = consonantEndSec;
+  } else {
+    // Fallback: skip a default amount from playback start
+    rmsStart = safePlaybackStart + (DEFAULT_TRANSIENT_SKIP_MS / 1000);
+  }
+
+  // Ensure rmsStart doesn't exceed the playback end (leave at least some audio)
+  // If the vowel region would be too short (< 20ms), fall back to full region
+  const MIN_VOWEL_REGION_SEC = 0.02;
+  if (rmsStart + MIN_VOWEL_REGION_SEC >= safePlaybackEnd) {
+    // Region too short for meaningful vowel analysis; use full playback region
+    return analyzeLoudness(buffer, {
+      startTime: safePlaybackStart,
+      endTime: safePlaybackEnd,
+    });
+  }
+
+  // Analyze RMS over the vowel/sustained portion only
+  const vowelAnalysis = analyzeLoudness(buffer, {
+    startTime: rmsStart,
+    endTime: safePlaybackEnd,
+  });
+
+  // Analyze peak over the full playback region (peaks anywhere can clip)
+  const fullAnalysis = analyzeLoudness(buffer, {
+    startTime: safePlaybackStart,
+    endTime: safePlaybackEnd,
+  });
+
+  // Combine: vowel RMS for perceived loudness, full-region peak for headroom
+  return {
+    rms: vowelAnalysis.rms,
+    rmsDb: vowelAnalysis.rmsDb,
+    peak: fullAnalysis.peak,
+    peakDb: fullAnalysis.peakDb,
+    crestFactor: vowelAnalysis.rms > SILENCE_THRESHOLD
+      ? fullAnalysis.peak / vowelAnalysis.rms
+      : 0,
+    hasContent: vowelAnalysis.hasContent,
+  };
+}
+
+/**
  * Calculate gain factor to normalize a sample to target RMS level.
  *
  * Takes a loudness analysis and calculates the gain needed to bring
@@ -354,7 +497,8 @@ export function calculateNormalizationGain(
     targetRmsDb = DEFAULT_TARGET_RMS_DB,
     maxGainDb = 12,
     minGainDb = -12,
-    maxPeakDb = -1,
+    maxPeakDb = -0.3,
+    softKneeDb = 6,
   } = options ?? {};
 
   // Handle silent audio
@@ -366,13 +510,31 @@ export function calculateNormalizationGain(
   const requiredGainDb = targetRmsDb - analysis.rmsDb;
 
   // Clamp to gain limits
-  let gainDb = Math.max(minGainDb, Math.min(maxGainDb, requiredGainDb));
+  const rmsGainDb = Math.max(minGainDb, Math.min(maxGainDb, requiredGainDb));
 
   // Check if the resulting peak would exceed maxPeakDb
-  const resultingPeakDb = analysis.peakDb + gainDb;
+  const resultingPeakDb = analysis.peakDb + rmsGainDb;
+  let gainDb = rmsGainDb;
+
   if (resultingPeakDb > maxPeakDb) {
-    // Reduce gain to keep peak below limit
-    gainDb = maxPeakDb - analysis.peakDb;
+    // Hard peak limit: the gain that would keep peak exactly at maxPeakDb
+    const hardLimitGainDb = maxPeakDb - analysis.peakDb;
+
+    // How much the peak limiter wants to cut below the RMS-based gain
+    const reductionDb = rmsGainDb - hardLimitGainDb;
+
+    if (softKneeDb > 0 && reductionDb > softKneeDb) {
+      // Soft-knee: apply full reduction up to softKneeDb, then only half
+      // of the excess. This prevents transient-heavy samples (high crest
+      // factor, e.g. Japanese "ra" flap) from being over-attenuated while
+      // still protecting against clipping for sustained loud signals.
+      const excessReduction = reductionDb - softKneeDb;
+      gainDb = rmsGainDb - softKneeDb - (excessReduction * 0.5);
+    } else {
+      // Within the knee or soft-knee disabled: apply full peak limiting
+      gainDb = hardLimitGainDb;
+    }
+
     // Still respect minimum gain
     gainDb = Math.max(minGainDb, gainDb);
   }
