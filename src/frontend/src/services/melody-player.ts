@@ -928,7 +928,7 @@ export class MelodyPlayer {
    * Handles pitch shifting, timing adjustments for preutterance,
    * and crossfade with the previous note.
    *
-   * When granular mode is enabled and pitch !== 0, uses GranularPitchShifter
+   * When granular mode is enabled and |pitch| > 3 semitones, uses GranularPitchShifter
    * for formant-preserving pitch shifts. Otherwise uses playback-rate shifting.
    */
   private _scheduleNote(
@@ -969,8 +969,10 @@ export class MelodyPlayer {
     // to maintain g_in(t)^2 + g_out(t)^2 = 1 (constant power).
     const fadeInTime = prevNote ? fadeTime : Math.min(fadeTime, 0.02);
 
-    // Use granular pitch shifting if enabled and pitch is not zero
-    const shouldUseGranular = this._useGranular && note.pitch !== 0;
+    // Use granular pitch shifting if enabled and pitch shift exceeds threshold.
+    // Small shifts (<=3 semitones) use playback-rate to avoid granular amplitude
+    // variability; formant distortion is negligible at these small intervals.
+    const shouldUseGranular = this._useGranular && Math.abs(note.pitch) > 3;
 
     if (shouldUseGranular) {
       // Granular pitch shifting - preserves formants
@@ -1262,7 +1264,7 @@ export class MelodyPlayer {
    * This is similar to _scheduleNote but handles per-note sample data,
    * extracting oto parameters from each note's specific sample.
    *
-   * When granular mode is enabled and pitch !== 0, uses GranularPitchShifter
+   * When granular mode is enabled and |pitch| > 3 semitones, uses GranularPitchShifter
    * for formant-preserving pitch shifts. Otherwise uses playback-rate shifting.
    *
    * @param note - The phrase note to schedule
@@ -1340,8 +1342,10 @@ export class MelodyPlayer {
     // (no previous note to crossfade with), use a short anti-click fade.
     const fadeInTime = hasPrevNote ? fadeTime : Math.min(fadeTime, 0.02);
 
-    // Use granular pitch shifting if enabled and pitch is not zero
-    const shouldUseGranular = this._useGranular && note.pitch !== 0;
+    // Use granular pitch shifting if enabled and pitch shift exceeds threshold.
+    // Small shifts (<=3 semitones) use playback-rate to avoid granular amplitude
+    // variability; formant distortion is negligible at these small intervals.
+    const shouldUseGranular = this._useGranular && Math.abs(note.pitch) > 3;
 
     // Use provided grain size or fall back to class default
     const effectiveGrainSize = grainSize ?? this._grainSize;
