@@ -463,20 +463,32 @@ export function analyzeLoudnessForNormalization(
     endTime: safePlaybackEnd,
   });
 
-  // Analyze peak over the full playback region (peaks anywhere can clip)
+  // Analyze peak and RMS over the full playback region
   const fullAnalysis = analyzeLoudness(buffer, {
     startTime: safePlaybackStart,
     endTime: safePlaybackEnd,
   });
 
-  // Combine: vowel RMS for perceived loudness, full-region peak for headroom
+  // Blend vowel-region and full-region RMS to prevent normalization from being
+  // entirely driven by the loudest sustained portion. For samples like "ku" where
+  // the consonant "k" is near-silent, the vowel-only RMS is much higher than the
+  // full-region RMS, causing normalization to over-attenuate the sample. Blending
+  // reduces this effect while still weighting toward the vowel (the "ra" fix).
+  const VOWEL_WEIGHT = 0.7;
+  const FULL_WEIGHT = 0.3;
+  const blendedRmsDb = vowelAnalysis.hasContent && fullAnalysis.hasContent
+    ? VOWEL_WEIGHT * vowelAnalysis.rmsDb + FULL_WEIGHT * fullAnalysis.rmsDb
+    : vowelAnalysis.rmsDb;
+  const blendedRms = blendedRmsDb > -Infinity ? dbToLinear(blendedRmsDb) : 0;
+
+  // Combine: blended RMS for perceived loudness, full-region peak for headroom
   return {
-    rms: vowelAnalysis.rms,
-    rmsDb: vowelAnalysis.rmsDb,
+    rms: blendedRms,
+    rmsDb: blendedRmsDb,
     peak: fullAnalysis.peak,
     peakDb: fullAnalysis.peakDb,
-    crestFactor: vowelAnalysis.rms > SILENCE_THRESHOLD
-      ? fullAnalysis.peak / vowelAnalysis.rms
+    crestFactor: blendedRms > SILENCE_THRESHOLD
+      ? fullAnalysis.peak / blendedRms
       : 0,
     hasContent: vowelAnalysis.hasContent,
   };

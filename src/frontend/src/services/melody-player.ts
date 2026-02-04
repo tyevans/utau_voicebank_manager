@@ -1144,14 +1144,15 @@ export class MelodyPlayer {
     const shifter = this._getGranularShifter();
 
     // Get the envelope for this note (note-specific or default).
-    // Override attack/release with the crossfade timing so that the
-    // incoming ramp-up and outgoing ramp-down use identical durations,
-    // maintaining constant power during the crossfade window.
+    // Cap attack/release to the crossfade timing so that the incoming
+    // ramp-up and outgoing ramp-down don't exceed the crossfade window,
+    // but keep the original ADSR values when they're shorter (e.g. 10ms
+    // attack preserves brief consonant bursts like "k").
     const baseEnvelope = note.envelope ?? this._defaultEnvelope;
     const envelope = {
       ...baseEnvelope,
-      attack: fadeInTime * 1000,   // crossfade fade-in duration (ms)
-      release: fadeTime * 1000,    // crossfade fade-out duration (ms)
+      attack: Math.min(fadeInTime * 1000, baseEnvelope.attack),   // preserve fast attacks for consonants
+      release: Math.min(fadeTime * 1000, baseEnvelope.release),    // preserve fast releases
     };
 
     // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
@@ -1534,14 +1535,15 @@ export class MelodyPlayer {
     const shifter = this._getGranularShifter();
 
     // Get the envelope for this note (note-specific or default).
-    // Override attack/release with the crossfade timing so that the
-    // incoming ramp-up and outgoing ramp-down use identical durations,
-    // maintaining constant power during the crossfade window.
+    // Cap attack/release to the crossfade timing so that the incoming
+    // ramp-up and outgoing ramp-down don't exceed the crossfade window,
+    // but keep the original ADSR values when they're shorter (e.g. 10ms
+    // attack preserves brief consonant bursts like "k").
     const baseEnvelope = note.envelope ?? this._defaultEnvelope;
     const envelope = {
       ...baseEnvelope,
-      attack: fadeInTime * 1000,   // crossfade fade-in duration (ms)
-      release: fadeTime * 1000,    // crossfade fade-out duration (ms)
+      attack: Math.min(fadeInTime * 1000, baseEnvelope.attack),   // preserve fast attacks for consonants
+      release: Math.min(fadeTime * 1000, baseEnvelope.release),    // preserve fast releases
     };
 
     // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
@@ -1687,15 +1689,15 @@ export class MelodyPlayer {
   ): void {
     const { whenToStart, noteDuration, fadeInTime, fadeTime, baseGain, envelope } = params;
 
-    // If an ADSR envelope is provided, use it -- but override the attack
-    // and release times with the crossfade timing so that the incoming
-    // note's ramp-up and the outgoing note's ramp-down use identical
-    // durations, maintaining constant power during the crossfade window.
+    // If an ADSR envelope is provided, use it -- but cap the attack and
+    // release times to the crossfade timing so they don't exceed the
+    // crossfade window. Keep the original ADSR values when they're shorter
+    // (e.g. 10ms attack preserves brief consonant bursts like "k").
     if (envelope) {
       const crossfadeEnvelope: ADSREnvelope = {
         ...envelope,
-        attack: fadeInTime * 1000,   // Override attack with crossfade fade-in (ms)
-        release: fadeTime * 1000,    // Override release with crossfade fade-out (ms)
+        attack: Math.min(fadeInTime * 1000, envelope.attack),   // preserve fast attacks for consonants
+        release: Math.min(fadeTime * 1000, envelope.release),    // preserve fast releases
       };
       this._applyADSREnvelope(gainNode, {
         startTime: whenToStart,
