@@ -8,7 +8,7 @@
  */
 
 import type { PhraseNote, VibratoParams } from '../services/melody-player.js';
-import { romajiToKana, kanaToRomaji } from '../utils/kana-romaji.js';
+import { hasMatchingAlias } from '../utils/alias-matching.js';
 
 /**
  * A demo song with phoneme-level note data for voicebank preview.
@@ -507,133 +507,14 @@ export function getDemoSongsByStyle(
 }
 
 /**
- * Common alias prefix patterns used in voicebanks.
- * Japanese CV voicebanks often use "- " prefix for consonant-vowel sounds.
- * VCV voicebanks use vowel prefixes like "a ", "i ", etc.
- */
-const CV_PREFIX = '- ';
-const VOWELS = ['a', 'i', 'u', 'e', 'o'];
-
-/**
- * Parse a VCV alias into its vowel and CV components.
- *
- * VCV aliases follow the format "[vowel] [cv]" where the vowel is the
- * preceding vowel context (a, i, u, e, o) and cv is the consonant-vowel
- * or vowel being sung.
- *
- * @param alias - The alias to parse
- * @returns Object with vowel and cv parts, or null if not VCV format
- *
- * @example
- * parseVCVAlias('a sa')  // { vowel: 'a', cv: 'sa' }
- * parseVCVAlias('o i')   // { vowel: 'o', cv: 'i' }
- * parseVCVAlias('sa')    // null (not VCV format)
- * parseVCVAlias('- sa')  // null (CV prefix format, not VCV)
- */
-function parseVCVAlias(alias: string): { vowel: string; cv: string } | null {
-  const parts = alias.split(' ');
-  if (parts.length === 2 && VOWELS.includes(parts[0])) {
-    return { vowel: parts[0], cv: parts[1] };
-  }
-  return null;
-}
-
-/**
- * Check if a phoneme alias exists in the available aliases,
- * accounting for common voicebank alias format variations.
- *
- * Checks in order:
- * 1. Exact match (e.g., "ka")
- * 2. CV prefix format (e.g., "- ka")
- * 3. VCV format with vowel prefix (e.g., "a ka", "i ka", etc.)
- * 4. Kana conversion for romaji phonemes (e.g., "ku" -> "く")
- * 5. Romaji conversion for kana aliases (e.g., check if "ku" when phoneme is "く")
- * 6. VCV decomposition with all above fallbacks
- *
- * @param phoneme - The phoneme to look for
- * @param availableAliases - Set of available aliases
- * @param depth - Internal recursion depth tracker (prevents infinite recursion)
- * @returns true if the phoneme is available in any format
- */
-function hasPhonemeAlias(phoneme: string, availableAliases: Set<string>, depth = 0): boolean {
-  // Prevent infinite recursion
-  if (depth > 2) {
-    return false;
-  }
-
-  // Check exact match first
-  if (availableAliases.has(phoneme)) {
-    return true;
-  }
-
-  // Check CV prefix format (e.g., "- ka")
-  if (availableAliases.has(CV_PREFIX + phoneme)) {
-    return true;
-  }
-
-  // Check VCV format with vowel prefix (e.g., "a ka", "i ka")
-  for (const vowel of VOWELS) {
-    if (availableAliases.has(`${vowel} ${phoneme}`)) {
-      return true;
-    }
-  }
-
-  // Try kana conversion: if phoneme is romaji (e.g., "ku"), check for kana (e.g., "く")
-  // This is crucial for VCV songs playing on CV voicebanks with hiragana aliases
-  const kana = romajiToKana(phoneme);
-  if (kana && kana !== phoneme) {
-    // Check exact kana match
-    if (availableAliases.has(kana)) {
-      return true;
-    }
-    // Check with CV prefix (e.g., "- く")
-    if (availableAliases.has(CV_PREFIX + kana)) {
-      return true;
-    }
-  }
-
-  // Try romaji conversion: if phoneme is kana, check romaji version
-  const romaji = kanaToRomaji(phoneme);
-  if (romaji && romaji !== phoneme) {
-    if (availableAliases.has(romaji)) {
-      return true;
-    }
-    if (availableAliases.has(CV_PREFIX + romaji)) {
-      return true;
-    }
-  }
-
-  // Try dash-prefix decomposition: if phoneme starts with "- " (e.g., "- sa"),
-  // strip the prefix and check for just the CV part (e.g., "sa").
-  // This allows VCV songs with dash-prefixed phonemes to play on CV voicebanks.
-  if (phoneme.startsWith(CV_PREFIX)) {
-    const cvPart = phoneme.slice(CV_PREFIX.length);
-    if (cvPart && hasPhonemeAlias(cvPart, availableAliases, depth + 1)) {
-      return true;
-    }
-  }
-
-  // Try VCV decomposition: if phoneme is VCV format (e.g., "a sa"),
-  // check if just the CV part (e.g., "sa") is available.
-  // This allows VCV songs to show as compatible with CV voicebanks.
-  const vcvParts = parseVCVAlias(phoneme);
-  if (vcvParts) {
-    // Recursively check for just the CV part (with kana fallback)
-    if (hasPhonemeAlias(vcvParts.cv, availableAliases, depth + 1)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
  * Check if a voicebank has all required phonemes for a demo song.
  *
- * This function accounts for common voicebank alias format variations:
+ * Delegates to the shared alias matching utility which accounts for
+ * common voicebank alias format variations:
  * - Bare format: "ka", "sa"
  * - CV prefix format: "- ka", "- sa"
  * - VCV format: "a ka", "i ki"
+ * - Kana/romaji conversion
  *
  * @param song - The demo song to check
  * @param availableAliases - Set of alias names available in the voicebank
@@ -651,7 +532,7 @@ export function checkSongCompatibility(
   const missingPhonemes: string[] = [];
 
   for (const phoneme of song.requiredPhonemes) {
-    if (!hasPhonemeAlias(phoneme, availableAliases)) {
+    if (!hasMatchingAlias(phoneme, availableAliases)) {
       missingPhonemes.push(phoneme);
     }
   }

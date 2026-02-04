@@ -32,6 +32,7 @@ import { SampleLoader } from '../services/sample-loader.js';
 import { api } from '../services/api.js';
 import { getSharedAudioContext } from '../services/audio-context.js';
 import type { OtoEntry } from '../services/types.js';
+import { findMatchingAlias, CV_PREFIX, parseVCVAlias } from '../utils/alias-matching.js';
 
 /**
  * Melody pattern types.
@@ -60,16 +61,6 @@ const MELODY_PATTERNS: Record<MelodyPattern, number[]> = {
   monotone: [0, 0, 0, 0, 0, 0, 0, 0], // All C4
   custom: [0, 2, 4, 5, 7, 5, 4, 2], // C4-D4-E4-F4-G4-F4-E4-D4 (up and down)
 };
-
-/**
- * Japanese vowels used for VCV alias matching.
- */
-const VOWELS = ['a', 'i', 'u', 'e', 'o'];
-
-/**
- * CV prefix used in many voicebanks.
- */
-const CV_PREFIX = '- ';
 
 /**
  * Note duration in seconds.
@@ -432,9 +423,9 @@ export class UvmQuickPhrase extends LitElement {
         simplified.add(alias.slice(CV_PREFIX.length));
       } else {
         // For VCV aliases like "a ka", extract just the CV part
-        const parts = alias.split(' ');
-        if (parts.length === 2 && VOWELS.includes(parts[0])) {
-          simplified.add(parts[1]);
+        const vcvParts = parseVCVAlias(alias);
+        if (vcvParts) {
+          simplified.add(vcvParts.cv);
         } else {
           simplified.add(alias);
         }
@@ -483,42 +474,10 @@ export class UvmQuickPhrase extends LitElement {
 
   /**
    * Find an alias in the oto map, checking common format variations.
+   * Delegates to the shared alias matching utility.
    */
   private _findAlias(phoneme: string): string | null {
-    // Exact match
-    if (this._otoMap.has(phoneme)) {
-      return phoneme;
-    }
-
-    // CV prefix format (e.g., "- ka")
-    const cvAlias = CV_PREFIX + phoneme;
-    if (this._otoMap.has(cvAlias)) {
-      return cvAlias;
-    }
-
-    // VCV format with any vowel prefix (e.g., "a ka", "i ka")
-    for (const vowel of VOWELS) {
-      const vcvAlias = `${vowel} ${phoneme}`;
-      if (this._otoMap.has(vcvAlias)) {
-        return vcvAlias;
-      }
-    }
-
-    // Check if the phoneme itself is a VCV format (e.g., "a ka")
-    if (phoneme.includes(' ')) {
-      const parts = phoneme.split(' ');
-      if (parts.length === 2 && VOWELS.includes(parts[0])) {
-        // It's already VCV format, try exact match first
-        if (this._otoMap.has(phoneme)) {
-          return phoneme;
-        }
-        // Try just the CV part
-        const cvPart = parts[1];
-        return this._findAlias(cvPart);
-      }
-    }
-
-    return null;
+    return findMatchingAlias(phoneme, new Set(this._otoMap.keys()));
   }
 
   /**

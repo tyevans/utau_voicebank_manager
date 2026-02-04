@@ -28,22 +28,12 @@ import { SampleLoader } from '../services/sample-loader.js';
 import { api } from '../services/api.js';
 import { getSharedAudioContext } from '../services/audio-context.js';
 import type { OtoEntry } from '../services/types.js';
-
-/**
- * Japanese vowels used for representative sample selection.
- * These are the most common and essential phonemes in Japanese voicebanks.
- */
-const JAPANESE_VOWELS = ['a', 'i', 'u', 'e', 'o'];
+import { findMatchingAlias, CV_PREFIX, VOWELS } from '../utils/alias-matching.js';
 
 /**
  * Common CV phonemes to try as fallbacks if vowels are not available.
  */
 const COMMON_CV_FALLBACKS = ['ka', 'sa', 'ta', 'na', 'ha', 'ma', 'ya', 'ra', 'wa'];
-
-/**
- * Alias prefix patterns used in voicebanks.
- */
-const CV_PREFIX = '- ';
 
 /**
  * Do-re-mi-fa-sol melody pattern (ascending C major scale).
@@ -270,32 +260,6 @@ export class UvmFirstSing extends LitElement {
   }
 
   /**
-   * Find an alias in the available entries, checking common format variations.
-   */
-  private _findAlias(target: string, aliasSet: Set<string>): string | null {
-    // Check exact match
-    if (aliasSet.has(target)) {
-      return target;
-    }
-
-    // Check CV prefix format (e.g., "- a")
-    const cvAlias = CV_PREFIX + target;
-    if (aliasSet.has(cvAlias)) {
-      return cvAlias;
-    }
-
-    // Check VCV format with any vowel prefix
-    for (const vowel of JAPANESE_VOWELS) {
-      const vcvAlias = `${vowel} ${target}`;
-      if (aliasSet.has(vcvAlias)) {
-        return vcvAlias;
-      }
-    }
-
-    return null;
-  }
-
-  /**
    * Select representative samples from the voicebank.
    *
    * Priority:
@@ -308,8 +272,8 @@ export class UvmFirstSing extends LitElement {
     const selected: string[] = [];
 
     // Try to find the 5 Japanese vowels first
-    for (const vowel of JAPANESE_VOWELS) {
-      const found = this._findAlias(vowel, availableAliases);
+    for (const vowel of VOWELS) {
+      const found = findMatchingAlias(vowel, availableAliases);
       if (found && selected.length < 5) {
         selected.push(found);
       }
@@ -319,7 +283,7 @@ export class UvmFirstSing extends LitElement {
     if (selected.length < 5) {
       for (const cv of COMMON_CV_FALLBACKS) {
         if (selected.length >= 5) break;
-        const found = this._findAlias(cv, availableAliases);
+        const found = findMatchingAlias(cv, availableAliases);
         if (found && !selected.includes(found)) {
           selected.push(found);
         }

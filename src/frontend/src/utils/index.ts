@@ -76,3 +76,13 @@ export type {
   PsolaAnalysis,
   PitchMarkOptions,
 } from './psola.js';
+
+// Alias matching for voicebank phoneme lookup
+export {
+  CV_PREFIX,
+  VOWELS,
+  parseVCVAlias,
+  findOtoEntry,
+  findMatchingAlias,
+  hasMatchingAlias,
+} from './alias-matching.js';
