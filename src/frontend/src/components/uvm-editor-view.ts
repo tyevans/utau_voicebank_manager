@@ -448,32 +448,6 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Add keyboard listener for shortcuts
     this._boundKeyHandler = this._onKeyDown.bind(this);
     document.addEventListener('keydown', this._boundKeyHandler);
-
-    // Parse URL for deep linking (fallback if onAfterEnter isn't called)
-    this._parseUrlAndLoad();
-  }
-
-  /**
-   * Parse the current URL for deep linking parameters.
-   * This serves as a fallback when Vaadin Router lifecycle hooks aren't called.
-   */
-  private _parseUrlAndLoad(): void {
-    const path = window.location.pathname;
-    // Match /editor/:voicebankId/sample/:sampleId
-    const sampleMatch = path.match(/^\/editor\/([^/]+)\/sample\/([^/]+)$/);
-    if (sampleMatch) {
-      const voicebankId = decodeURIComponent(sampleMatch[1]);
-      const sampleId = decodeURIComponent(sampleMatch[2]);
-      this._loadSample(voicebankId, sampleId);
-      return;
-    }
-    // Match /editor/:voicebankId (voicebank only, no sample)
-    const voicebankMatch = path.match(/^\/editor\/([^/]+)$/);
-    if (voicebankMatch) {
-      this._urlVoicebankId = decodeURIComponent(voicebankMatch[1]);
-      // Open browser to let user select a sample
-      this._showBrowser = true;
-    }
   }
 
   /**
@@ -499,6 +473,9 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Load the sample if both IDs are present
     if (this._urlVoicebankId && this._urlSampleId) {
       this._loadSample(this._urlVoicebankId, this._urlSampleId);
+    } else if (this._urlVoicebankId) {
+      // Voicebank only -- open browser so user can pick a sample
+      this._showBrowser = true;
     }
   }
 
@@ -764,14 +741,15 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     this._audioBuffer = null;
 
     try {
-      // Get shared AudioContext on first use (must be after user gesture)
+      // Get shared AudioContext on first use
       if (!this._audioContext) {
         this._audioContext = getSharedAudioContext();
       }
 
-      // Resume if suspended (browser autoplay policy)
+      // Request resume without blocking -- decodeAudioData works on suspended
+      // contexts, and awaiting resume() blocks until a user gesture on deep links.
       if (this._audioContext.state === 'suspended') {
-        await this._audioContext.resume();
+        this._audioContext.resume();
       }
 
       this._audioBuffer = await api.loadSampleAsAudioBuffer(

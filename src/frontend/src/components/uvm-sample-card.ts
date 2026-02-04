@@ -267,9 +267,10 @@ export class UvmSampleCard extends LitElement {
         this._audioContext = getSharedAudioContext();
       }
 
-      // Resume if suspended
+      // Request resume without blocking -- decodeAudioData works on suspended
+      // contexts, and awaiting resume() blocks until a user gesture.
       if (this._audioContext.state === 'suspended') {
-        await this._audioContext.resume();
+        this._audioContext.resume();
       }
 
       this._audioBuffer = await api.loadSampleAsAudioBuffer(
