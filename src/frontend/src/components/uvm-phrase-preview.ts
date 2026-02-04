@@ -390,7 +390,13 @@ export class UvmPhrasePreview extends LitElement {
       this._currentTime = 0;
       this._playbackStartTime = this._audioContext.currentTime;
 
-      this._player.playPhrase(song.notes, result.sampleMap);
+      this._player.playPhrase(song.notes, result.sampleMap, {
+        useGranular: true,
+        useAdaptiveGrainSize: true,
+        useDynamicOverlap: true,
+        useLoudnessNormalization: true,
+        crossfadeType: 'equal-power',
+      });
 
       // Start progress animation
       this._updateProgress();
