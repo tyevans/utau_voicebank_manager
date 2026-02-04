@@ -1,6 +1,7 @@
 """FastAPI application entry point for UTAU Voicebank Manager."""
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Configure logging before importing modules
@@ -23,10 +24,56 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.backend.api.routers import api_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: connect to Redis for job queue."""
+    from arq.connections import RedisSettings, create_pool
+    from redis.asyncio import Redis
+
+    from src.backend.config import get_settings
+    from src.backend.services.job_service import JobService
+
+    settings = get_settings()
+    _logger = logging.getLogger(__name__)
+
+    redis = None
+    arq_pool = None
+
+    try:
+        redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        await redis.ping()
+
+        arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+
+        app.state.redis = redis
+        app.state.arq_pool = arq_pool
+        app.state.job_service = JobService(redis, ttl_seconds=settings.job_ttl_seconds)
+
+        _logger.info("Connected to Redis at %s", settings.redis_url)
+    except Exception:
+        _logger.warning(
+            "Redis not available at %s — job queue disabled (local dev mode)",
+            settings.redis_url,
+        )
+        app.state.redis = None
+        app.state.arq_pool = None
+        app.state.job_service = None
+
+    yield
+
+    # Cleanup
+    if arq_pool is not None:
+        await arq_pool.aclose()
+    if redis is not None:
+        await redis.aclose()
+
+
 app = FastAPI(
     title="UTAU Voicebank Manager",
     description="AI-assisted voicebank creation platform for UTAU/OpenUTAU singing synthesizers",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware for local development and Docker
@@ -57,8 +104,8 @@ async def health_check() -> dict[str, str]:
 # NOTE: This must be LAST since it catches all unmatched routes
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 if FRONTEND_DIST.exists():
-    from fastapi.staticfiles import StaticFiles
     from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
 
     # Mount assets directory
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")

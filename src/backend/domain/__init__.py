@@ -2,6 +2,19 @@
 
 from src.backend.domain.alignment_config import AlignmentConfig, AlignmentParams
 from src.backend.domain.batch_oto import BatchOtoRequest, BatchOtoResult
+from src.backend.domain.generated_voicebank import (
+    GeneratedVoicebank,
+    GenerateVoicebankRequest,
+    SlicedSample,
+)
+from src.backend.domain.job import (
+    GenerateVoicebankParams,
+    Job,
+    JobProgress,
+    JobResult,
+    JobStatus,
+    JobType,
+)
 from src.backend.domain.oto_entry import OtoEntry
 from src.backend.domain.oto_suggestion import OtoSuggestion, OtoSuggestionRequest
 from src.backend.domain.paragraph_prompt import (
@@ -35,6 +48,14 @@ __all__ = [
     "BatchOtoRequest",
     "BatchOtoResult",
     "CVCoverage",
+    "GenerateVoicebankParams",
+    "GenerateVoicebankRequest",
+    "GeneratedVoicebank",
+    "Job",
+    "JobProgress",
+    "JobResult",
+    "JobStatus",
+    "JobType",
     "OtoEntry",
     "OtoSuggestion",
     "OtoSuggestionRequest",
@@ -53,6 +74,7 @@ __all__ = [
     "SegmentUpload",
     "SessionProgress",
     "SessionStatus",
+    "SlicedSample",
     "VCVCoverage",
     "Voicebank",
     "VoicebankCreate",

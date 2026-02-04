@@ -2,11 +2,14 @@
 
 from fastapi import APIRouter
 
+from src.backend.api.routers.jobs import router as jobs_router
 from src.backend.api.routers.ml import router as ml_router
 from src.backend.api.routers.oto import router as oto_router
 from src.backend.api.routers.paragraphs import router as paragraphs_router
 from src.backend.api.routers.recording_sessions import router as sessions_router
-from src.backend.api.routers.voicebank_download import router as voicebank_download_router
+from src.backend.api.routers.voicebank_download import (
+    router as voicebank_download_router,
+)
 from src.backend.api.routers.voicebanks import router as voicebanks_router
 
 api_router = APIRouter()
@@ -28,3 +31,6 @@ api_router.include_router(paragraphs_router)
 
 # Voicebank download router
 api_router.include_router(voicebank_download_router)
+
+# Async job management router
+api_router.include_router(jobs_router)

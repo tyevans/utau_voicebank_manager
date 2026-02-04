@@ -14,15 +14,16 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
 from fastapi.responses import FileResponse, StreamingResponse
 
 from src.backend.domain.generated_voicebank import (
-    GeneratedVoicebank,
     GenerateVoicebankRequest,
 )
+from src.backend.domain.job import GenerateVoicebankParams, Job, JobType
 from src.backend.domain.paragraph_prompt import ParagraphRecordingProgress
 from src.backend.domain.recording_session import (
     RecordingSegment,
@@ -32,12 +33,10 @@ from src.backend.domain.recording_session import (
     SegmentUpload,
     SessionProgress,
 )
-from src.backend.ml.oto_suggester import get_oto_suggester
 from src.backend.repositories.recording_session_repository import (
     RecordingSessionRepository,
 )
 from src.backend.repositories.voicebank_repository import VoicebankRepository
-from src.backend.services.alignment_service import AlignmentService
 from src.backend.services.paragraph_library_service import (
     ParagraphLibraryNotFoundError,
     ParagraphLibraryService,
@@ -55,11 +54,6 @@ from src.backend.services.recording_session_service import (
     SessionStateError,
     SessionValidationError,
     VoicebankNotGeneratedError,
-)
-from src.backend.services.voicebank_generator import (
-    NoAlignedSegmentsError,
-    VoicebankGenerator,
-    VoicebankGeneratorError,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,27 +87,6 @@ def get_session_service(
 ) -> RecordingSessionService:
     """Dependency provider for RecordingSessionService."""
     return RecordingSessionService(session_repo, voicebank_repo)
-
-
-def get_alignment_service(
-    session_service: Annotated[RecordingSessionService, Depends(get_session_service)],
-) -> AlignmentService:
-    """Dependency provider for AlignmentService."""
-    return AlignmentService(session_service, prefer_mfa=True)
-
-
-def get_voicebank_generator(
-    session_service: Annotated[RecordingSessionService, Depends(get_session_service)],
-    alignment_service: Annotated[AlignmentService, Depends(get_alignment_service)],
-) -> VoicebankGenerator:
-    """Dependency provider for VoicebankGenerator."""
-    oto_suggester = get_oto_suggester()
-    return VoicebankGenerator(
-        session_service=session_service,
-        alignment_service=alignment_service,
-        oto_suggester=oto_suggester,
-        output_base_path=GENERATED_BASE_PATH,
-    )
 
 
 def get_library_service() -> ParagraphLibraryService:
@@ -514,70 +487,73 @@ async def delete_session(
 
 @router.post(
     "/{session_id}/generate-voicebank",
-    response_model=GeneratedVoicebank,
-    status_code=status.HTTP_201_CREATED,
+    response_model=Job,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def generate_voicebank_from_session(
     session_id: UUID,
     request: GenerateVoicebankRequest,
-    generator: Annotated[VoicebankGenerator, Depends(get_voicebank_generator)],
-) -> GeneratedVoicebank:
-    """Generate a complete UTAU voicebank from a recording session.
+    request_obj: Request,
+) -> Job:
+    """Submit a voicebank generation job for a recording session.
 
-    This endpoint processes all aligned segments in the session, slices
-    audio at phoneme boundaries, generates oto.ini parameters using ML,
-    and creates a complete voicebank folder structure.
+    This endpoint queues an async job that processes all aligned segments
+    in the session, slices audio at phoneme boundaries, generates oto.ini
+    parameters using ML, and creates a complete voicebank folder structure.
 
-    The generated voicebank includes:
-    - All sliced WAV samples
-    - Generated oto.ini with timing parameters
-    - Optional character.txt metadata file
+    The job is queued for processing by the GPU worker.
+    Use GET /jobs/{id} to poll for status and progress.
 
     Args:
         session_id: UUID of the recording session to process
         request: Generation parameters including voicebank name
+        request_obj: FastAPI request for accessing app state
 
     Returns:
-        GeneratedVoicebank with generation statistics and output path
+        Job in QUEUED status with its ID for polling
 
     Raises:
-        HTTPException 404: If session not found
-        HTTPException 400: If no segments could be aligned
-        HTTPException 500: If generation fails
+        HTTPException 503: If Redis job queue is not available
     """
-    try:
-        output_path = Path(request.output_path) if request.output_path else None
-
-        result = await generator.generate_from_session(
-            session_id=session_id,
-            voicebank_name=request.voicebank_name,
-            output_path=output_path,
-            include_character_txt=request.include_character_txt,
-            encoding=request.encoding,
+    job_service = request_obj.app.state.job_service
+    if job_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job queue not available (Redis not connected)",
         )
 
-        logger.info(
-            f"Generated voicebank '{request.voicebank_name}' from session {session_id}: "
-            f"{result.sample_count} samples, {result.oto_entries} oto entries"
+    arq_pool = request_obj.app.state.arq_pool
+    if arq_pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job queue not available (Redis not connected)",
         )
 
-        return result
+    params = GenerateVoicebankParams(
+        session_id=session_id,
+        voicebank_name=request.voicebank_name,
+        output_path=request.output_path,
+        include_character_txt=request.include_character_txt,
+        encoding=request.encoding,
+    )
 
-    except SessionNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        ) from e
-    except NoAlignedSegmentsError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-    except VoicebankGeneratorError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Voicebank generation failed: {e}",
-        ) from e
+    job = await job_service.submit(
+        job_type=JobType.GENERATE_VOICEBANK,
+        params=params.model_dump(mode="json"),
+    )
+
+    await arq_pool.enqueue_job(
+        "generate_voicebank",
+        str(job.id),
+    )
+
+    logger.info(
+        "Enqueued generate_voicebank job %s for session %s",
+        job.id,
+        session_id,
+    )
+
+    return job
 
 
 @router.get("/{session_id}/download")

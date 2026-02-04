@@ -25,6 +25,9 @@ dependencies = [
     "pandas>=3.0.0",
     "matplotlib>=3.10.8",
     "torchcodec>=0.10.0",
+    "pydantic-settings>=2.12.0",
+    "arq>=0.26.0",
+    "redis[hiredis]>=5.0.0",
 ]
 
 [project.optional-dependencies]

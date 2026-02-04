@@ -28,7 +28,6 @@ import {
   recordingApi,
   type GeneratedVoicebank,
   type ReclistOptions,
-  type SessionProgress,
 } from '../services/recording-api.js';
 import { ApiError } from '../services/api.js';
 
@@ -516,11 +515,8 @@ export class UvmRecordingSession extends LitElement {
   @state()
   private _segmentIdsByPromptIndex: Map<number, string> = new Map();
 
-  private _pollIntervalId?: number;
-
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._stopPolling();
   }
 
   /**
@@ -718,20 +714,33 @@ export class UvmRecordingSession extends LitElement {
       // Mark session as complete
       await recordingApi.completeSession(this._sessionId);
 
-      this._progress = 20;
+      this._progress = 10;
       this._updateProcessingSteps(this._progress);
 
-      // Start polling for status
-      this._startPolling();
-
-      // Generate the voicebank
-      const result = await recordingApi.generateVoicebank(
+      // Submit the generation job (returns 202 with Job)
+      const job = await recordingApi.generateVoicebank(
         this._sessionId,
         this._voicebankName
       );
 
-      this._stopPolling();
+      // Poll job until complete, updating progress from server
+      await recordingApi.pollJobUntilComplete(
+        job.id,
+        (updatedJob) => {
+          if (updatedJob.progress) {
+            // Map job progress (0-100) to our UI progress (10-95)
+            this._progress = 10 + (updatedJob.progress.percent * 0.85);
+            this._updateProcessingSteps(this._progress);
+          }
+        }
+      );
+
+      // Fetch the actual GeneratedVoicebank result
+      const result = await recordingApi.getJobResult(job.id);
+
       this._generatedVoicebank = result;
+      this._progress = 100;
+      this._updateProcessingSteps(100);
       this._phase = 'complete';
 
       // Mark that we now have voicebanks
@@ -748,7 +757,6 @@ export class UvmRecordingSession extends LitElement {
         })
       );
     } catch (error) {
-      this._stopPolling();
       console.error('Failed to generate voicebank:', error);
 
       this._phase = 'error';
@@ -758,33 +766,6 @@ export class UvmRecordingSession extends LitElement {
         this._errorMessage = 'Failed to generate voicebank. Please try again.';
       }
     }
-  }
-
-  /**
-   * Start polling for session status during processing.
-   */
-  private _startPolling(): void {
-    this._pollIntervalId = window.setInterval(async () => {
-      if (!this._sessionId) return;
-
-      try {
-        const status: SessionProgress = await recordingApi.getSessionStatus(
-          this._sessionId
-        );
-
-        // Update progress based on status
-        if (status.status === 'processing') {
-          this._progress = Math.min(90, this._progress + 5);
-        } else if (status.status === 'completed') {
-          this._progress = 100;
-        }
-
-        // Update processing steps based on progress
-        this._updateProcessingSteps(this._progress);
-      } catch (error) {
-        console.warn('Failed to poll status:', error);
-      }
-    }, 2000);
   }
 
   /**
@@ -815,16 +796,6 @@ export class UvmRecordingSession extends LitElement {
   }
 
   /**
-   * Stop polling for status.
-   */
-  private _stopPolling(): void {
-    if (this._pollIntervalId) {
-      clearInterval(this._pollIntervalId);
-      this._pollIntervalId = undefined;
-    }
-  }
-
-  /**
    * Cancel the current session.
    */
   private async _onCancelSession(): Promise<void> {
@@ -848,7 +819,6 @@ export class UvmRecordingSession extends LitElement {
    * Reset the session state.
    */
   private _resetSession(): void {
-    this._stopPolling();
     this._phase = 'setup';
     this._sessionId = undefined;
     this._voicebankName = '';
