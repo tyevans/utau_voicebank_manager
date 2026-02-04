@@ -15,15 +15,19 @@ import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/badge/badge.js';
 import '@shoelace-style/shoelace/dist/components/divider/divider.js';
 import '@shoelace-style/shoelace/dist/components/details/details.js';
+import '@shoelace-style/shoelace/dist/components/checkbox/checkbox.js';
 
 // Import child components
 import './uvm-recording-prompter.js';
+import './uvm-first-sing.js';
+import './uvm-voice-complete.js';
 
 import { UvmToastManager } from './uvm-toast-manager.js';
 import type { PhonemePrompt } from './uvm-recording-prompter.js';
 import {
   recordingApi,
   type GeneratedVoicebank,
+  type ReclistOptions,
   type SessionProgress,
 } from '../services/recording-api.js';
 import { ApiError } from '../services/api.js';
@@ -166,6 +170,16 @@ export class UvmRecordingSession extends LitElement {
       line-height: 1.5;
     }
 
+    sl-select small {
+      display: block;
+      padding: 0.375rem 0.75rem 0.125rem;
+      font-size: 0.6875rem;
+      font-weight: 500;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
     sl-details {
       margin-top: 0.5rem;
     }
@@ -181,6 +195,22 @@ export class UvmRecordingSession extends LitElement {
 
     sl-details .form-group:first-child {
       margin-top: 0;
+    }
+
+    .extra-packs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .extra-packs-list sl-checkbox::part(base) {
+      font-size: 0.875rem;
+      color: var(--sl-color-neutral-700, #334155);
+    }
+
+    .extra-packs-list sl-checkbox::part(label) {
+      line-height: 1.5;
     }
 
     .form-actions {
@@ -354,182 +384,6 @@ export class UvmRecordingSession extends LitElement {
       background: var(--sl-color-neutral-400, #94a3b8);
     }
 
-    /* Complete Phase - The emotional payoff deserves elegance */
-    .complete-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 4rem 2rem;
-      background-color: white;
-      border-radius: 16px;
-      text-align: center;
-    }
-
-    .complete-icon {
-      font-size: 3rem;
-      color: var(--sl-color-neutral-900, #0f172a);
-      margin-bottom: 1.5rem;
-    }
-
-    .complete-container h3 {
-      margin: 0 0 0.75rem;
-      font-size: 1.75rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-900, #0f172a);
-      letter-spacing: -0.02em;
-    }
-
-    .complete-description {
-      font-size: 1rem;
-      color: var(--sl-color-neutral-500, #64748b);
-      margin-bottom: 2rem;
-      font-weight: 400;
-    }
-
-    .voicebank-stats {
-      display: flex;
-      gap: 3rem;
-      margin-bottom: 2.5rem;
-    }
-
-    .stat-item {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.375rem;
-    }
-
-    .stat-value {
-      font-size: 1.75rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-900, #0f172a);
-    }
-
-    .stat-label {
-      font-size: 0.6875rem;
-      color: var(--sl-color-neutral-400, #94a3b8);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .complete-actions {
-      display: flex;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-
-    .complete-secondary-actions {
-      margin-top: 1rem;
-    }
-
-    .complete-secondary-actions sl-button::part(base) {
-      font-size: 0.875rem;
-    }
-
-    /* Next Steps Section - Clear, scannable, helpful */
-    .next-steps-section {
-      width: 100%;
-      max-width: 420px;
-      margin: 2rem 0;
-      padding: 1.5rem 1.75rem;
-      background-color: var(--sl-color-neutral-50, #f8fafc);
-      border-radius: 12px;
-      text-align: left;
-    }
-
-    .next-steps-header {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 1.25rem;
-      font-size: 0.6875rem;
-      font-weight: 500;
-      color: var(--sl-color-neutral-400, #94a3b8);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .next-steps-header sl-icon {
-      color: var(--sl-color-neutral-400, #94a3b8);
-      font-size: 0.875rem;
-    }
-
-    .next-steps-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0.875rem;
-    }
-
-    .next-steps-list li {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.875rem;
-      font-size: 0.8125rem;
-      color: var(--sl-color-neutral-600, #475569);
-      line-height: 1.6;
-    }
-
-    .step-number {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 1.375rem;
-      height: 1.375rem;
-      min-width: 1.375rem;
-      background-color: var(--sl-color-neutral-200, #e2e8f0);
-      color: var(--sl-color-neutral-600, #475569);
-      border-radius: 50%;
-      font-size: 0.6875rem;
-      font-weight: 500;
-    }
-
-    .step-content {
-      flex: 1;
-    }
-
-    .step-content strong {
-      color: var(--sl-color-neutral-700, #334155);
-      font-weight: 500;
-    }
-
-    /* Stats row - refined and subtle */
-    .voicebank-stats-compact {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 2rem;
-      justify-content: center;
-      padding: 1rem 0;
-      margin-bottom: 1.5rem;
-    }
-
-    .stat-item-compact {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.25rem;
-    }
-
-    .stat-item-compact:last-child {
-      border-right: none;
-    }
-
-    .stat-item-compact .stat-value {
-      font-size: 1.25rem;
-      font-weight: 600;
-      color: var(--sl-color-neutral-800, #1e293b);
-    }
-
-    .stat-item-compact .stat-label {
-      font-size: 0.6875rem;
-      color: var(--sl-color-neutral-400, #94a3b8);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
     /* Error Phase */
     .error-container {
       display: flex;
@@ -573,35 +427,13 @@ export class UvmRecordingSession extends LitElement {
         padding: 1.5rem;
       }
 
-      .voicebank-stats {
-        gap: 1rem;
-      }
-
-      .stat-value {
-        font-size: 1.25rem;
-      }
-
-      .complete-actions,
       .error-actions {
         flex-direction: column;
         width: 100%;
       }
 
-      .complete-actions sl-button,
       .error-actions sl-button {
         width: 100%;
-      }
-
-      .next-steps-section {
-        padding: 1rem;
-      }
-
-      .stat-item-compact {
-        padding: 0 0.5rem;
-      }
-
-      .stat-item-compact .stat-value {
-        font-size: 1rem;
       }
     }
   `;
@@ -615,11 +447,43 @@ export class UvmRecordingSession extends LitElement {
   @state()
   private _voicebankName = '';
 
+  /**
+   * Unified recording list selection.
+   * Encodes both language and style as a single value.
+   */
   @state()
-  private _recordingStyle: 'cv' | 'vcv' | 'cvvc' = 'cv';
+  private _reclist: 'ja-cv' | 'ja-vcv' | 'ja-cvvc' | 'en-arpasing' = 'ja-cv';
+
+  /**
+   * Decompose the unified reclist value into separate style and language
+   * fields expected by the backend API.
+   */
+  private get _reclistConfig(): {
+    style: 'cv' | 'vcv' | 'cvvc' | 'vccv' | 'arpasing';
+    language: string;
+  } {
+    switch (this._reclist) {
+      case 'ja-cv':
+        return { style: 'cv', language: 'ja' };
+      case 'ja-vcv':
+        return { style: 'vcv', language: 'ja' };
+      case 'ja-cvvc':
+        return { style: 'cvvc', language: 'ja' };
+      case 'en-arpasing':
+        return { style: 'arpasing', language: 'en' };
+      default:
+        return { style: 'cv', language: 'ja' };
+    }
+  }
 
   @state()
-  private _language = 'ja';
+  private _extraConsonants = false;
+
+  @state()
+  private _lSounds = false;
+
+  @state()
+  private _breathSounds = false;
 
   @state()
   private _prompts: PhonemePrompt[] = [];
@@ -672,15 +536,26 @@ export class UvmRecordingSession extends LitElement {
     this._errorMessage = '';
 
     try {
-      // Get prompts for the selected style
-      const prompts = recordingApi.getPrompts(this._recordingStyle, this._language);
+      // Decompose the unified reclist selection into style + language
+      const { style, language } = this._reclistConfig;
+
+      // Build reclist options from checkbox state
+      const reclistOptions: ReclistOptions = {
+        extraConsonants: this._extraConsonants,
+        lSounds: this._lSounds,
+        breathSounds: this._breathSounds,
+      };
+
+      // Get prompts for the selected style (with optional extras)
+      const prompts = recordingApi.getPrompts(style, language, reclistOptions);
       this._prompts = prompts;
 
       // Create session on backend
       const result = await recordingApi.createSession({
         voicebankName: this._voicebankName.trim(),
-        style: this._recordingStyle,
-        language: this._language,
+        style,
+        language,
+        reclistOptions,
       });
 
       this._sessionId = result.sessionId;
@@ -977,8 +852,10 @@ export class UvmRecordingSession extends LitElement {
     this._phase = 'setup';
     this._sessionId = undefined;
     this._voicebankName = '';
-    this._recordingStyle = 'cv';
-    this._language = 'ja';
+    this._reclist = 'ja-cv';
+    this._extraConsonants = false;
+    this._lSounds = false;
+    this._breathSounds = false;
     this._prompts = [];
     this._currentPromptIndex = 0;
     this._progress = 0;
@@ -994,24 +871,6 @@ export class UvmRecordingSession extends LitElement {
    */
   private _onRecordAnother(): void {
     this._resetSession();
-  }
-
-  /**
-   * Download the generated voicebank ZIP file.
-   */
-  private _onDownloadVoicebank(): void {
-    if (!this._sessionId) return;
-
-    // Trigger download via the API endpoint
-    const downloadUrl = `/api/v1/sessions/${this._sessionId}/download`;
-
-    // Create a hidden anchor element to trigger the download
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = `${this._voicebankName || 'voicebank'}.zip`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   }
 
   /**
@@ -1046,19 +905,43 @@ export class UvmRecordingSession extends LitElement {
   }
 
   /**
-   * Handle style selection.
+   * Handle recording list selection.
    */
-  private _onStyleChange(e: Event): void {
+  private _onReclistChange(e: Event): void {
     const select = e.target as HTMLSelectElement;
-    this._recordingStyle = select.value as 'cv' | 'vcv' | 'cvvc';
+    this._reclist = select.value as 'ja-cv' | 'ja-vcv' | 'ja-cvvc' | 'en-arpasing';
   }
 
   /**
-   * Handle language selection.
+   * Handle extra consonants checkbox toggle.
    */
-  private _onLanguageChange(e: Event): void {
-    const select = e.target as HTMLSelectElement;
-    this._language = select.value;
+  private _onExtraConsonantsChange(e: Event): void {
+    const checkbox = e.target as HTMLInputElement;
+    this._extraConsonants = checkbox.checked;
+  }
+
+  /**
+   * Handle L-sounds checkbox toggle.
+   */
+  private _onLSoundsChange(e: Event): void {
+    const checkbox = e.target as HTMLInputElement;
+    this._lSounds = checkbox.checked;
+  }
+
+  /**
+   * Handle breath sounds checkbox toggle.
+   */
+  private _onBreathSoundsChange(e: Event): void {
+    const checkbox = e.target as HTMLInputElement;
+    this._breathSounds = checkbox.checked;
+  }
+
+  /**
+   * Whether to show the extra sound packs UI.
+   * Only relevant for Japanese styles (CV, VCV, CVVC).
+   */
+  private get _showExtraSoundPacks(): boolean {
+    return this._reclist === 'ja-cv' || this._reclist === 'ja-vcv' || this._reclist === 'ja-cvvc';
   }
 
   /**
@@ -1099,32 +982,54 @@ export class UvmRecordingSession extends LitElement {
 
           <sl-details summary="Advanced options">
             <div class="form-group">
-              <label for="recording-style">Recording Style</label>
+              <label for="recording-list">Recording List</label>
               <sl-select
-                id="recording-style"
-                .value=${this._recordingStyle}
-                @sl-change=${this._onStyleChange}
+                id="recording-list"
+                .value=${this._reclist}
+                @sl-change=${this._onReclistChange}
               >
-                <sl-option value="cv">Simple phrases (${JAPANESE_CV_PROMPTS_COUNT} recordings)</sl-option>
-                <sl-option value="vcv">Smooth transitions (${JAPANESE_VCV_PROMPTS_COUNT} recordings)</sl-option>
-                <sl-option value="cvvc">Combined approach</sl-option>
+                <small>Japanese</small>
+                <sl-option value="ja-cv">Japanese CV / 単独音 (${JAPANESE_CV_PROMPTS_COUNT} recordings)</sl-option>
+                <sl-option value="ja-vcv">Japanese VCV / 連続音 (${JAPANESE_VCV_PROMPTS_COUNT} recordings)</sl-option>
+                <sl-option value="ja-cvvc">Japanese CVVC (${JAPANESE_CVVC_PROMPTS_COUNT} recordings)</sl-option>
+                <sl-divider></sl-divider>
+                <small>English</small>
+                <sl-option value="en-arpasing">English ARPAsing (${ENGLISH_ARPASING_PROMPTS_COUNT} recordings)</sl-option>
               </sl-select>
               <p class="form-group-description">
-                Simple phrases are quicker to record. Smooth transitions sound more natural but take longer.
+                CV is the quickest to record. VCV produces smoother transitions but takes longer. CVVC combines both approaches. ARPAsing covers English phonemes.
               </p>
             </div>
 
-            <div class="form-group">
-              <label for="language">Language</label>
-              <sl-select
-                id="language"
-                .value=${this._language}
-                @sl-change=${this._onLanguageChange}
-              >
-                <sl-option value="ja">Japanese</sl-option>
-                <sl-option value="en">English (ARPAsing)</sl-option>
-              </sl-select>
-            </div>
+            ${this._showExtraSoundPacks ? html`
+              <sl-divider></sl-divider>
+              <div class="form-group">
+                <label>Extra Sound Packs</label>
+                <p class="form-group-description">
+                  Optional phonemes for loanwords and expressive synthesis. These add more recordings to your session.
+                </p>
+                <div class="extra-packs-list">
+                  <sl-checkbox
+                    ?checked=${this._extraConsonants}
+                    @sl-change=${this._onExtraConsonantsChange}
+                  >
+                    Alternative consonants (si, ti, fa, fi, fe, fo...)
+                  </sl-checkbox>
+                  <sl-checkbox
+                    ?checked=${this._lSounds}
+                    @sl-change=${this._onLSoundsChange}
+                  >
+                    L-sounds (la, li, lu, le, lo)
+                  </sl-checkbox>
+                  <sl-checkbox
+                    ?checked=${this._breathSounds}
+                    @sl-change=${this._onBreathSoundsChange}
+                  >
+                    Breath sounds (inhale, exhale, aspiration)
+                  </sl-checkbox>
+                </div>
+              </div>
+            ` : null}
           </sl-details>
 
           <sl-divider></sl-divider>
@@ -1157,7 +1062,7 @@ export class UvmRecordingSession extends LitElement {
         <div class="recording-header">
           <div class="recording-info">
             <h3>${this._voicebankName}</h3>
-            <sl-badge variant="primary">${this._recordingStyle.toUpperCase()}</sl-badge>
+            <sl-badge variant="primary">${this._reclistConfig.style.toUpperCase()}</sl-badge>
           </div>
           <div class="recording-controls">
             <sl-button variant="text" @click=${this._onSkipPrompt}>
@@ -1183,7 +1088,7 @@ export class UvmRecordingSession extends LitElement {
           .prompt=${currentPrompt}
           .promptIndex=${this._currentPromptIndex}
           .totalPrompts=${this._prompts.length}
-          language=${this._language}
+          language=${this._reclistConfig.language}
           @recording-complete=${this._onRecordingComplete}
           @re-record-requested=${this._onReRecordRequested}
           @proceed-to-next=${this._onProceedToNext}
@@ -1246,105 +1151,14 @@ export class UvmRecordingSession extends LitElement {
     if (!this._generatedVoicebank) return null;
 
     return html`
-      <div class="complete-container">
-        <sl-icon class="complete-icon" name="check-circle-fill"></sl-icon>
-        <h3>Your Voicebank is Ready!</h3>
-        <p class="complete-description">
-          "${this._generatedVoicebank.name}" has been created and is ready to download.
-        </p>
-
-        <!-- Compact stats row -->
-        <div class="voicebank-stats-compact">
-          <div class="stat-item-compact">
-            <span class="stat-value">${this._generatedVoicebank.sample_count}</span>
-            <span class="stat-label">Samples</span>
-          </div>
-          <div class="stat-item-compact">
-            <span class="stat-value">${this._generatedVoicebank.oto_entries}</span>
-            <span class="stat-label">Oto Entries</span>
-          </div>
-          <div class="stat-item-compact">
-            <span class="stat-value">${Math.round(this._generatedVoicebank.average_confidence * 100)}%</span>
-            <span class="stat-label">Confidence</span>
-          </div>
-          <div class="stat-item-compact">
-            <span class="stat-value">${this._generatedVoicebank.generation_time_seconds.toFixed(1)}s</span>
-            <span class="stat-label">Generated</span>
-          </div>
-        </div>
-
-        ${this._generatedVoicebank.warnings.length > 0
-          ? html`
-              <sl-alert variant="warning" open style="margin-bottom: 1rem; width: 100%; max-width: 500px;">
-                <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
-                ${this._generatedVoicebank.warnings.length} warning(s) during generation.
-                ${this._generatedVoicebank.skipped_segments > 0
-                  ? ` ${this._generatedVoicebank.skipped_segments} segment(s) were skipped.`
-                  : ''}
-              </sl-alert>
-            `
-          : null}
-
-        <!-- Primary action -->
-        <div class="complete-actions">
-          <sl-button variant="primary" size="large" @click=${this._onDownloadVoicebank}>
-            <sl-icon slot="prefix" name="download"></sl-icon>
-            Download Voicebank
-          </sl-button>
-        </div>
-
-        <!-- What's next instructions -->
-        <div class="next-steps-section">
-          <div class="next-steps-header">
-            <sl-icon name="lightbulb"></sl-icon>
-            <span>How to use your voicebank in OpenUTAU</span>
-          </div>
-          <ol class="next-steps-list">
-            <li>
-              <span class="step-number">1</span>
-              <span class="step-content">
-                <strong>Download</strong> your voicebank using the button above
-              </span>
-            </li>
-            <li>
-              <span class="step-number">2</span>
-              <span class="step-content">
-                <strong>Open OpenUTAU</strong> on your computer
-              </span>
-            </li>
-            <li>
-              <span class="step-number">3</span>
-              <span class="step-content">
-                Go to <strong>Tools</strong> menu and select <strong>Install Singer</strong>
-              </span>
-            </li>
-            <li>
-              <span class="step-number">4</span>
-              <span class="step-content">
-                <strong>Select the downloaded ZIP file</strong> and click Open
-              </span>
-            </li>
-            <li>
-              <span class="step-number">5</span>
-              <span class="step-content">
-                Your voice is ready to sing! Select it from the singer dropdown.
-              </span>
-            </li>
-          </ol>
-        </div>
-
-        <!-- Secondary actions -->
-        <div class="complete-actions">
-          <sl-button variant="default" @click=${this._onRecordAnother}>
-            <sl-icon slot="prefix" name="plus-lg"></sl-icon>
-            Create Another
-          </sl-button>
-          <sl-button variant="text" @click=${this._onOpenInEditor}>
-            <sl-icon slot="prefix" name="sliders"></sl-icon>
-            Fine-tune in Editor
-          </sl-button>
-        </div>
-      </div>
+      <uvm-voice-complete
+        .voicebankName=${this._voicebankName}
+        .voicebankId=${this._voicebankName}
+        .sessionId=${this._sessionId || ''}
+        .generatedVoicebank=${this._generatedVoicebank}
+        @create-another=${this._onRecordAnother}
+        @open-editor=${this._onOpenInEditor}
+      ></uvm-voice-complete>
     `;
   }
 
@@ -1392,6 +1206,8 @@ export class UvmRecordingSession extends LitElement {
 // Constants for prompt counts (used in UI text)
 const JAPANESE_CV_PROMPTS_COUNT = 71;
 const JAPANESE_VCV_PROMPTS_COUNT = 43;
+const JAPANESE_CVVC_PROMPTS_COUNT = JAPANESE_CV_PROMPTS_COUNT + JAPANESE_VCV_PROMPTS_COUNT;
+const ENGLISH_ARPASING_PROMPTS_COUNT = 58;
 
 declare global {
   interface HTMLElementTagNameMap {
