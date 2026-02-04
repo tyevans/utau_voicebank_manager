@@ -32,6 +32,7 @@ import { DEMO_SONGS, checkSongCompatibility, type DemoSong } from '../data/demo-
 import { MelodyPlayer } from '../services/melody-player.js';
 import { SampleLoader } from '../services/sample-loader.js';
 import { api } from '../services/api.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 
 /**
  * Phrase preview component for voicebank demo playback.
@@ -347,9 +348,9 @@ export class UvmPhrasePreview extends LitElement {
     this._isLoading = true;
 
     try {
-      // Create AudioContext on user interaction (required by browser policy)
+      // Get shared AudioContext on user interaction (required by browser policy)
       if (!this._audioContext) {
-        this._audioContext = new AudioContext();
+        this._audioContext = getSharedAudioContext();
       }
 
       // Resume if suspended
@@ -462,11 +463,8 @@ export class UvmPhrasePreview extends LitElement {
       this._loader.clearCache();
     }
 
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-    }
-
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._audioContext = null;
     this._player = null;
     this._loader = null;
   }

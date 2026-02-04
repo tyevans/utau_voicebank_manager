@@ -18,6 +18,7 @@ import '@shoelace-style/shoelace/dist/components/divider/divider.js';
 
 import './uvm-waveform-canvas.js';
 import { api, getDefaultApiUrl } from '../services/api.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
 import type { OtoEntry } from '../services/types.js';
 
@@ -634,10 +635,8 @@ export class UvmValidationView extends LitElement {
   }
 
   private _cleanupAudioContext(): void {
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-    }
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._audioContext = null;
   }
 
   /**
@@ -698,7 +697,7 @@ export class UvmValidationView extends LitElement {
 
     try {
       if (!this._audioContext) {
-        this._audioContext = new AudioContext();
+        this._audioContext = getSharedAudioContext();
       }
 
       if (this._audioContext.state === 'suspended') {

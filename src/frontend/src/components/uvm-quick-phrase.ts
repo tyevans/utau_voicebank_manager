@@ -30,6 +30,7 @@ import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 import { MelodyPlayer, type PhraseNote } from '../services/melody-player.js';
 import { SampleLoader } from '../services/sample-loader.js';
 import { api } from '../services/api.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 import type { OtoEntry } from '../services/types.js';
 
 /**
@@ -601,9 +602,9 @@ export class UvmQuickPhrase extends LitElement {
     this._currentPhonemeIndex = -1;
 
     try {
-      // Create AudioContext on user interaction
+      // Get shared AudioContext on user interaction
       if (!this._audioContext) {
-        this._audioContext = new AudioContext();
+        this._audioContext = getSharedAudioContext();
       }
 
       if (this._audioContext.state === 'suspended') {
@@ -770,11 +771,8 @@ export class UvmQuickPhrase extends LitElement {
       this._loader.clearCache();
     }
 
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-    }
-
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._audioContext = null;
     this._player = null;
     this._loader = null;
   }

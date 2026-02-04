@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 
 import { api } from '../services/api.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 
 /**
  * Sample card component with mini-waveform visualization.
@@ -261,9 +262,9 @@ export class UvmSampleCard extends LitElement {
     this._loading = true;
 
     try {
-      // Create or reuse AudioContext
+      // Get shared AudioContext
       if (!this._audioContext) {
-        this._audioContext = new AudioContext();
+        this._audioContext = getSharedAudioContext();
       }
 
       // Resume if suspended

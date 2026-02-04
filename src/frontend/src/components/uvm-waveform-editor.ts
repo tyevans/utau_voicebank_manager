@@ -17,6 +17,7 @@ import './uvm-marker-handle.js';
 
 // Import melody preview services
 import { MelodyPlayer, MELODY_PATTERNS, getMelodyPattern } from '../services/index.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 import type { OtoEntry } from '../services/index.js';
 import type { MarkerDragDetail } from './uvm-marker-handle.js';
 
@@ -1136,7 +1137,7 @@ export class UvmWaveformEditor extends LitElement {
 
     // Create audio context if needed
     if (!this._audioContext) {
-      this._audioContext = new AudioContext();
+      this._audioContext = getSharedAudioContext();
     }
 
     // Resume context if suspended
@@ -1196,7 +1197,7 @@ export class UvmWaveformEditor extends LitElement {
 
     // Create audio context if needed
     if (!this._audioContext) {
-      this._audioContext = new AudioContext();
+      this._audioContext = getSharedAudioContext();
     }
 
     // Resume context if suspended
@@ -1610,7 +1611,7 @@ export class UvmWaveformEditor extends LitElement {
 
     // Create audio context if needed (must be after user gesture)
     if (!this._audioContext) {
-      this._audioContext = new AudioContext();
+      this._audioContext = getSharedAudioContext();
     }
 
     // Resume context if it was suspended (browser autoplay policy)
@@ -1684,10 +1685,8 @@ export class UvmWaveformEditor extends LitElement {
    */
   private _cleanupAudioContext(): void {
     this._stopSourceNode();
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-    }
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._audioContext = null;
   }
 
   /**
@@ -1789,7 +1788,7 @@ export class UvmWaveformEditor extends LitElement {
 
     // Initialize AudioContext if needed
     if (!this._audioContext) {
-      this._audioContext = new AudioContext();
+      this._audioContext = getSharedAudioContext();
     }
 
     // Note: AudioContext resume is handled inside MelodyPlayer.playSequence()

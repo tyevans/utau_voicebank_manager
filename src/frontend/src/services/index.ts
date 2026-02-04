@@ -5,6 +5,9 @@
  * Services handle HTTP requests, error handling, and response parsing.
  */
 
+// Shared AudioContext singleton
+export { getSharedAudioContext } from './audio-context.js';
+
 // API client
 export { api, ApiClient, ApiError } from './api.js';
 

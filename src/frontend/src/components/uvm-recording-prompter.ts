@@ -58,6 +58,7 @@ import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
 
 import { UvmToastManager } from './uvm-toast-manager.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 import { getHintsForPrompt, getEnglishHintsForPrompt, type PronunciationHint } from '../services/pronunciation-hints.js';
 
 /**
@@ -68,7 +69,7 @@ export interface PhonemePrompt {
   text: string;       // Japanese text: "kakikukeko"
   romaji: string;     // Romanized: "ka ki ku ke ko"
   phonemes: string[];
-  style: 'cv' | 'vcv' | 'cvvc';
+  style: 'cv' | 'vcv' | 'cvvc' | 'vccv' | 'arpasing';
   category: string;
   difficulty: 'basic' | 'intermediate' | 'advanced';
   notes?: string;
@@ -951,7 +952,7 @@ export class UvmRecordingPrompter extends LitElement {
   private _setupAudioAnalyser(): void {
     if (!this._mediaStream) return;
 
-    this._audioContext = new AudioContext();
+    this._audioContext = getSharedAudioContext();
     const source = this._audioContext.createMediaStreamSource(this._mediaStream);
     this._analyser = this._audioContext.createAnalyser();
     this._analyser.fftSize = 256;
@@ -1099,9 +1100,9 @@ export class UvmRecordingPrompter extends LitElement {
     // Decode the audio blob to AudioBuffer for preview
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
-      // Create a separate audio context for preview playback
+      // Get shared audio context for preview playback
       if (!this._previewAudioContext) {
-        this._previewAudioContext = new AudioContext();
+        this._previewAudioContext = getSharedAudioContext();
       }
       this._recordedAudioBuffer = await this._previewAudioContext.decodeAudioData(arrayBuffer);
 
@@ -1638,18 +1639,13 @@ export class UvmRecordingPrompter extends LitElement {
       this._mediaStream = null;
     }
 
-    // Close audio context
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-    }
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._audioContext = null;
 
     // Stop preview playback and clean up preview resources
     this._stopPreviewPlayback();
-    if (this._previewAudioContext) {
-      this._previewAudioContext.close();
-      this._previewAudioContext = null;
-    }
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._previewAudioContext = null;
     this._recordedAudioBuffer = null;
 
     // Clear timers

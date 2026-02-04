@@ -29,8 +29,10 @@ import './uvm-value-bar.js';
 import './uvm-precision-drawer.js';
 import './uvm-shortcut-overlay.js';
 import './uvm-batch-review.js';
+import './uvm-metadata-editor.js';
 
 import { api, ApiError } from '../services/api.js';
+import { getSharedAudioContext } from '../services/audio-context.js';
 import type { BatchSampleResult } from './uvm-batch-review.js';
 import type { EntryCreateDetail } from './uvm-entry-list.js';
 import type { OtoEntry } from '../services/types.js';
@@ -417,6 +419,9 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   private _autoAdvance = false;
 
   @state()
+  private _showMetadata = false;
+
+  @state()
   private _showBatchReview = false;
 
   @state()
@@ -759,9 +764,9 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     this._audioBuffer = null;
 
     try {
-      // Create AudioContext on first use (must be after user gesture)
+      // Get shared AudioContext on first use (must be after user gesture)
       if (!this._audioContext) {
-        this._audioContext = new AudioContext();
+        this._audioContext = getSharedAudioContext();
       }
 
       // Resume if suspended (browser autoplay policy)
@@ -1105,10 +1110,8 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
    * Clean up audio context when component is disconnected.
    */
   private _cleanupAudioContext(): void {
-    if (this._audioContext) {
-      this._audioContext.close();
-      this._audioContext = null;
-    }
+    // Release reference to shared AudioContext (do not close -- it is shared)
+    this._audioContext = null;
   }
 
   /**
@@ -1215,6 +1218,13 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Update URL to show voicebank selection (without triggering navigation)
     const newPath = `/editor/${encodeURIComponent(voicebankId)}`;
     window.history.replaceState(null, '', newPath);
+  }
+
+  /**
+   * Open the metadata editor dialog.
+   */
+  private _openMetadata(): void {
+    this._showMetadata = true;
   }
 
   /**
@@ -1453,6 +1463,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
           @uvm-context-bar:redo=${this._redo}
           @uvm-context-bar:save=${this._saveEntry}
           @uvm-context-bar:auto-advance-toggle=${this._onAutoAdvanceToggle}
+          @uvm-context-bar:metadata=${this._openMetadata}
         ></uvm-context-bar>
 
         ${this._renderEntryTabs()}
@@ -1507,6 +1518,12 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
           @uvm-batch-review:adjust=${this._onBatchReviewAdjust}
           @uvm-batch-review:close=${() => (this._showBatchReview = false)}
         ></uvm-batch-review>
+
+        <uvm-metadata-editor
+          ?open=${this._showMetadata}
+          voicebankId=${this._currentVoicebankId || ''}
+          @uvm-metadata-editor:close=${() => (this._showMetadata = false)}
+        ></uvm-metadata-editor>
 
         ${this._renderUnsavedDialog()}
       </div>
