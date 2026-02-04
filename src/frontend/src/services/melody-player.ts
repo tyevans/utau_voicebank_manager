@@ -993,13 +993,16 @@ export class MelodyPlayer {
       });
     } else {
       // Playback-rate pitch shifting - traditional method
-      this._schedulePlaybackRateNote(note, prevNote, {
+      // Pass the same timing values the dispatcher computed so both paths
+      // produce identical scheduling (whenToStart, noteDuration, fades).
+      this._schedulePlaybackRateNote(note, {
         audioBuffer,
         sampleStart,
         sampleDuration,
-        preutterance: prevNote ? preutterance : 0,
-        overlap,
-        effectiveStartTime,
+        whenToStart,
+        noteDuration,
+        fadeInTime,
+        fadeTime,
         velocity,
       });
     }
@@ -1084,17 +1087,22 @@ export class MelodyPlayer {
 
   /**
    * Schedule a note using traditional playback-rate pitch shifting.
+   *
+   * Timing values (whenToStart, noteDuration, fadeInTime, fadeTime) are
+   * computed by the dispatcher (_scheduleNote) and passed in directly.
+   * This ensures identical scheduling regardless of whether the granular
+   * or playback-rate path is chosen.
    */
   private _schedulePlaybackRateNote(
     note: NoteEvent,
-    prevNote: NoteEvent | null,
     params: {
       audioBuffer: AudioBuffer;
       sampleStart: number;
       sampleDuration: number;
-      preutterance: number;
-      overlap: number;
-      effectiveStartTime: number;
+      whenToStart: number;
+      noteDuration: number;
+      fadeInTime: number;
+      fadeTime: number;
       velocity: number;
     }
   ): void {
@@ -1102,9 +1110,10 @@ export class MelodyPlayer {
       audioBuffer,
       sampleStart,
       sampleDuration,
-      preutterance,
-      overlap,
-      effectiveStartTime,
+      whenToStart,
+      noteDuration,
+      fadeInTime,
+      fadeTime,
       velocity,
     } = params;
 
@@ -1123,27 +1132,20 @@ export class MelodyPlayer {
     source.connect(gainNode);
     gainNode.connect(this._audioContext.destination);
 
-    // Calculate actual playback duration
-    // The sample duration is affected by playback rate
-    const adjustedSampleDuration = sampleDuration / playbackRate;
-    const noteDuration = Math.min(note.duration + preutterance, adjustedSampleDuration);
-
     // Get the envelope for this note (note-specific or default)
     const envelope = note.envelope ?? this._defaultEnvelope;
 
-    // Set up crossfade envelope (or ADSR if envelope is provided)
-    this._applyCrossfadeEnvelope(gainNode, {
-      startTime: effectiveStartTime,
-      duration: noteDuration,
-      overlap,
-      prevNote,
+    // Apply envelope using the same fade values the granular path uses
+    this._applyUnifiedEnvelope(gainNode, {
+      whenToStart,
+      noteDuration,
+      fadeInTime,
+      fadeTime,
       baseGain: velocity,
-      sequenceStartTime: this._sequenceStartTime,
       envelope,
     });
 
     // Schedule the source node
-    const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
     source.start(whenToStart, sampleStart, sampleDuration);
 
     // Track active node for cleanup
@@ -1350,13 +1352,16 @@ export class MelodyPlayer {
       });
     } else {
       // Playback-rate pitch shifting - traditional method
-      this._schedulePlaybackRatePhraseNote(note, prevNote, prevSampleData, {
+      // Pass the same timing values the dispatcher computed so both paths
+      // produce identical scheduling (whenToStart, noteDuration, fades).
+      this._schedulePlaybackRatePhraseNote(note, {
         audioBuffer,
         sampleStart,
         sampleDuration,
-        preutterance: hasPrevNote ? preutterance : 0,
-        overlap,
-        effectiveStartTime,
+        whenToStart,
+        noteDuration,
+        fadeInTime,
+        fadeTime,
         velocity: effectiveVelocity,
       });
     }
@@ -1436,18 +1441,22 @@ export class MelodyPlayer {
 
   /**
    * Schedule a phrase note using traditional playback-rate pitch shifting.
+   *
+   * Timing values (whenToStart, noteDuration, fadeInTime, fadeTime) are
+   * computed by the dispatcher (_schedulePhraseNote) and passed in directly.
+   * This ensures identical scheduling regardless of whether the granular
+   * or playback-rate path is chosen.
    */
   private _schedulePlaybackRatePhraseNote(
     note: PhraseNote,
-    prevNote: PhraseNote | null,
-    prevSampleData: SampleData | null,
     params: {
       audioBuffer: AudioBuffer;
       sampleStart: number;
       sampleDuration: number;
-      preutterance: number;
-      overlap: number;
-      effectiveStartTime: number;
+      whenToStart: number;
+      noteDuration: number;
+      fadeInTime: number;
+      fadeTime: number;
       velocity: number;
     }
   ): void {
@@ -1455,9 +1464,10 @@ export class MelodyPlayer {
       audioBuffer,
       sampleStart,
       sampleDuration,
-      preutterance,
-      overlap,
-      effectiveStartTime,
+      whenToStart,
+      noteDuration,
+      fadeInTime,
+      fadeTime,
       velocity,
     } = params;
 
@@ -1472,24 +1482,19 @@ export class MelodyPlayer {
     source.connect(gainNode);
     gainNode.connect(this._audioContext.destination);
 
-    const adjustedSampleDuration = sampleDuration / playbackRate;
-    const noteDuration = Math.min(note.duration + preutterance, adjustedSampleDuration);
-
     // Get the envelope for this note (note-specific or default)
     const envelope = note.envelope ?? this._defaultEnvelope;
 
-    this._applyPhraseCrossfadeEnvelope(gainNode, {
-      startTime: effectiveStartTime,
-      duration: noteDuration,
-      overlap,
-      prevNote,
-      prevSampleData,
+    // Apply envelope using the same fade values the granular path uses
+    this._applyUnifiedEnvelope(gainNode, {
+      whenToStart,
+      noteDuration,
+      fadeInTime,
+      fadeTime,
       baseGain: velocity,
-      sequenceStartTime: this._sequenceStartTime,
       envelope,
     });
 
-    const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
     source.start(whenToStart, sampleStart, sampleDuration);
 
     const activeNode: ActiveNode = {
@@ -1504,6 +1509,63 @@ export class MelodyPlayer {
     source.onended = () => {
       this._removeActiveNode(activeNode);
     };
+  }
+
+  /**
+   * Apply a unified envelope to a gain node using dispatcher-computed timing.
+   *
+   * This method is used by the playback-rate path so that it receives the
+   * exact same whenToStart / noteDuration / fadeInTime / fadeTime values
+   * that the granular path receives.  When an ADSR envelope is present it
+   * delegates to _applyADSREnvelope; otherwise it applies a crossfade
+   * shaped by the current _crossfadeType setting.
+   */
+  private _applyUnifiedEnvelope(
+    gainNode: GainNode,
+    params: {
+      whenToStart: number;
+      noteDuration: number;
+      fadeInTime: number;
+      fadeTime: number;
+      baseGain: number;
+      envelope: ADSREnvelope;
+    }
+  ): void {
+    const { whenToStart, noteDuration, fadeInTime, fadeTime, baseGain, envelope } = params;
+
+    // If an ADSR envelope is provided, use it
+    if (envelope) {
+      this._applyADSREnvelope(gainNode, {
+        startTime: whenToStart,
+        duration: noteDuration,
+        envelope,
+        baseGain,
+      });
+      return;
+    }
+
+    // Minimum fade time to avoid artifacts
+    const safeFadeInTime = Math.max(0.005, fadeInTime);
+    const safeFadeOutTime = Math.max(0.005, fadeTime);
+
+    // Apply crossfade using curve-based approach matching the fallback path
+    gainNode.gain.setValueAtTime(0, whenToStart);
+
+    // Generate and apply fade-in curve
+    const fadeInCurve = this._generateCrossfadeCurve(safeFadeInTime, true, baseGain);
+    gainNode.gain.setValueCurveAtTime(fadeInCurve, whenToStart, safeFadeInTime);
+
+    const fadeInEnd = whenToStart + safeFadeInTime;
+    const fadeOutStart = whenToStart + noteDuration - safeFadeOutTime;
+
+    if (fadeOutStart > fadeInEnd + 0.001) {
+      gainNode.gain.setValueAtTime(baseGain, fadeInEnd);
+      gainNode.gain.setValueAtTime(baseGain, fadeOutStart);
+    }
+
+    // Generate and apply fade-out curve
+    const fadeOutCurve = this._generateCrossfadeCurve(safeFadeOutTime, false, baseGain);
+    gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, safeFadeOutTime);
   }
 
   /**
@@ -1576,201 +1638,6 @@ export class MelodyPlayer {
 
     // Release: ramp to 0
     gainNode.gain.linearRampToValueAtTime(0, safeStartTime + safeDuration);
-  }
-
-  /**
-   * Apply crossfade envelope to a gain node.
-   *
-   * If the note has an ADSR envelope, uses ADSR shaping instead of simple crossfade.
-   * Otherwise implements smooth transitions between consecutive notes using the
-   * oto overlap parameter for crossfade duration.
-   *
-   * Supports both linear and equal-power crossfade curves based on the
-   * _crossfadeType setting. Equal-power crossfades maintain constant perceived
-   * loudness during transitions.
-   */
-  private _applyCrossfadeEnvelope(
-    gainNode: GainNode,
-    params: {
-      startTime: number;
-      duration: number;
-      overlap: number;
-      prevNote: NoteEvent | null;
-      baseGain: number;
-      sequenceStartTime: number;
-      envelope?: ADSREnvelope;
-    }
-  ): void {
-    const { startTime, duration, overlap, prevNote, baseGain, sequenceStartTime, envelope } = params;
-
-    // If an ADSR envelope is provided, use it instead of simple crossfade
-    if (envelope) {
-      this._applyADSREnvelope(gainNode, {
-        startTime,
-        duration,
-        envelope,
-        baseGain,
-      });
-      return;
-    }
-
-    // All AudioParam times must be non-negative (>= currentTime)
-    const now = this._audioContext.currentTime;
-    const safeStartTime = Math.max(startTime, now);
-
-    // Adjust duration if we had to clamp start time
-    const timeShift = safeStartTime - startTime;
-    const safeDuration = Math.max(0.01, duration - timeShift);
-
-    // Clamp overlap to reasonable bounds
-    const fadeTime = Math.min(overlap, safeDuration * 0.5, 0.1); // Max 100ms or half duration
-
-    // Determine fade-in time based on overlap with previous note
-    let fadeInTime = fadeTime;
-    if (prevNote) {
-      // If there's a previous note, use overlap for crossfade
-      const prevEndTime = sequenceStartTime + prevNote.startTime + prevNote.duration;
-      const overlapDuration = Math.max(0, prevEndTime - safeStartTime);
-      fadeInTime = Math.min(fadeTime, overlapDuration + 0.02);
-    }
-
-    // Minimum fade time to avoid artifacts
-    fadeInTime = Math.max(0.005, fadeInTime);
-    const fadeOutTime = Math.max(0.005, fadeTime);
-
-    // Apply crossfade using curve-based approach for equal-power or linear
-    // Start at 0
-    gainNode.gain.setValueAtTime(0, safeStartTime);
-
-    // Generate and apply fade-in curve
-    const fadeInCurve = this._generateCrossfadeCurve(fadeInTime, true, baseGain);
-    gainNode.gain.setValueCurveAtTime(fadeInCurve, safeStartTime, fadeInTime);
-
-    // Hold at full gain until fade-out
-    const fadeInEnd = safeStartTime + fadeInTime;
-    const fadeOutStart = safeStartTime + safeDuration - fadeOutTime;
-
-    if (fadeOutStart > fadeInEnd + 0.001) {
-      // setValueCurveAtTime ends at the last curve value, so we need to explicitly
-      // set the value at the sustain phase start
-      gainNode.gain.setValueAtTime(baseGain, fadeInEnd);
-      gainNode.gain.setValueAtTime(baseGain, fadeOutStart);
-    }
-
-    // Generate and apply fade-out curve
-    const fadeOutCurve = this._generateCrossfadeCurve(fadeOutTime, false, baseGain);
-    gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, fadeOutTime);
-  }
-
-  /**
-   * Apply crossfade envelope for phrase playback.
-   *
-   * If the note has an ADSR envelope, uses ADSR shaping instead of simple crossfade.
-   * Otherwise considers per-note oto parameters.
-   * The crossfade duration is determined by:
-   * - The current note's overlap parameter for fade-in
-   * - The actual timing overlap between notes
-   *
-   * This produces natural-sounding transitions in concatenative synthesis
-   * where each phoneme may have different overlap characteristics.
-   *
-   * Supports both linear and equal-power crossfade curves based on the
-   * _crossfadeType setting. Equal-power crossfades maintain constant perceived
-   * loudness during transitions.
-   */
-  private _applyPhraseCrossfadeEnvelope(
-    gainNode: GainNode,
-    params: {
-      startTime: number;
-      duration: number;
-      overlap: number;
-      prevNote: PhraseNote | null;
-      prevSampleData: SampleData | null;
-      baseGain: number;
-      sequenceStartTime: number;
-      envelope?: ADSREnvelope;
-    }
-  ): void {
-    const {
-      startTime,
-      duration,
-      overlap,
-      prevNote,
-      prevSampleData,
-      baseGain,
-      sequenceStartTime,
-      envelope,
-    } = params;
-
-    // If an ADSR envelope is provided, use it instead of simple crossfade
-    if (envelope) {
-      this._applyADSREnvelope(gainNode, {
-        startTime,
-        duration,
-        envelope,
-        baseGain,
-      });
-      return;
-    }
-
-    // All AudioParam times must be non-negative (>= currentTime)
-    const now = this._audioContext.currentTime;
-    const safeStartTime = Math.max(startTime, now);
-
-    // Adjust duration if we had to clamp start time
-    const timeShift = safeStartTime - startTime;
-    const safeDuration = Math.max(0.01, duration - timeShift);
-
-    // Use this note's overlap parameter for crossfade, clamped to reasonable bounds
-    const fadeTime = Math.min(overlap, safeDuration * 0.5, 0.1); // Max 100ms or half duration
-
-    // Determine fade-in time based on overlap with previous note
-    let fadeInTime = fadeTime;
-    if (prevNote && prevSampleData) {
-      // Calculate when the previous note actually ends based on its scheduled timing
-      const prevNoteEndTime = sequenceStartTime + prevNote.startTime + prevNote.duration;
-
-      // How much do the notes actually overlap in time?
-      const actualOverlap = Math.max(0, prevNoteEndTime - safeStartTime);
-
-      // Use the minimum of: our overlap param, actual timing overlap, or a small buffer
-      fadeInTime = Math.min(fadeTime, actualOverlap + 0.02, 0.1);
-
-      // If notes don't actually overlap in time, use a quick fade-in
-      if (actualOverlap <= 0) {
-        fadeInTime = Math.min(fadeTime, 0.02);
-      }
-    } else {
-      // First note: quick fade-in to avoid click
-      fadeInTime = Math.min(fadeTime, 0.02);
-    }
-
-    // Minimum fade time to avoid artifacts
-    fadeInTime = Math.max(0.005, fadeInTime);
-    const fadeOutTime = Math.max(0.005, fadeTime);
-
-    // Apply crossfade using curve-based approach for equal-power or linear
-    // Start at 0
-    gainNode.gain.setValueAtTime(0, safeStartTime);
-
-    // Generate and apply fade-in curve
-    const fadeInCurve = this._generateCrossfadeCurve(fadeInTime, true, baseGain);
-    gainNode.gain.setValueCurveAtTime(fadeInCurve, safeStartTime, fadeInTime);
-
-    // Hold at full gain until fade-out
-    const fadeInEnd = safeStartTime + fadeInTime;
-    const fadeOutStart = safeStartTime + safeDuration - fadeOutTime;
-
-    if (fadeOutStart > fadeInEnd + 0.001) {
-      // setValueCurveAtTime ends at the last curve value, so we need to explicitly
-      // set the value at the sustain phase start
-      gainNode.gain.setValueAtTime(baseGain, fadeInEnd);
-      gainNode.gain.setValueAtTime(baseGain, fadeOutStart);
-    }
-
-    // Generate and apply fade-out curve
-    const fadeOutCurve = this._generateCrossfadeCurve(fadeOutTime, false, baseGain);
-    gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, fadeOutTime);
   }
 
   /**
