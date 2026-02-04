@@ -310,6 +310,7 @@ export class MelodyPlayer {
   private _activeNodes: ActiveNode[] = [];
   private _isPlaying = false;
   private _sequenceStartTime = 0;
+  private _disposed = false;
 
   // Current synthesis settings
   private _useGranular = true;
@@ -429,6 +430,70 @@ export class MelodyPlayer {
   }
 
   /**
+   * Whether this player has been permanently disposed.
+   *
+   * A disposed player cannot be used for playback. Calling playSequence()
+   * or playPhrase() on a disposed player will return immediately.
+   */
+  get disposed(): boolean {
+    return this._disposed;
+  }
+
+  /**
+   * Permanently dispose of this player, releasing all resources.
+   *
+   * This performs deeper cleanup than stop():
+   * - Calls stop() to halt all active playback
+   * - Disconnects all tracked audio nodes
+   * - Disposes the GranularPitchShifter (which disconnects its output bridge)
+   * - Clears the spectral distance cache
+   * - Sets a disposed flag preventing future playback
+   *
+   * Does NOT close the AudioContext since it may be shared across components.
+   *
+   * After calling dispose(), this instance cannot be reused. Create a new
+   * MelodyPlayer if playback is needed again.
+   */
+  dispose(): void {
+    if (this._disposed) {
+      return;
+    }
+
+    this._disposed = true;
+
+    // Stop all active playback
+    this.stop();
+
+    // Disconnect any remaining tracked nodes (stop() clears the array,
+    // but belt-and-suspenders for nodes that slipped through)
+    for (const node of this._activeNodes) {
+      try {
+        if (node.granularHandle) {
+          node.granularHandle.stop();
+        } else {
+          node.source?.disconnect();
+          node.gainNode?.disconnect();
+        }
+      } catch {
+        // Ignore errors if already disconnected
+      }
+    }
+    this._activeNodes = [];
+
+    // Dispose the granular pitch shifter (stops all and disconnects bridge)
+    if (this._granularShifter) {
+      this._granularShifter.dispose();
+      this._granularShifter = null;
+    }
+
+    // Clear the spectral distance cache
+    if (this._spectralDistanceCache) {
+      this._spectralDistanceCache.clear();
+      this._spectralDistanceCache = null;
+    }
+  }
+
+  /**
    * Get or create the GranularPitchShifter instance.
    */
   private _getGranularShifter(): GranularPitchShifter {
@@ -484,6 +549,11 @@ export class MelodyPlayer {
    * @param options - Synthesis options including oto entry and audio buffer
    */
   async playSequence(notes: NoteEvent[], options: SynthesisOptions): Promise<void> {
+    if (this._disposed) {
+      console.warn('MelodyPlayer: Cannot play sequence on a disposed player');
+      return;
+    }
+
     if (notes.length === 0) {
       return;
     }
@@ -695,6 +765,11 @@ export class MelodyPlayer {
       usePsola?: boolean;
     }
   ): Promise<void> {
+    if (this._disposed) {
+      console.warn('MelodyPlayer: Cannot play phrase on a disposed player');
+      return;
+    }
+
     if (notes.length === 0) {
       return;
     }

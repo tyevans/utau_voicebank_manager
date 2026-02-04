@@ -463,6 +463,9 @@ export class UvmPhrasePreview extends LitElement {
       this._loader.clearCache();
     }
 
+    // Dispose the melody player to release audio nodes and caches
+    this._player?.dispose();
+
     // Release reference to shared AudioContext (do not close -- it is shared)
     this._audioContext = null;
     this._player = null;

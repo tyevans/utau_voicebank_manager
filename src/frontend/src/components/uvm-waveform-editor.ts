@@ -1685,6 +1685,11 @@ export class UvmWaveformEditor extends LitElement {
    */
   private _cleanupAudioContext(): void {
     this._stopSourceNode();
+
+    // Dispose the melody player to release audio nodes and caches
+    this._melodyPlayer?.dispose();
+    this._melodyPlayer = null;
+
     // Release reference to shared AudioContext (do not close -- it is shared)
     this._audioContext = null;
   }
