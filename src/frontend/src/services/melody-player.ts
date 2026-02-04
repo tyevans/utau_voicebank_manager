@@ -968,13 +968,14 @@ export class MelodyPlayer {
       : Math.min(note.duration, sampleDuration);
 
     // Determine crossfade timing
+    // For equal-power crossfade, both the outgoing note's fade-out and the
+    // incoming note's fade-in MUST use the same duration and time window.
+    // fadeTime is used for both the fade-in of this note and the fade-out
+    // tail of this note (when the *next* note overlaps).
     const fadeTime = Math.min(overlap, noteDuration * 0.5, 0.1);
-    let fadeInTime = fadeTime;
-    if (prevNote) {
-      const prevEndTime = this._sequenceStartTime + prevNote.startTime + prevNote.duration;
-      const overlapDuration = Math.max(0, prevEndTime - whenToStart);
-      fadeInTime = Math.min(fadeTime, overlapDuration + 0.02);
-    }
+    // The incoming fade-in must match the outgoing fade-out duration exactly
+    // to maintain g_in(t)^2 + g_out(t)^2 = 1 (constant power).
+    const fadeInTime = prevNote ? fadeTime : Math.min(fadeTime, 0.02);
 
     // Use granular pitch shifting if enabled and pitch is not zero
     const shouldUseGranular = this._useGranular && note.pitch !== 0;
@@ -1039,8 +1040,16 @@ export class MelodyPlayer {
 
     const shifter = this._getGranularShifter();
 
-    // Get the envelope for this note (note-specific or default)
-    const envelope = note.envelope ?? this._defaultEnvelope;
+    // Get the envelope for this note (note-specific or default).
+    // Override attack/release with the crossfade timing so that the
+    // incoming ramp-up and outgoing ramp-down use identical durations,
+    // maintaining constant power during the crossfade window.
+    const baseEnvelope = note.envelope ?? this._defaultEnvelope;
+    const envelope = {
+      ...baseEnvelope,
+      attack: fadeInTime * 1000,   // crossfade fade-in duration (ms)
+      release: fadeTime * 1000,    // crossfade fade-out duration (ms)
+    };
 
     // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
     // which means source material is consumed faster when pitching up. Adjust the
@@ -1149,7 +1158,8 @@ export class MelodyPlayer {
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
-    const releaseBuffer = Math.max(envelope.release / 1000, 0.05);
+    // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
+    const releaseBuffer = Math.max(fadeTime, 0.05);
     const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
     source.start(whenToStart, sampleStart, sourceDuration);
 
@@ -1235,8 +1245,8 @@ export class MelodyPlayer {
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
-    const envelope = note.envelope ?? this._defaultEnvelope;
-    const releaseBuffer = Math.max(envelope.release / 1000, 0.05);
+    // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
+    const releaseBuffer = Math.max(fadeTime, 0.05);
     const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
     source.start(whenToStart, sampleStart, sourceDuration);
 
@@ -1328,19 +1338,15 @@ export class MelodyPlayer {
       ? Math.min(note.duration + preutterance, sampleDuration)
       : Math.min(note.duration, sampleDuration);
 
-    // Determine crossfade timing using the (potentially dynamic) overlap
+    // Determine crossfade timing using the (potentially dynamic) overlap.
+    // For equal-power crossfade, the incoming note's fade-in and the outgoing
+    // note's fade-out MUST use the same duration so that
+    // g_in(t)^2 + g_out(t)^2 = 1 (constant power) at every point.
     const fadeTime = Math.min(overlap, noteDuration * 0.5, 0.1);
-    let fadeInTime = fadeTime;
-    if (prevNote && prevSampleData) {
-      const prevNoteEndTime = this._sequenceStartTime + prevNote.startTime + prevNote.duration;
-      const actualOverlap = Math.max(0, prevNoteEndTime - whenToStart);
-      fadeInTime = Math.min(fadeTime, actualOverlap + 0.02, 0.1);
-      if (actualOverlap <= 0) {
-        fadeInTime = Math.min(fadeTime, 0.02);
-      }
-    } else {
-      fadeInTime = Math.min(fadeTime, 0.02);
-    }
+    // When there is a previous note, use the full fadeTime for the crossfade
+    // so it matches the previous note's fade-out duration. For the first note
+    // (no previous note to crossfade with), use a short anti-click fade.
+    const fadeInTime = hasPrevNote ? fadeTime : Math.min(fadeTime, 0.02);
 
     // Use granular pitch shifting if enabled and pitch is not zero
     const shouldUseGranular = this._useGranular && note.pitch !== 0;
@@ -1409,8 +1415,16 @@ export class MelodyPlayer {
 
     const shifter = this._getGranularShifter();
 
-    // Get the envelope for this note (note-specific or default)
-    const envelope = note.envelope ?? this._defaultEnvelope;
+    // Get the envelope for this note (note-specific or default).
+    // Override attack/release with the crossfade timing so that the
+    // incoming ramp-up and outgoing ramp-down use identical durations,
+    // maintaining constant power during the crossfade window.
+    const baseEnvelope = note.envelope ?? this._defaultEnvelope;
+    const envelope = {
+      ...baseEnvelope,
+      attack: fadeInTime * 1000,   // crossfade fade-in duration (ms)
+      release: fadeTime * 1000,    // crossfade fade-out duration (ms)
+    };
 
     // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
     // which means source material is consumed faster when pitching up. Adjust the
@@ -1509,7 +1523,8 @@ export class MelodyPlayer {
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
-    const releaseBuffer = Math.max(envelope.release / 1000, 0.05);
+    // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
+    const releaseBuffer = Math.max(fadeTime, 0.05);
     const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
     source.start(whenToStart, sampleStart, sourceDuration);
 
@@ -1549,12 +1564,20 @@ export class MelodyPlayer {
   ): void {
     const { whenToStart, noteDuration, fadeInTime, fadeTime, baseGain, envelope } = params;
 
-    // If an ADSR envelope is provided, use it
+    // If an ADSR envelope is provided, use it -- but override the attack
+    // and release times with the crossfade timing so that the incoming
+    // note's ramp-up and the outgoing note's ramp-down use identical
+    // durations, maintaining constant power during the crossfade window.
     if (envelope) {
+      const crossfadeEnvelope: ADSREnvelope = {
+        ...envelope,
+        attack: fadeInTime * 1000,   // Override attack with crossfade fade-in (ms)
+        release: fadeTime * 1000,    // Override release with crossfade fade-out (ms)
+      };
       this._applyADSREnvelope(gainNode, {
         startTime: whenToStart,
         duration: noteDuration,
-        envelope,
+        envelope: crossfadeEnvelope,
         baseGain,
       });
       return;
