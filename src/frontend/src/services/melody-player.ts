@@ -1145,8 +1145,13 @@ export class MelodyPlayer {
       envelope,
     });
 
-    // Schedule the source node
-    source.start(whenToStart, sampleStart, sampleDuration);
+    // Schedule the source node.
+    // Use noteDuration + a release buffer instead of the full sampleDuration so
+    // the AudioBufferSourceNode stops shortly after the envelope silences the
+    // audio, rather than running silently for the remainder of the sample.
+    const releaseBuffer = Math.max(envelope.release / 1000, 0.05);
+    const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
+    source.start(whenToStart, sampleStart, sourceDuration);
 
     // Track active node for cleanup
     const activeNode: ActiveNode = {
@@ -1227,7 +1232,13 @@ export class MelodyPlayer {
     const fadeOutCurve = this._generateCrossfadeCurve(safeFadeOutTime, false, velocity);
     gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, safeFadeOutTime);
 
-    source.start(whenToStart, sampleStart, sampleDuration);
+    // Use noteDuration + a release buffer instead of the full sampleDuration so
+    // the AudioBufferSourceNode stops shortly after the envelope silences the
+    // audio, rather than running silently for the remainder of the sample.
+    const envelope = note.envelope ?? this._defaultEnvelope;
+    const releaseBuffer = Math.max(envelope.release / 1000, 0.05);
+    const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
+    source.start(whenToStart, sampleStart, sourceDuration);
 
     const activeNode: ActiveNode = {
       source,
@@ -1495,7 +1506,12 @@ export class MelodyPlayer {
       envelope,
     });
 
-    source.start(whenToStart, sampleStart, sampleDuration);
+    // Use noteDuration + a release buffer instead of the full sampleDuration so
+    // the AudioBufferSourceNode stops shortly after the envelope silences the
+    // audio, rather than running silently for the remainder of the sample.
+    const releaseBuffer = Math.max(envelope.release / 1000, 0.05);
+    const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
+    source.start(whenToStart, sampleStart, sourceDuration);
 
     const activeNode: ActiveNode = {
       source,
