@@ -492,7 +492,7 @@ export class MelodyPlayer {
    * @param notes - Array of note events to play
    * @param options - Synthesis options including oto entry and audio buffer
    */
-  playSequence(notes: NoteEvent[], options: SynthesisOptions): void {
+  async playSequence(notes: NoteEvent[], options: SynthesisOptions): Promise<void> {
     if (notes.length === 0) {
       return;
     }
@@ -527,9 +527,10 @@ export class MelodyPlayer {
     this._crossfadeType = crossfadeType;
     this._usePsola = usePsola;
 
-    // Resume context if suspended (browser autoplay policy)
+    // Resume context if suspended (browser autoplay policy).
+    // Must await to ensure currentTime is advancing before we capture it.
     if (this._audioContext.state === 'suspended') {
-      this._audioContext.resume();
+      await this._audioContext.resume();
     }
 
     // Calculate sample boundaries from oto parameters (convert ms to seconds)
@@ -621,7 +622,7 @@ export class MelodyPlayer {
    * player.playPhrase(phrase, sampleMap, { useAdaptiveGrainSize: true });
    * ```
    */
-  playPhrase(
+  async playPhrase(
     notes: PhraseNote[],
     sampleMap: Map<string, SampleData>,
     options?: {
@@ -702,7 +703,7 @@ export class MelodyPlayer {
        */
       usePsola?: boolean;
     }
-  ): void {
+  ): Promise<void> {
     if (notes.length === 0) {
       return;
     }
@@ -735,9 +736,10 @@ export class MelodyPlayer {
     this._crossfadeType = crossfadeType;
     this._usePsola = usePsola;
 
-    // Resume context if suspended (browser autoplay policy)
+    // Resume context if suspended (browser autoplay policy).
+    // Must await to ensure currentTime is advancing before we capture it.
     if (this._audioContext.state === 'suspended') {
-      this._audioContext.resume();
+      await this._audioContext.resume();
     }
 
     // Sort notes by start time for proper overlap handling

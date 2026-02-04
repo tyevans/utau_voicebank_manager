@@ -1792,10 +1792,7 @@ export class UvmWaveformEditor extends LitElement {
       this._audioContext = new AudioContext();
     }
 
-    // Resume context if suspended (browser autoplay policy)
-    if (this._audioContext.state === 'suspended') {
-      this._audioContext.resume();
-    }
+    // Note: AudioContext resume is handled inside MelodyPlayer.playSequence()
 
     // Initialize MelodyPlayer if needed (reuses existing audioContext)
     if (!this._melodyPlayer) {
