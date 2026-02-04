@@ -377,24 +377,23 @@ const DEFAULT_TRANSIENT_SKIP_MS = 40;
 /**
  * Analyze loudness of the sustained (vowel) portion of a sample for normalization.
  *
- * For consonant-vowel samples, the initial consonant often has a sharp transient
- * (high peak, low RMS) that causes the peak limiter in calculateNormalizationGain()
- * to over-attenuate the sample. This is especially problematic for transient-heavy
- * consonants like Japanese "ra" (alveolar flap/tap), plosives ("ta", "ka"), etc.
+ * Analyzes only the vowel region (from consonant marker to cutoff) for both
+ * RMS and peak metrics. This is critical for consistent normalization across
+ * CV/VCV/CVVC sample types:
  *
- * This function analyzes two separate regions:
- * 1. **RMS region**: The sustained vowel portion (from consonant marker to cutoff),
- *    which better represents the perceived loudness of the sample.
- * 2. **Peak region**: The full playback region (offset to cutoff), since peaks
- *    anywhere in the sample can cause clipping.
+ * - **RMS**: Vowel-region RMS represents perceived loudness. Using full-region
+ *   RMS inflated VCV measurements (preceding vowel) and deflated CV measurements
+ *   (quiet consonant), causing volume imbalance.
  *
- * The returned LoudnessAnalysis uses the vowel RMS but the full-region peak,
- * giving calculateNormalizationGain() the information it needs to set gain based
- * on perceived loudness while still respecting peak headroom.
+ * - **Peak**: Vowel-region peak is used for the peak limiter because the
+ *   pre-consonant region (preceding vowel in VCV, consonant onset in CV) is
+ *   always attenuated by the crossfade during playback. Using full-region peak
+ *   caused the peak limiter to over-attenuate VCV samples (high preceding-vowel
+ *   peaks) relative to CV samples (low consonant peaks).
  *
  * @param buffer - The audio buffer to analyze
  * @param otoParams - Oto.ini timing parameters (offset, consonant, cutoff)
- * @returns Loudness analysis with vowel-region RMS and full-region peak
+ * @returns Loudness analysis of the vowel region only
  *
  * @example
  * ```typescript
@@ -457,42 +456,33 @@ export function analyzeLoudnessForNormalization(
     });
   }
 
-  // Analyze RMS over the vowel/sustained portion only
+  // Analyze loudness over the vowel/sustained portion only
   const vowelAnalysis = analyzeLoudness(buffer, {
     startTime: rmsStart,
     endTime: safePlaybackEnd,
   });
 
-  // Analyze peak and RMS over the full playback region
-  const fullAnalysis = analyzeLoudness(buffer, {
-    startTime: safePlaybackStart,
-    endTime: safePlaybackEnd,
-  });
-
-  // Use vowel-region RMS as the sole loudness metric for normalization.
-  // The vowel is the sustained portion that determines perceived loudness.
+  // Use vowel-region metrics for BOTH RMS and peak in normalization.
   //
-  // Previous approach blended 70% vowel + 30% full-region RMS, but this caused
-  // systematic volume bias in VCV samples: full-region RMS for VCV includes a
-  // preceding vowel (e.g., "u" in "u ra") which inflated the measured loudness,
-  // causing normalization to under-amplify VCV samples. Meanwhile, CV samples
-  // like "- sa" had lower full-region RMS (quiet consonant "s"), getting over-
-  // amplified. The result was "sa"/"ku" screaming while "ra" was inaudible.
+  // RMS: The vowel is the sustained portion that determines perceived loudness.
+  // Using full-region RMS caused VCV bias (preceding vowel inflated loudness).
   //
-  // Pure vowel-region RMS treats all sample types (CV, VCV, CVVC) consistently
-  // by measuring only the target vowel, which is the portion the listener
-  // perceives at steady state. The peak limiter still uses full-region peak
-  // to protect against clipping from consonant transients.
+  // Peak: The peak limiter must also use vowel-region peak, not full-region peak.
+  // For VCV samples, the full region includes the preceding vowel (e.g., "u" in
+  // "u ra") which has a high peak. But this preceding vowel is always attenuated
+  // by the crossfade — it plays under the incoming fade-in ramp, never at full
+  // gain. Using full-region peak causes the peak limiter to over-attenuate VCV
+  // samples (which have high preceding-vowel peaks) relative to CV samples (which
+  // have quiet consonant peaks), recreating the same sa>ra volume imbalance that
+  // the RMS fix addressed. The vowel-region peak reflects the actual peak that
+  // plays at full gain and needs clipping protection.
 
-  // Combine: vowel-region RMS for perceived loudness, full-region peak for headroom
   return {
     rms: vowelAnalysis.rms,
     rmsDb: vowelAnalysis.rmsDb,
-    peak: fullAnalysis.peak,
-    peakDb: fullAnalysis.peakDb,
-    crestFactor: vowelAnalysis.rms > SILENCE_THRESHOLD
-      ? fullAnalysis.peak / vowelAnalysis.rms
-      : 0,
+    peak: vowelAnalysis.peak,
+    peakDb: vowelAnalysis.peakDb,
+    crestFactor: vowelAnalysis.crestFactor,
     hasContent: vowelAnalysis.hasContent,
   };
 }

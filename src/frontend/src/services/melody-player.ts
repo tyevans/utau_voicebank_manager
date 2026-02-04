@@ -948,7 +948,7 @@ export class MelodyPlayer {
       for (let i = 0; i < schedulableNotes.length - 1; i++) {
         const dataA = schedulableNotes[i].sampleData;
         const dataB = schedulableNotes[i + 1].sampleData;
-        joinCorrections.push(calculateJoinGainCorrection(
+        const jc = calculateJoinGainCorrection(
           dataA.audioBuffer,
           dataB.audioBuffer,
           {
@@ -964,7 +964,13 @@ export class MelodyPlayer {
               cutoff: dataB.otoEntry.cutoff,
             },
           }
-        ));
+        );
+        joinCorrections.push(jc);
+        console.log(
+          `[JoinCorrection] ${schedulableNotes[i].note.alias} → ${schedulableNotes[i + 1].note.alias}: ` +
+          `rmsDiff=${jc.rmsDiffDb.toFixed(1)}dB gainA=${jc.gainA.toFixed(3)} gainB=${jc.gainB.toFixed(3)} ` +
+          `rmsA=${(20 * Math.log10(jc.rmsA || 1e-10)).toFixed(1)}dB rmsB=${(20 * Math.log10(jc.rmsB || 1e-10)).toFixed(1)}dB`
+        );
       }
     }
 
@@ -1004,6 +1010,14 @@ export class MelodyPlayer {
         const outgoingGainA = i < schedulableNotes.length - 1 ? joinCorrections[i].gainA : 1;
         joinGain = incomingGainB * outgoingGainA;
       }
+
+      const effectiveVelocity = (note.velocity ?? 1) * normalizationGain * joinGain;
+      const normDb = normalizationGain !== 1 ? `${(20 * Math.log10(normalizationGain)).toFixed(1)}dB` : '0dB';
+      const joinDb = joinGain !== 1 ? `${(20 * Math.log10(joinGain)).toFixed(1)}dB` : '0dB';
+      const effectiveDb = `${(20 * Math.log10(effectiveVelocity)).toFixed(1)}dB`;
+      console.log(
+        `[Gain] #${i} ${note.alias}: norm=${normDb} join=${joinDb} → effective=${effectiveDb} (${effectiveVelocity.toFixed(3)}x)`
+      );
 
       this._schedulePhraseNote(
         note,
