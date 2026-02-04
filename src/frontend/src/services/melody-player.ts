@@ -829,7 +829,19 @@ export class MelodyPlayer {
           const correction = calculateJoinGainCorrection(
             lastSampleData.audioBuffer,
             sampleData.audioBuffer,
-            joinCorrectionOptions
+            {
+              ...joinCorrectionOptions,
+              otoTimingA: {
+                offset: lastSampleData.otoEntry.offset,
+                consonant: lastSampleData.otoEntry.consonant,
+                cutoff: lastSampleData.otoEntry.cutoff,
+              },
+              otoTimingB: {
+                offset: sampleData.otoEntry.offset,
+                consonant: sampleData.otoEntry.consonant,
+                cutoff: sampleData.otoEntry.cutoff,
+              },
+            }
           );
           joinCorrection = { gainA: correction.gainA, gainB: correction.gainB };
         }

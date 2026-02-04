@@ -201,6 +201,25 @@ export interface JoinCorrectionOptions {
    * - 'adjustA': Only adjust A's end (preserves B's attack)
    */
   strategy?: 'both' | 'adjustB' | 'adjustA';
+
+  /**
+   * Oto.ini timing parameters for buffer A (outgoing sample).
+   *
+   * When provided, the analysis region for buffer A is anchored to the
+   * oto-defined playback end (cutoff) instead of the absolute buffer end.
+   * This ensures gain correction is measured against the actual audio that
+   * plays at the join point, not silence or unused audio beyond the cutoff.
+   */
+  otoTimingA?: OtoTimingParams;
+
+  /**
+   * Oto.ini timing parameters for buffer B (incoming sample).
+   *
+   * When provided, the analysis region for buffer B starts at the
+   * oto-defined playback start (offset) instead of the absolute buffer start.
+   * This avoids measuring silence or pre-offset audio that never plays.
+   */
+  otoTimingB?: OtoTimingParams;
 }
 
 /**
@@ -579,20 +598,44 @@ export function calculateJoinGainCorrection(
     joinRegionMs = 50,
     maxCorrectionDb = 6,
     strategy = 'both',
+    otoTimingA,
+    otoTimingB,
   } = options ?? {};
 
   const joinRegionSec = joinRegionMs / 1000;
 
-  // Analyze end of buffer A
+  // Determine the playback end for buffer A.
+  // When oto timing is available, use the cutoff-defined end instead of the
+  // absolute buffer end, since audio beyond the cutoff is never played.
+  let playbackEndA = bufferA.duration;
+  if (otoTimingA) {
+    if (otoTimingA.cutoff < 0) {
+      playbackEndA = bufferA.duration + (otoTimingA.cutoff / 1000);
+    } else if (otoTimingA.cutoff > 0) {
+      playbackEndA = otoTimingA.cutoff / 1000;
+    }
+    // cutoff === 0 means play to end, so playbackEndA stays as bufferA.duration
+    playbackEndA = Math.min(bufferA.duration, Math.max(0, playbackEndA));
+  }
+
+  // Determine the playback start for buffer B.
+  // When oto timing is available, use the offset instead of absolute buffer start,
+  // since audio before the offset is never played.
+  let playbackStartB = 0;
+  if (otoTimingB) {
+    playbackStartB = Math.max(0, Math.min(bufferB.duration, otoTimingB.offset / 1000));
+  }
+
+  // Analyze the last joinRegionSec of buffer A's playback region
   const analysisA = analyzeLoudness(bufferA, {
-    startTime: Math.max(0, bufferA.duration - joinRegionSec),
-    endTime: bufferA.duration,
+    startTime: Math.max(0, playbackEndA - joinRegionSec),
+    endTime: playbackEndA,
   });
 
-  // Analyze start of buffer B
+  // Analyze the first joinRegionSec of buffer B's playback region
   const analysisB = analyzeLoudness(bufferB, {
-    startTime: 0,
-    endTime: Math.min(joinRegionSec, bufferB.duration),
+    startTime: playbackStartB,
+    endTime: Math.min(playbackStartB + joinRegionSec, bufferB.duration),
   });
 
   // Handle cases where one or both regions are silent
