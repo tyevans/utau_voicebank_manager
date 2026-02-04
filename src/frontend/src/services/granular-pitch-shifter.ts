@@ -222,6 +222,14 @@ export interface PlaybackHandle {
   gainNode: Tone.Gain;
   /** Native Web Audio LFO nodes for vibrato (if vibrato is enabled) */
   vibratoLFO?: VibratoLFONodes;
+  /**
+   * Optional callback invoked when playback ends (either naturally or via stop).
+   *
+   * Set by the consumer (e.g. MelodyPlayer) to receive notification when this
+   * handle's playback is complete, enabling event-driven cleanup instead of
+   * setTimeout-based estimation.
+   */
+  onended?: (() => void) | null;
 }
 
 /**
@@ -834,6 +842,10 @@ export class GranularPitchShifter {
     // Create handle for controlling playback
     const handle: PlaybackHandle = {
       stop: () => {
+        // Guard against double-invocation: if already removed, skip cleanup
+        if (!this._activePlayers.has(handle)) {
+          return;
+        }
         try {
           player.stop();
           player.dispose();
@@ -854,15 +866,20 @@ export class GranularPitchShifter {
           // Ignore errors if already disposed
         }
         this._activePlayers.delete(handle);
+        // Notify consumer (e.g. MelodyPlayer) that playback has ended
+        handle.onended?.();
       },
       player,
       gainNode,
       vibratoLFO: vibratoLFONodes,
+      onended: null,
     };
 
     this._activePlayers.add(handle);
 
-    // Schedule cleanup when playback ends
+    // Schedule cleanup when playback ends.
+    // Granular playback (Tone.js GrainPlayer) does not fire a native onended
+    // event, so setTimeout is the only reliable mechanism for this path.
     const cleanupTime = (startTime + playDuration + 0.1 - now) * 1000;
     if (cleanupTime > 0) {
       setTimeout(() => {

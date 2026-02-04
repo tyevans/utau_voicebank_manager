@@ -485,6 +485,12 @@ export class MelodyPlayer {
     // Disconnect any remaining tracked nodes (stop() clears the array,
     // but belt-and-suspenders for nodes that slipped through)
     for (const node of this._activeNodes) {
+      // Detach callbacks to prevent re-entrant cleanup
+      if (node.granularHandle) {
+        node.granularHandle.onended = null;
+      } else if (node.source) {
+        node.source.onended = null;
+      }
       try {
         if (node.granularHandle) {
           node.granularHandle.stop();
@@ -649,17 +655,9 @@ export class MelodyPlayer {
       });
     }
 
-    // Set up cleanup when last note ends
-    const lastNote = sortedNotes[sortedNotes.length - 1];
-    const sequenceEnd = lastNote.startTime + lastNote.duration;
-    const cleanupTime = this._sequenceStartTime + sequenceEnd + 0.1; // Small buffer
-
-    // Schedule cleanup
-    setTimeout(() => {
-      if (this._isPlaying) {
-        this._cleanup();
-      }
-    }, (cleanupTime - this._audioContext.currentTime) * 1000);
+    // Individual node cleanup is handled by source.onended (playback-rate path)
+    // and handle.onended (granular path). When the last ActiveNode is removed,
+    // _removeActiveNode() sets _isPlaying = false automatically.
   }
 
 /**
@@ -957,19 +955,9 @@ export class MelodyPlayer {
       lastSampleData = sampleData;
     }
 
-    // Set up cleanup when last note ends
-    if (sortedNotes.length > 0) {
-      const lastNote = sortedNotes[sortedNotes.length - 1];
-      const sequenceEnd = lastNote.startTime + lastNote.duration;
-      const cleanupTime = this._sequenceStartTime + sequenceEnd + 0.1; // Small buffer
-
-      // Schedule cleanup
-      setTimeout(() => {
-        if (this._isPlaying) {
-          this._cleanup();
-        }
-      }, (cleanupTime - this._audioContext.currentTime) * 1000);
-    }
+    // Individual node cleanup is handled by source.onended (playback-rate path)
+    // and handle.onended (granular path). When the last ActiveNode is removed,
+    // _removeActiveNode() sets _isPlaying = false automatically.
   }
 
   /**
@@ -980,6 +968,16 @@ export class MelodyPlayer {
   stop(): void {
     if (!this._isPlaying && this._activeNodes.length === 0) {
       return;
+    }
+
+    // Detach all onended callbacks before stopping to prevent re-entrant
+    // calls to _removeActiveNode during iteration.
+    for (const node of this._activeNodes) {
+      if (node.granularHandle) {
+        node.granularHandle.onended = null;
+      } else if (node.source) {
+        node.source.onended = null;
+      }
     }
 
     // Stop all active nodes
@@ -1190,7 +1188,12 @@ export class MelodyPlayer {
         };
         this._activeNodes.push(activeNode);
 
-        // Note: Cleanup is handled by GranularPitchShifter internally
+        // Hook into the granular handle's onended callback for event-driven cleanup.
+        // GranularPitchShifter fires this when its internal setTimeout triggers,
+        // since Tone.js GrainPlayer lacks a native onended event.
+        handle.onended = () => {
+          this._removeActiveNode(activeNode);
+        };
       })
       .catch((error) => {
         // Fallback to playback-rate if granular fails
@@ -1578,6 +1581,13 @@ export class MelodyPlayer {
           endTime: whenToStart + adjustedNoteDuration,
         };
         this._activeNodes.push(activeNode);
+
+        // Hook into the granular handle's onended callback for event-driven cleanup.
+        // GranularPitchShifter fires this when its internal setTimeout triggers,
+        // since Tone.js GrainPlayer lacks a native onended event.
+        handle.onended = () => {
+          this._removeActiveNode(activeNode);
+        };
       })
       .catch((error) => {
         console.warn('Granular pitch shifting failed for phrase note, falling back:', error);
@@ -1929,31 +1939,4 @@ export class MelodyPlayer {
     }
   }
 
-  /**
-   * Clean up all nodes after sequence completes.
-   */
-  private _cleanup(): void {
-    for (const node of this._activeNodes) {
-      try {
-        if (node.granularHandle) {
-          node.granularHandle.stop();
-        } else {
-          node.source?.disconnect();
-          node.gainNode?.disconnect();
-        }
-      } catch {
-        // Ignore disconnect errors
-      }
-      // Clean up vibrato LFO nodes
-      this._cleanupVibratoNodes(node.vibratoNodes);
-    }
-
-    // Also clean up granular shifter
-    if (this._granularShifter) {
-      this._granularShifter.stopAll();
-    }
-
-    this._activeNodes = [];
-    this._isPlaying = false;
-  }
 }
