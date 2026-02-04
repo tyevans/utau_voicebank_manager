@@ -513,19 +513,47 @@ export function calculateSpectralDistance(
 }
 
 /**
+ * Incrementing ID counter for assigning unique IDs to AudioBuffer objects.
+ *
+ * Each AudioBuffer gets a stable numeric ID on first encounter, used for
+ * cache key generation. This avoids collisions that would occur when using
+ * only buffer metadata (duration, sampleRate, length) as cache keys.
+ */
+let _nextBufferId = 1;
+const _bufferIdMap = new WeakMap<AudioBuffer, number>();
+
+/**
+ * Get a stable unique ID for an AudioBuffer.
+ *
+ * Uses a WeakMap to associate each AudioBuffer object with an incrementing
+ * integer ID. The WeakMap ensures that IDs are tied to object identity
+ * (not metadata) and that entries are garbage collected when buffers are freed.
+ *
+ * @param buffer - Audio buffer to identify
+ * @returns Unique numeric ID for this buffer instance
+ */
+function getBufferId(buffer: AudioBuffer): number {
+  let id = _bufferIdMap.get(buffer);
+  if (id === undefined) {
+    id = _nextBufferId++;
+    _bufferIdMap.set(buffer, id);
+  }
+  return id;
+}
+
+/**
  * Cache key generator for spectral distance results.
  *
- * Uses buffer identities to generate a cache key.
- * Note: This is a simple implementation that relies on object identity.
+ * Uses stable per-object IDs (via WeakMap) so that different AudioBuffer
+ * instances always produce different keys, even if they share the same
+ * duration and sample rate.
  *
  * @param bufferA - First audio buffer
  * @param bufferB - Second audio buffer
  * @returns Cache key string
  */
 function generateCacheKey(bufferA: AudioBuffer, bufferB: AudioBuffer): string {
-  // Use duration and sample rate as a simple fingerprint
-  // In a real implementation, you might want to use a hash of the audio content
-  return `${bufferA.duration.toFixed(6)}_${bufferA.sampleRate}_${bufferB.duration.toFixed(6)}_${bufferB.sampleRate}`;
+  return `${getBufferId(bufferA)}_${getBufferId(bufferB)}`;
 }
 
 /**

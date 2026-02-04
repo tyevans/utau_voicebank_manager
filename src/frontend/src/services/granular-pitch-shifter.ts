@@ -225,8 +225,11 @@ export class GranularPitchShifter {
   private _outputBridge: GainNode | null = null;
   // PSOLA processor for pitch-synchronous processing
   private _psolaProcessor: PsolaProcessor | null = null;
-  // Cache for PSOLA-processed buffers (keyed by buffer + pitch shift)
-  private _psolaBufferCache = new Map<string, AudioBuffer>();
+  // Cache for PSOLA-processed buffers: WeakMap<AudioBuffer, Map<pitchShiftKey, AudioBuffer>>
+  // Using WeakMap keyed on AudioBuffer for correct identity and automatic GC
+  private _psolaBufferCache = new WeakMap<AudioBuffer, Map<string, AudioBuffer>>();
+  // Track strong references for size-limited eviction
+  private _psolaCacheEntries: { buffer: AudioBuffer; pitchKey: string }[] = [];
 
   /**
    * Create a new GranularPitchShifter.
@@ -249,16 +252,13 @@ export class GranularPitchShifter {
   }
 
   /**
-   * Generate a cache key for PSOLA-processed buffers.
+   * Generate a cache key for the pitch shift component of PSOLA cache lookups.
    *
-   * Uses a combination of buffer identity and pitch shift to uniquely identify
-   * processed results.
+   * The AudioBuffer identity is handled by the WeakMap outer key, so this
+   * only needs to encode the pitch shift value.
    */
-  private _getPsolaCacheKey(audioBuffer: AudioBuffer, pitchShift: number): string {
-    // Use a simple hash based on buffer properties and pitch shift
-    // Note: This assumes the same AudioBuffer object reference for the same audio
-    const bufferId = `${audioBuffer.numberOfChannels}_${audioBuffer.length}_${audioBuffer.sampleRate}`;
-    return `${bufferId}_${pitchShift.toFixed(2)}`;
+  private _getPsolaPitchKey(pitchShift: number): string {
+    return pitchShift.toFixed(2);
   }
 
   /**
@@ -276,12 +276,15 @@ export class GranularPitchShifter {
     pitchShift: number,
     _options?: PitchMarkOptions
   ): AudioBuffer {
-    const cacheKey = this._getPsolaCacheKey(audioBuffer, pitchShift);
+    const pitchKey = this._getPsolaPitchKey(pitchShift);
 
-    // Check cache first
-    const cached = this._psolaBufferCache.get(cacheKey);
-    if (cached) {
-      return cached;
+    // Check cache first (WeakMap keyed by AudioBuffer object identity)
+    const bufferMap = this._psolaBufferCache.get(audioBuffer);
+    if (bufferMap) {
+      const cached = bufferMap.get(pitchKey);
+      if (cached) {
+        return cached;
+      }
     }
 
     // Process with PSOLA
@@ -289,14 +292,28 @@ export class GranularPitchShifter {
     const processor = this._getPsolaProcessor();
     const processed = processor.process(audioBuffer, { pitchShift });
 
-    // Cache the result
-    this._psolaBufferCache.set(cacheKey, processed);
+    // Cache the result using WeakMap for buffer identity + Map for pitch key
+    let pitchMap = this._psolaBufferCache.get(audioBuffer);
+    if (!pitchMap) {
+      pitchMap = new Map<string, AudioBuffer>();
+      this._psolaBufferCache.set(audioBuffer, pitchMap);
+    }
+    pitchMap.set(pitchKey, processed);
+
+    // Track for size-limited eviction
+    this._psolaCacheEntries.push({ buffer: audioBuffer, pitchKey });
 
     // Limit cache size to prevent memory issues (keep last 50 processed buffers)
-    if (this._psolaBufferCache.size > 50) {
-      const firstKey = this._psolaBufferCache.keys().next().value;
-      if (firstKey) {
-        this._psolaBufferCache.delete(firstKey);
+    if (this._psolaCacheEntries.length > 50) {
+      const oldest = this._psolaCacheEntries.shift();
+      if (oldest) {
+        const oldMap = this._psolaBufferCache.get(oldest.buffer);
+        if (oldMap) {
+          oldMap.delete(oldest.pitchKey);
+          if (oldMap.size === 0) {
+            this._psolaBufferCache.delete(oldest.buffer);
+          }
+        }
       }
     }
 
@@ -309,7 +326,16 @@ export class GranularPitchShifter {
    * Call this if you need to free memory or if source audio has changed.
    */
   clearPsolaCache(): void {
-    this._psolaBufferCache.clear();
+    // Clear all tracked entries from the WeakMap
+    for (const entry of this._psolaCacheEntries) {
+      const pitchMap = this._psolaBufferCache.get(entry.buffer);
+      if (pitchMap) {
+        pitchMap.delete(entry.pitchKey);
+      }
+    }
+    this._psolaCacheEntries = [];
+    // WeakMap entries without strong references will be GC'd automatically
+    this._psolaBufferCache = new WeakMap<AudioBuffer, Map<string, AudioBuffer>>();
     if (this._psolaProcessor) {
       this._psolaProcessor.clearCache();
     }
