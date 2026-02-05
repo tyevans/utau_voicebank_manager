@@ -24,14 +24,15 @@
 
 import type { OtoEntry } from './types.js';
 import { GranularPitchShifter, type PlaybackHandle, type VibratoParams } from './granular-pitch-shifter.js';
-import { detectRepresentativePitch, calculateOptimalGrainSize } from '../utils/pitch-detection.js';
+import { detectRepresentativePitch, calculateOptimalGrainSize, calculatePitchCorrection, C4_FREQUENCY } from '../utils/pitch-detection.js';
 import { SpectralDistanceCache, type SpectralDistanceOptions } from '../utils/spectral-analysis.js';
 import {
   calculateNormalizationGain,
   calculateJoinGainCorrection,
   analyzeLoudnessForNormalization,
+  calculateMedianRmsDb,
+  type LoudnessAnalysis,
   type NormalizationOptions,
-  type JoinCorrectionOptions,
   type JoinGainCorrection,
 } from '../utils/loudness-analysis.js';
 
@@ -41,7 +42,6 @@ export type { SpectralDistanceOptions, SpectralDistanceResult } from '../utils/s
 // Re-export loudness analysis types for consumers using loudness normalization
 export type {
   NormalizationOptions,
-  JoinCorrectionOptions,
 } from '../utils/loudness-analysis.js';
 
 // Re-export VibratoParams for consumers
@@ -89,6 +89,15 @@ export const DEFAULT_ENVELOPE: ADSREnvelope = {
   sustain: 0.8,  // 80% sustain level
   release: 50,   // 50ms release
 };
+
+/**
+ * Minimum vowel region duration (in seconds) required for looping.
+ *
+ * If the vowel region (consonant → cutoff) is shorter than this, the sample
+ * plays one-shot instead of looping. This prevents artifacts from looping
+ * very short regions (e.g. consonant-only samples like 子音 files).
+ */
+const MIN_LOOP_REGION = 0.04; // 40ms
 
 /**
  * A note event in a melody sequence.
@@ -567,6 +576,44 @@ export class MelodyPlayer {
   }
 
   /**
+   * Detect the fundamental pitch of a sample in its vowel region.
+   *
+   * Uses the oto entry's consonant and cutoff markers to isolate the
+   * sustained vowel portion (where pitch is most stable), then runs
+   * representative pitch detection across that region.
+   *
+   * @param audioBuffer - The audio buffer to analyze
+   * @param otoEntry - Oto parameters defining sample regions
+   * @returns Detected frequency in Hz, or 0 if no pitch detected
+   */
+  private _detectSamplePitch(audioBuffer: AudioBuffer, otoEntry: OtoEntry): number {
+    // Vowel region: from consonant marker to cutoff
+    const consonantTime = otoEntry.consonant / 1000;
+    const sampleEnd = this._calculateSampleEnd(otoEntry, audioBuffer.duration);
+    const vowelStart = Math.max(otoEntry.offset / 1000, consonantTime);
+    const vowelDuration = sampleEnd - vowelStart;
+
+    if (vowelDuration < 0.02) {
+      // Not enough vowel region to analyze
+      return 0;
+    }
+
+    // Use detectPitch on the vowel region for a single stable measurement
+    // Try representative pitch first for robustness
+    const period = detectRepresentativePitch(audioBuffer, {
+      numSamples: 3,
+      sampleDuration: Math.min(0.05, vowelDuration / 3),
+      startOffset: vowelStart,
+    });
+
+    if (period <= 0) {
+      return 0;
+    }
+
+    return 1 / period;
+  }
+
+  /**
    * Play a sequence of notes using a single sample.
    *
    * Each note is pitch-shifted and scheduled according to its timing.
@@ -661,6 +708,13 @@ export class MelodyPlayer {
     for (let i = 0; i < sortedNotes.length; i++) {
       const note = sortedNotes[i];
       const prevNote = i > 0 ? sortedNotes[i - 1] : null;
+      const nextNote = i < sortedNotes.length - 1 ? sortedNotes[i + 1] : null;
+
+      // UTAU-style 2-note polyphony cap: a note must reach zero gain before
+      // the note-after-next starts playing. Cap duration to 2× the spacing
+      // to the next note so at most 2 notes overlap at any point.
+      const noteSpacing = nextNote ? nextNote.startTime - note.startTime : Infinity;
+      const maxNoteDuration = 2 * noteSpacing;
 
       this._scheduleNote(note, prevNote, {
         sampleStart,
@@ -668,6 +722,8 @@ export class MelodyPlayer {
         preutterance,
         overlap,
         audioBuffer,
+        otoEntry,
+        maxNoteDuration,
       });
     }
     console.groupEnd();
@@ -782,12 +838,6 @@ export class MelodyPlayer {
        */
       normalizationOptions?: NormalizationOptions;
       /**
-       * Options for join gain correction.
-       *
-       * Only used when useLoudnessNormalization is true.
-       */
-      joinCorrectionOptions?: JoinCorrectionOptions;
-      /**
        * Use PSOLA (Pitch-Synchronous Overlap-Add) for pitch shifting (default: false).
        *
        * When enabled, uses TD-PSOLA algorithm which aligns grain windows to pitch
@@ -798,6 +848,21 @@ export class MelodyPlayer {
        * since PSOLA uses pitch-synchronous grain alignment.
        */
       usePsola?: boolean;
+      /**
+       * Use per-sample pitch matching to normalize all samples to a reference pitch (default: false).
+       *
+       * When enabled, detects each sample's fundamental frequency in its vowel region
+       * and applies a pitch correction so that pitch=0 produces the reference frequency.
+       * This compensates for voicebanks recorded at different pitches (e.g., A4 vs C4).
+       */
+      usePitchMatching?: boolean;
+      /**
+       * Reference pitch for pitch matching in Hz (default: C4 = 261.63Hz).
+       *
+       * Only used when usePitchMatching is true. All samples will be corrected
+       * so that pitch=0 plays at this frequency.
+       */
+      referencePitch?: number;
     }
   ): Promise<void> {
     if (this._disposed) {
@@ -825,8 +890,9 @@ export class MelodyPlayer {
       spectralDistanceOptions,
       useLoudnessNormalization = false,
       normalizationOptions,
-      joinCorrectionOptions,
       usePsola = false,
+      usePitchMatching = false,
+      referencePitch = C4_FREQUENCY,
     } = options ?? {};
 
     // Store synthesis settings
@@ -885,6 +951,8 @@ export class MelodyPlayer {
     // gives a more accurate representation of perceived loudness.
     const normalizationGains = new Map<string, number>();
     if (useLoudnessNormalization) {
+      // First pass: analyze all samples
+      const analysisMap = new Map<string, LoudnessAnalysis>();
       for (const [alias, data] of sampleMap) {
         // Use vowel-region analysis that skips the consonant transient
         const analysis = analyzeLoudnessForNormalization(data.audioBuffer, {
@@ -892,15 +960,51 @@ export class MelodyPlayer {
           consonant: data.otoEntry.consonant,
           cutoff: data.otoEntry.cutoff,
         });
+        analysisMap.set(alias, analysis);
+      }
+
+      // Calculate median RMS across all samples in the phrase for relative normalization.
+      // This keeps overall volume at the voicebank's natural level instead of boosting
+      // to an absolute target, while still correcting per-sample volume differences.
+      const medianRmsDb = calculateMedianRmsDb([...analysisMap.values()]);
+      console.log(
+        `[NormMedian] medianRms=${medianRmsDb.toFixed(1)}dB across ${analysisMap.size} samples`
+      );
+
+      // Second pass: calculate gains using absolute target (-18dB default).
+      // Now that VCV analysis bias is fixed (vowel-region-only RMS+peak),
+      // absolute normalization produces consistent CV/VCV balance while
+      // bringing overall volume to a comfortable listening level.
+      for (const [alias, analysis] of analysisMap) {
         const gain = calculateNormalizationGain(analysis, normalizationOptions);
         normalizationGains.set(alias, gain);
         const gainDb = 20 * Math.log10(gain);
+        const sampleData = sampleMap.get(alias)!;
         console.log(
           `[NormAnalysis] ${alias}: rms=${analysis.rmsDb.toFixed(1)}dB peak=${analysis.peakDb.toFixed(1)}dB ` +
-          `crest=${analysis.crestFactor.toFixed(1)} → gain=${gainDb.toFixed(1)}dB | ` +
-          `oto: off=${data.otoEntry.offset} cons=${data.otoEntry.consonant} cut=${data.otoEntry.cutoff} ` +
-          `bufDur=${(data.audioBuffer.duration * 1000).toFixed(0)}ms`
+          `crest=${analysis.crestFactor.toFixed(1)} → gain=${gainDb.toFixed(1)}dB (median=${medianRmsDb.toFixed(1)}dB) | ` +
+          `oto: off=${sampleData.otoEntry.offset} cons=${sampleData.otoEntry.consonant} cut=${sampleData.otoEntry.cutoff} ` +
+          `bufDur=${(sampleData.audioBuffer.duration * 1000).toFixed(0)}ms`
         );
+      }
+    }
+
+    // Pre-compute per-sample pitch corrections if pitch matching is enabled.
+    // Detects each sample's fundamental frequency in the vowel region and
+    // calculates the semitone offset needed to make pitch=0 sound at referencePitch.
+    const pitchCorrections = new Map<string, number>();
+    if (usePitchMatching) {
+      for (const [alias, data] of sampleMap) {
+        const frequency = this._detectSamplePitch(data.audioBuffer, data.otoEntry);
+        if (frequency > 0) {
+          const correction = calculatePitchCorrection(frequency, referencePitch);
+          pitchCorrections.set(alias, correction);
+          console.log(
+            `[PitchMatch] ${alias}: detected=${frequency.toFixed(1)}Hz → correction=${correction.toFixed(2)} semitones`
+          );
+        } else {
+          console.log(`[PitchMatch] ${alias}: no pitch detected, skipping correction`);
+        }
       }
     }
 
@@ -933,12 +1037,17 @@ export class MelodyPlayer {
     }
 
     // Filter to schedulable notes (those with samples in the map)
+    // Apply pitch corrections if pitch matching is enabled
     const schedulableNotes: Array<{ note: PhraseNote; sampleData: SampleData; grainSize: number }> = [];
     for (const note of sortedNotes) {
       const sampleData = sampleMap.get(note.alias);
       if (sampleData) {
+        const correction = pitchCorrections.get(note.alias) ?? 0;
+        const correctedNote = correction !== 0
+          ? { ...note, pitch: note.pitch + correction }
+          : note;
         schedulableNotes.push({
-          note,
+          note: correctedNote,
           sampleData,
           grainSize: grainSizeCache.get(note.alias) ?? grainSize,
         });
@@ -958,7 +1067,6 @@ export class MelodyPlayer {
           dataA.audioBuffer,
           dataB.audioBuffer,
           {
-            ...joinCorrectionOptions,
             otoTimingA: {
               offset: dataA.otoEntry.offset,
               consonant: dataA.otoEntry.consonant,
@@ -1010,8 +1118,7 @@ export class MelodyPlayer {
 
         // Combine incoming gainB (from join with previous note) and
         // outgoing gainA (from join with next note). This applies the
-        // full correction from both sides, unlike the previous approach
-        // which could only apply gainB and lost gainA entirely.
+        // full correction from both sides.
         const incomingGainB = i > 0 ? joinCorrections[i - 1].gainB : 1;
         const outgoingGainA = i < schedulableNotes.length - 1 ? joinCorrections[i].gainA : 1;
         joinGain = incomingGainB * outgoingGainA;
@@ -1025,6 +1132,13 @@ export class MelodyPlayer {
         `[Gain] #${i} ${note.alias}: norm=${normDb} join=${joinDb} → effective=${effectiveDb} (${effectiveVelocity.toFixed(3)}x)`
       );
 
+      // UTAU-style 2-note polyphony cap: a note must reach zero gain before
+      // the note-after-next starts playing. Cap duration to 2× the spacing
+      // to the next note so at most 2 notes overlap at any point.
+      const nextSchedulable = i < schedulableNotes.length - 1 ? schedulableNotes[i + 1] : null;
+      const noteSpacing = nextSchedulable ? nextSchedulable.note.startTime - note.startTime : Infinity;
+      const maxNoteDuration = 2 * noteSpacing;
+
       this._schedulePhraseNote(
         note,
         prev?.note ?? null,
@@ -1033,7 +1147,8 @@ export class MelodyPlayer {
         noteGrainSize,
         dynamicOverlapMs,
         normalizationGain,
-        joinGain
+        joinGain,
+        maxNoteDuration,
       );
     }
 
@@ -1114,6 +1229,30 @@ export class MelodyPlayer {
   }
 
   /**
+   * Compute loop parameters for a sample, determining whether vowel-region
+   * looping is viable and the loop boundaries.
+   *
+   * The vowel region spans from the consonant marker to the cutoff position.
+   * Looping is only enabled when this region is at least MIN_LOOP_REGION (40ms),
+   * which prevents artifacts from looping very short or consonant-only samples.
+   *
+   * @param otoEntry - Oto parameters defining sample regions
+   * @param audioBuffer - The audio buffer for duration reference
+   * @returns Loop viability and boundary positions in seconds
+   */
+  private _computeLoopParams(
+    otoEntry: OtoEntry,
+    audioBuffer: AudioBuffer
+  ): { canLoop: boolean; consonantSec: number; sampleEndSec: number } {
+    // Consonant boundary: the later of offset and consonant marker
+    const consonantSec = Math.max(otoEntry.offset, otoEntry.consonant) / 1000;
+    const sampleEndSec = this._calculateSampleEnd(otoEntry, audioBuffer.duration);
+    const vowelDuration = sampleEndSec - consonantSec;
+    const canLoop = vowelDuration >= MIN_LOOP_REGION;
+    return { canLoop, consonantSec, sampleEndSec };
+  }
+
+  /**
    * Schedule a single note for playback.
    *
    * Handles pitch shifting, timing adjustments for preutterance,
@@ -1131,9 +1270,11 @@ export class MelodyPlayer {
       preutterance: number;
       overlap: number;
       audioBuffer: AudioBuffer;
+      otoEntry: OtoEntry;
+      maxNoteDuration?: number;
     }
   ): void {
-    const { sampleStart, sampleDuration, preutterance, overlap, audioBuffer } = params;
+    const { sampleStart, sampleDuration, preutterance, overlap, audioBuffer, otoEntry, maxNoteDuration } = params;
 
     // Adjust timing: the note's "attack point" should align with startTime,
     // but the sample actually starts preutterance before that.
@@ -1148,16 +1289,25 @@ export class MelodyPlayer {
     // Apply velocity (prepared for future dynamics support)
     const velocity = note.velocity ?? 1;
 
+    // Compute loop parameters for vowel-region looping
+    const { canLoop, consonantSec, sampleEndSec } = this._computeLoopParams(otoEntry, audioBuffer);
+
     // Calculate note duration (for granular, we don't adjust for playback rate).
     // Always include preutterance in duration for consistent note lengths.
-    const noteDuration = Math.min(note.duration + preutterance, sampleDuration);
+    // Cap to maxNoteDuration to enforce UTAU-style 2-note polyphony: a note
+    // must reach zero gain before the note-after-next starts playing.
+    // When looping is available, don't clamp to sampleDuration since the
+    // vowel region loops to sustain beyond the sample's natural length.
+    const noteDuration = canLoop
+      ? Math.min(note.duration + preutterance, maxNoteDuration ?? Infinity)
+      : Math.min(note.duration + preutterance, sampleDuration, maxNoteDuration ?? Infinity);
 
     // Determine crossfade timing
     // For equal-power crossfade, both the outgoing note's fade-out and the
     // incoming note's fade-in MUST use the same duration and time window.
     // fadeTime is used for both the fade-in of this note and the fade-out
     // tail of this note (when the *next* note overlaps).
-    const fadeTime = Math.min(overlap, noteDuration * 0.5, 0.1);
+    const fadeTime = Math.min(overlap, noteDuration * 0.5);
     // The incoming fade-in must match the outgoing fade-out duration exactly
     // to maintain g_in(t)^2 + g_out(t)^2 = 1 (constant power).
     const fadeInTime = prevNote ? fadeTime : Math.min(fadeTime, 0.02);
@@ -1190,6 +1340,9 @@ export class MelodyPlayer {
         fadeInTime,
         fadeTime,
         velocity,
+        canLoop,
+        consonantSec,
+        sampleEndSec,
       });
     } else {
       // Playback-rate pitch shifting - traditional method
@@ -1204,6 +1357,9 @@ export class MelodyPlayer {
         fadeInTime,
         fadeTime,
         velocity,
+        canLoop,
+        consonantSec,
+        sampleEndSec,
       });
     }
   }
@@ -1224,6 +1380,9 @@ export class MelodyPlayer {
       fadeInTime: number;
       fadeTime: number;
       velocity: number;
+      canLoop: boolean;
+      consonantSec: number;
+      sampleEndSec: number;
     }
   ): void {
     const {
@@ -1235,6 +1394,9 @@ export class MelodyPlayer {
       fadeInTime,
       fadeTime,
       velocity,
+      canLoop,
+      consonantSec,
+      sampleEndSec,
     } = params;
 
     const shifter = this._getGranularShifter();
@@ -1254,16 +1416,17 @@ export class MelodyPlayer {
     // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
     // which means source material is consumed faster when pitching up. Adjust the
     // maximum playable duration to prevent overlap with the next note.
+    // When looping is enabled, skip the clamp since the vowel region loops.
     const playbackRate = Math.pow(2, note.pitch / 12);
     const adjustedSampleDuration = sampleDuration / playbackRate;
-    const adjustedNoteDuration = Math.min(noteDuration, adjustedSampleDuration);
+    const adjustedNoteDuration = canLoop ? noteDuration : Math.min(noteDuration, adjustedSampleDuration);
 
     // Schedule granular playback
     shifter
       .playPitchShifted(audioBuffer, {
         pitchShift: note.pitch,
         startOffset: sampleStart,
-        duration: Math.min(adjustedNoteDuration, sampleDuration),
+        duration: canLoop ? adjustedNoteDuration : Math.min(adjustedNoteDuration, sampleDuration),
         when: whenToStart,
         grainSize: this._grainSize,
         overlap: this._grainOverlap,
@@ -1273,6 +1436,9 @@ export class MelodyPlayer {
         envelope,
         vibrato: note.vibrato,
         usePsola: this._usePsola,
+        loop: canLoop,
+        loopStart: canLoop ? consonantSec : undefined,
+        loopEnd: canLoop ? sampleEndSec : undefined,
       })
       .then((handle) => {
         // Track active node for cleanup
@@ -1319,6 +1485,9 @@ export class MelodyPlayer {
       fadeInTime: number;
       fadeTime: number;
       velocity: number;
+      canLoop: boolean;
+      consonantSec: number;
+      sampleEndSec: number;
     }
   ): void {
     const {
@@ -1330,6 +1499,9 @@ export class MelodyPlayer {
       fadeInTime,
       fadeTime,
       velocity,
+      canLoop,
+      consonantSec,
+      sampleEndSec,
     } = params;
 
     // Calculate playback rate for pitch shifting
@@ -1342,6 +1514,13 @@ export class MelodyPlayer {
 
     source.buffer = audioBuffer;
     source.playbackRate.value = playbackRate;
+
+    // Enable vowel-region looping for sustained notes
+    if (canLoop) {
+      source.loop = true;
+      source.loopStart = consonantSec;
+      source.loopEnd = sampleEndSec;
+    }
 
     // Connect: source -> gain -> destination
     source.connect(gainNode);
@@ -1372,8 +1551,9 @@ export class MelodyPlayer {
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
     // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
+    // When looping, don't clamp to sampleDuration since the source loops.
     const releaseBuffer = Math.max(fadeTime, 0.05);
-    const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
+    const sourceDuration = canLoop ? noteDuration + releaseBuffer : Math.min(noteDuration + releaseBuffer, sampleDuration);
     source.start(whenToStart, sampleStart, sourceDuration);
 
     // Track active node for cleanup
@@ -1409,6 +1589,9 @@ export class MelodyPlayer {
       fadeInTime: number;
       fadeTime: number;
       velocity: number;
+      canLoop: boolean;
+      consonantSec: number;
+      sampleEndSec: number;
     }
   ): void {
     const {
@@ -1420,6 +1603,9 @@ export class MelodyPlayer {
       fadeInTime,
       fadeTime,
       velocity,
+      canLoop,
+      consonantSec,
+      sampleEndSec,
     } = params;
 
     const playbackRate = Math.pow(2, note.pitch / 12);
@@ -1429,6 +1615,13 @@ export class MelodyPlayer {
 
     source.buffer = audioBuffer;
     source.playbackRate.value = playbackRate;
+
+    // Enable vowel-region looping for sustained notes
+    if (canLoop) {
+      source.loop = true;
+      source.loopStart = consonantSec;
+      source.loopEnd = sampleEndSec;
+    }
 
     source.connect(gainNode);
     gainNode.connect(this._audioContext.destination);
@@ -1463,8 +1656,9 @@ export class MelodyPlayer {
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
     // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
+    // When looping, don't clamp to sampleDuration since the source loops.
     const releaseBuffer = Math.max(fadeTime, 0.05);
-    const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
+    const sourceDuration = canLoop ? noteDuration + releaseBuffer : Math.min(noteDuration + releaseBuffer, sampleDuration);
     source.start(whenToStart, sampleStart, sourceDuration);
 
     const activeNode: ActiveNode = {
@@ -1508,7 +1702,8 @@ export class MelodyPlayer {
     grainSize?: number,
     dynamicOverlapMs?: number,
     normalizationGain = 1,
-    joinGain = 1
+    joinGain = 1,
+    maxNoteDuration?: number,
   ): void {
     const { audioBuffer, otoEntry } = sampleData;
 
@@ -1542,23 +1737,28 @@ export class MelodyPlayer {
     const effectiveStartTime = this._sequenceStartTime + note.startTime - preutterance;
     const whenToStart = Math.max(effectiveStartTime, this._audioContext.currentTime);
 
-    // Apply velocity and normalization gain
-    // Base velocity from note (prepared for future dynamics support)
+    // Apply velocity, normalization gain, and join correction
     const baseVelocity = note.velocity ?? 1;
-    // Apply normalization gain to the velocity
     const velocity = baseVelocity * normalizationGain;
-
-    // Apply combined join correction (incoming gainB + outgoing gainA)
     const effectiveVelocity = velocity * joinGain;
 
+    // Compute loop parameters for vowel-region looping
+    const { canLoop, consonantSec, sampleEndSec } = this._computeLoopParams(otoEntry, audioBuffer);
+
     // Calculate note duration. Always include preutterance for consistent note lengths.
-    const noteDuration = Math.min(note.duration + preutterance, sampleDuration);
+    // Cap to maxNoteDuration to enforce UTAU-style 2-note polyphony: a note
+    // must reach zero gain before the note-after-next starts playing.
+    // When looping is available, don't clamp to sampleDuration since the
+    // vowel region loops to sustain beyond the sample's natural length.
+    const noteDuration = canLoop
+      ? Math.min(note.duration + preutterance, maxNoteDuration ?? Infinity)
+      : Math.min(note.duration + preutterance, sampleDuration, maxNoteDuration ?? Infinity);
 
     // Determine crossfade timing using the (potentially dynamic) overlap.
     // For equal-power crossfade, the incoming note's fade-in and the outgoing
     // note's fade-out MUST use the same duration so that
     // g_in(t)^2 + g_out(t)^2 = 1 (constant power) at every point.
-    const fadeTime = Math.min(overlap, noteDuration * 0.5, 0.1);
+    const fadeTime = Math.min(overlap, noteDuration * 0.5);
     // When there is a previous note, use the full fadeTime for the crossfade
     // so it matches the previous note's fade-out duration. For the first note
     // (no previous note to crossfade with), use a short anti-click fade.
@@ -1597,6 +1797,9 @@ export class MelodyPlayer {
         fadeTime,
         velocity: effectiveVelocity,
         grainSize: effectiveGrainSize,
+        canLoop,
+        consonantSec,
+        sampleEndSec,
       });
     } else {
       // Playback-rate pitch shifting - traditional method
@@ -1611,6 +1814,9 @@ export class MelodyPlayer {
         fadeInTime,
         fadeTime,
         velocity: effectiveVelocity,
+        canLoop,
+        consonantSec,
+        sampleEndSec,
       });
     }
   }
@@ -1630,6 +1836,9 @@ export class MelodyPlayer {
       fadeTime: number;
       velocity: number;
       grainSize: number;
+      canLoop: boolean;
+      consonantSec: number;
+      sampleEndSec: number;
     }
   ): void {
     const {
@@ -1642,6 +1851,9 @@ export class MelodyPlayer {
       fadeTime,
       velocity,
       grainSize,
+      canLoop,
+      consonantSec,
+      sampleEndSec,
     } = params;
 
     const shifter = this._getGranularShifter();
@@ -1661,15 +1873,16 @@ export class MelodyPlayer {
     // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
     // which means source material is consumed faster when pitching up. Adjust the
     // maximum playable duration to prevent overlap with the next note.
+    // When looping is enabled, skip the clamp since the vowel region loops.
     const playbackRate = Math.pow(2, note.pitch / 12);
     const adjustedSampleDuration = sampleDuration / playbackRate;
-    const adjustedNoteDuration = Math.min(noteDuration, adjustedSampleDuration);
+    const adjustedNoteDuration = canLoop ? noteDuration : Math.min(noteDuration, adjustedSampleDuration);
 
     shifter
       .playPitchShifted(audioBuffer, {
         pitchShift: note.pitch,
         startOffset: sampleStart,
-        duration: Math.min(adjustedNoteDuration, sampleDuration),
+        duration: canLoop ? adjustedNoteDuration : Math.min(adjustedNoteDuration, sampleDuration),
         when: whenToStart,
         grainSize,
         overlap: this._grainOverlap,
@@ -1679,6 +1892,9 @@ export class MelodyPlayer {
         envelope,
         vibrato: note.vibrato,
         usePsola: this._usePsola,
+        loop: canLoop,
+        loopStart: canLoop ? consonantSec : undefined,
+        loopEnd: canLoop ? sampleEndSec : undefined,
       })
       .then((handle) => {
         const activeNode: ActiveNode = {
@@ -1723,6 +1939,9 @@ export class MelodyPlayer {
       fadeInTime: number;
       fadeTime: number;
       velocity: number;
+      canLoop: boolean;
+      consonantSec: number;
+      sampleEndSec: number;
     }
   ): void {
     const {
@@ -1734,6 +1953,9 @@ export class MelodyPlayer {
       fadeInTime,
       fadeTime,
       velocity,
+      canLoop,
+      consonantSec,
+      sampleEndSec,
     } = params;
 
     const playbackRate = Math.pow(2, note.pitch / 12);
@@ -1743,6 +1965,13 @@ export class MelodyPlayer {
 
     source.buffer = audioBuffer;
     source.playbackRate.value = playbackRate;
+
+    // Enable vowel-region looping for sustained notes
+    if (canLoop) {
+      source.loop = true;
+      source.loopStart = consonantSec;
+      source.loopEnd = sampleEndSec;
+    }
 
     source.connect(gainNode);
     gainNode.connect(this._audioContext.destination);
@@ -1767,8 +1996,9 @@ export class MelodyPlayer {
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
     // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
+    // When looping, don't clamp to sampleDuration since the source loops.
     const releaseBuffer = Math.max(fadeTime, 0.05);
-    const sourceDuration = Math.min(noteDuration + releaseBuffer, sampleDuration);
+    const sourceDuration = canLoop ? noteDuration + releaseBuffer : Math.min(noteDuration + releaseBuffer, sampleDuration);
     source.start(whenToStart, sampleStart, sourceDuration);
 
     const activeNode: ActiveNode = {
@@ -1816,7 +2046,7 @@ export class MelodyPlayer {
       const crossfadeEnvelope: ADSREnvelope = {
         ...envelope,
         attack: Math.min(fadeInTime * 1000, envelope.attack),   // preserve fast attacks for consonants
-        release: Math.min(fadeTime * 1000, envelope.release),    // preserve fast releases
+        release: Math.max(fadeTime * 1000, envelope.release),    // use overlap duration for crossfade release
       };
       this._applyADSREnvelope(gainNode, {
         startTime: whenToStart,
