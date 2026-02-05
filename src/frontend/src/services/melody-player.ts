@@ -4,9 +4,7 @@
  * Takes audio samples with oto.ini parameters and schedules pitch-shifted
  * note sequences using the Web Audio API. Designed for future DAW extensibility.
  *
- * Supports two pitch-shifting modes:
- * - Granular synthesis (default): Formant-preserving, natural sound across wide pitch range
- * - Playback rate: Traditional method, faster but causes formant distortion
+ * Uses playback-rate pitch shifting via AudioBufferSourceNode.playbackRate.
  *
  * @example
  * ```typescript
@@ -23,8 +21,7 @@
  */
 
 import type { OtoEntry } from './types.js';
-import { GranularPitchShifter, type PlaybackHandle, type VibratoParams } from './granular-pitch-shifter.js';
-import { detectRepresentativePitch, calculateOptimalGrainSize, calculatePitchCorrection, C4_FREQUENCY } from '../utils/pitch-detection.js';
+import { detectRepresentativePitch, calculatePitchCorrection, C4_FREQUENCY } from '../utils/pitch-detection.js';
 import { SpectralDistanceCache, type SpectralDistanceOptions } from '../utils/spectral-analysis.js';
 import {
   calculateNormalizationGain,
@@ -35,17 +32,20 @@ import {
   type NormalizationOptions,
   type JoinGainCorrection,
 } from '../utils/loudness-analysis.js';
+import { applySpectralSmoothing, type SpectralSmoothingOptions } from '../utils/spectral-smoothing.js';
+import { AudioProcessorClient } from './audio-processor-client.js';
+import { ProcessedBufferCache } from './processed-buffer-cache.js';
 
 // Re-export spectral analysis types for consumers using dynamic overlap
 export type { SpectralDistanceOptions, SpectralDistanceResult } from '../utils/spectral-analysis.js';
+
+// Re-export spectral smoothing types for consumers using spectral smoothing
+export type { SpectralSmoothingOptions } from '../utils/spectral-smoothing.js';
 
 // Re-export loudness analysis types for consumers using loudness normalization
 export type {
   NormalizationOptions,
 } from '../utils/loudness-analysis.js';
-
-// Re-export VibratoParams for consumers
-export type { VibratoParams } from './granular-pitch-shifter.js';
 
 /**
  * ADSR (Attack-Decay-Sustain-Release) envelope for shaping note dynamics.
@@ -91,6 +91,78 @@ export const DEFAULT_ENVELOPE: ADSREnvelope = {
 };
 
 /**
+ * A pitch bend keyframe defining a pitch offset at a specific time within a note.
+ *
+ * Pitch bend curves are defined as an array of keyframes that are linearly
+ * interpolated. Each keyframe specifies a time offset from note start and a
+ * pitch deviation in cents from the note's base pitch.
+ *
+ * Pitch bends are applied via `source.detune` (an AudioParam in cents).
+ * When vibrato is also present, the two stack additively: pitch bend sets
+ * the base detune value, and the vibrato LFO oscillates on top of it.
+ *
+ * @example
+ * ```typescript
+ * // Portamento: glide from 100 cents above down to base pitch over 200ms
+ * const bend: PitchBendPoint[] = [
+ *   { time: 0, cents: 100 },
+ *   { time: 0.2, cents: 0 },
+ * ];
+ * ```
+ */
+export interface PitchBendPoint {
+  /** Time offset in seconds from note start */
+  time: number;
+  /** Pitch offset in cents (100 cents = 1 semitone) */
+  cents: number;
+}
+
+/**
+ * Vibrato parameters for periodic pitch modulation.
+ *
+ * Vibrato adds expressiveness to vocal synthesis by modulating the pitch
+ * with a sine wave. This creates the natural "wavering" sound in singing.
+ *
+ * @example
+ * ```typescript
+ * const vibrato: VibratoParams = {
+ *   rate: 5,      // 5 Hz oscillation (typical for vocals)
+ *   depth: 40,    // 40 cents variation (+/- 40 cents = ~0.4 semitones)
+ *   delay: 300,   // Start vibrato 300ms after note attack
+ * };
+ * ```
+ */
+export interface VibratoParams {
+  /**
+   * Frequency of vibrato oscillation in Hz.
+   * Typical vocal vibrato: 4-7 Hz.
+   * - 4 Hz: Slow, romantic vibrato
+   * - 5-6 Hz: Natural singing vibrato
+   * - 7+ Hz: Faster, more intense vibrato
+   */
+  rate: number;
+
+  /**
+   * Amplitude of pitch variation in cents (100 cents = 1 semitone).
+   * Typical range: 20-80 cents.
+   * - 20 cents: Subtle shimmer
+   * - 40 cents: Natural vocal vibrato
+   * - 80+ cents: Dramatic, operatic vibrato
+   */
+  depth: number;
+
+  /**
+   * Delay before vibrato starts, in milliseconds.
+   * Allows for a clean note attack before vibrato kicks in.
+   * Default: 0 (immediate vibrato).
+   * - 0 ms: Immediate vibrato (can sound unnatural)
+   * - 200-300 ms: Natural delayed onset
+   * - 500+ ms: Very late onset for held notes
+   */
+  delay?: number;
+}
+
+/**
  * Minimum vowel region duration (in seconds) required for looping.
  *
  * If the vowel region (consonant → cutoff) is shorter than this, the sample
@@ -119,8 +191,8 @@ export interface NoteEvent {
   /**
    * Optional vibrato modulation for this note.
    *
-   * Vibrato adds expressiveness by periodically modulating the pitch.
-   * Only applied when using granular pitch shifting mode.
+   * Vibrato adds expressiveness by periodically modulating the pitch
+   * using a native Web Audio OscillatorNode LFO connected to source.detune.
    *
    * @example
    * ```typescript
@@ -133,6 +205,44 @@ export interface NoteEvent {
    * ```
    */
   vibrato?: VibratoParams;
+  /**
+   * Optional pitch bend curve for this note. Array of {time, cents} keyframes
+   * defining pitch deviation from the note's base pitch over time.
+   *
+   * Points are linearly interpolated via `source.detune.linearRampToValueAtTime()`.
+   * If not provided, pitch is constant (no detune automation).
+   *
+   * When vibrato is also present, pitch bend and vibrato stack additively:
+   * pitch bend keyframes set the base detune value, and the vibrato LFO
+   * output adds on top via its GainNode connection to `source.detune`.
+   *
+   * @example
+   * ```typescript
+   * {
+   *   pitch: 0,
+   *   startTime: 0,
+   *   duration: 1.0,
+   *   pitchBend: [
+   *     { time: 0, cents: 200 },   // Start 200 cents (2 semitones) above
+   *     { time: 0.3, cents: 0 },   // Glide down to base pitch over 300ms
+   *     { time: 0.8, cents: -50 }, // Slight dip at end
+   *   ],
+   * }
+   * ```
+   */
+  pitchBend?: PitchBendPoint[];
+  /**
+   * Time stretch factor (1.0 = original, >1 = slower/longer, <1 = faster/shorter).
+   * Default 1.0.
+   *
+   * When set to a value other than 1.0, forces PSOLA processing even for small
+   * pitch shifts that would otherwise use playback-rate shifting. The PSOLA
+   * pipeline handles both pitch and time stretch simultaneously.
+   *
+   * The processed buffer's actual duration changes proportionally to this factor,
+   * affecting loop points and source scheduling accordingly.
+   */
+  timeStretch?: number;
 }
 
 /**
@@ -180,51 +290,6 @@ export interface SynthesisOptions {
   /** The decoded audio buffer for the sample */
   audioBuffer: AudioBuffer;
   /**
-   * Use granular pitch shifting for formant preservation (default: true).
-   *
-   * When true, uses Tone.js GrainPlayer for natural-sounding pitch shifts
-   * that preserve vocal formants. When false, uses traditional playback-rate
-   * shifting which is faster but causes the "chipmunk effect" at high pitches.
-   *
-   * Granular mode is recommended for pitch shifts beyond +-3 semitones.
-   */
-  useGranular?: boolean;
-  /**
-   * Use adaptive grain sizing based on detected pitch (default: false).
-   *
-   * When true, analyzes the audio to detect its fundamental frequency and
-   * sets the grain size to approximately 2x the pitch period. This reduces
-   * "beating" artifacts that occur when grain boundaries cut through pitch cycles.
-   *
-   * When enabled, this overrides the grainSize option.
-   *
-   * @example
-   * ```typescript
-   * player.playSequence(notes, {
-   *   otoEntry,
-   *   audioBuffer,
-   *   useAdaptiveGrainSize: true, // Automatically detect optimal grain size
-   * });
-   * ```
-   */
-  useAdaptiveGrainSize?: boolean;
-  /**
-   * Grain size in seconds for granular synthesis (default: 0.1).
-   *
-   * Smaller values produce smoother results but use more CPU.
-   * Typical range: 0.05 to 0.2 seconds.
-   *
-   * This is overridden when useAdaptiveGrainSize is true.
-   */
-  grainSize?: number;
-  /**
-   * Grain overlap factor for granular synthesis (default: 0.5).
-   *
-   * Higher values produce smoother crossfades between grains.
-   * Range: 0 to 1.
-   */
-  grainOverlap?: number;
-  /**
    * Default ADSR envelope for notes without individual envelopes.
    *
    * If not provided, uses DEFAULT_ENVELOPE. Notes can override this
@@ -247,32 +312,6 @@ export interface SynthesisOptions {
    * maintaining constant power throughout the crossfade.
    */
   crossfadeType?: CrossfadeType;
-  /**
-   * Use PSOLA (Pitch-Synchronous Overlap-Add) for pitch shifting (default: false).
-   *
-   * When enabled, uses TD-PSOLA algorithm which aligns grain windows to pitch
-   * period boundaries, eliminating beating artifacts. This is the gold standard
-   * for pitch manipulation in speech/singing synthesis (used by Praat, UTAU, etc.).
-   *
-   * PSOLA provides the highest quality pitch shifting for pitched audio, but
-   * has higher CPU cost for analysis. Best used when:
-   * - Audio has clear pitch (voiced vocals)
-   * - Highest quality is needed
-   * - Pitch shifts are moderate (+-12 semitones)
-   *
-   * When usePsola is true, useAdaptiveGrainSize and grainSize are ignored
-   * since PSOLA uses pitch-synchronous grain alignment.
-   *
-   * @example
-   * ```typescript
-   * player.playSequence(notes, {
-   *   otoEntry,
-   *   audioBuffer,
-   *   usePsola: true, // Use PSOLA for highest quality
-   * });
-   * ```
-   */
-  usePsola?: boolean;
 }
 
 /**
@@ -310,8 +349,7 @@ interface VibratoNodes {
 interface ActiveNode {
   source: AudioBufferSourceNode | null;
   gainNode: GainNode | null;
-  granularHandle: PlaybackHandle | null;
-  /** Native LFO nodes for vibrato on the playback-rate path */
+  /** Native LFO nodes for vibrato */
   vibratoNodes: VibratoNodes | null;
   startTime: number;
   endTime: number;
@@ -321,10 +359,13 @@ interface ActiveNode {
  * MelodyPlayer synthesizes note sequences using UTAU samples.
  *
  * Features:
- * - Granular pitch shifting for formant-preserving sound (default)
- * - Fallback to playback-rate pitch shifting for speed
+ * - Playback-rate pitch shifting via AudioBufferSourceNode.playbackRate
  * - Oto.ini parameter application (offset, cutoff, preutterance, overlap)
  * - Crossfade/overlap handling between consecutive notes
+ * - ADSR envelope shaping
+ * - Native Web Audio vibrato via OscillatorNode LFO
+ * - Vowel-region looping for sustained notes
+ * - Loudness normalization and join gain correction
  * - Precise scheduling using AudioContext timing
  *
  * Design principles for DAW extensibility:
@@ -334,22 +375,22 @@ interface ActiveNode {
  */
 export class MelodyPlayer {
   private readonly _audioContext: AudioContext;
-  private _granularShifter: GranularPitchShifter | null = null;
   private _activeNodes: ActiveNode[] = [];
   private _isPlaying = false;
   private _sequenceStartTime = 0;
   private _disposed = false;
 
   // Current synthesis settings
-  private _useGranular = true;
-  private _grainSize = 0.1;
-  private _grainOverlap = 0.5;
   private _defaultEnvelope: ADSREnvelope = DEFAULT_ENVELOPE;
   private _crossfadeType: CrossfadeType = 'equal-power';
-  private _usePsola = false;
 
   // Dynamic overlap cache
   private _spectralDistanceCache: SpectralDistanceCache | null = null;
+
+  // PSOLA Web Worker client and cache
+  private _processorClient: AudioProcessorClient | null = null;
+  private _bufferCache = new ProcessedBufferCache(100);
+  private _psolaThreshold = 2; // Use PSOLA for |pitch| > this many semitones
 
   // Note: Loudness analysis is computed per-phrase via analyzeLoudnessForNormalization()
   // which uses oto consonant markers for accurate vowel-region RMS measurement.
@@ -473,7 +514,6 @@ export class MelodyPlayer {
    * This performs deeper cleanup than stop():
    * - Calls stop() to halt all active playback
    * - Disconnects all tracked audio nodes
-   * - Disposes the GranularPitchShifter (which disconnects its output bridge)
    * - Clears the spectral distance cache
    * - Sets a disposed flag preventing future playback
    *
@@ -496,18 +536,12 @@ export class MelodyPlayer {
     // but belt-and-suspenders for nodes that slipped through)
     for (const node of this._activeNodes) {
       // Detach callbacks to prevent re-entrant cleanup
-      if (node.granularHandle) {
-        node.granularHandle.onended = null;
-      } else if (node.source) {
+      if (node.source) {
         node.source.onended = null;
       }
       try {
-        if (node.granularHandle) {
-          node.granularHandle.stop();
-        } else {
-          node.source?.disconnect();
-          node.gainNode?.disconnect();
-        }
+        node.source?.disconnect();
+        node.gainNode?.disconnect();
       } catch {
         // Ignore errors if already disconnected
       }
@@ -516,27 +550,18 @@ export class MelodyPlayer {
     }
     this._activeNodes = [];
 
-    // Dispose the granular pitch shifter (stops all and disconnects bridge)
-    if (this._granularShifter) {
-      this._granularShifter.dispose();
-      this._granularShifter = null;
-    }
-
     // Clear the spectral distance cache
     if (this._spectralDistanceCache) {
       this._spectralDistanceCache.clear();
       this._spectralDistanceCache = null;
     }
-  }
 
-  /**
-   * Get or create the GranularPitchShifter instance.
-   */
-  private _getGranularShifter(): GranularPitchShifter {
-    if (!this._granularShifter) {
-      this._granularShifter = new GranularPitchShifter(this._audioContext);
+    // Dispose PSOLA worker client and clear buffer cache
+    if (this._processorClient) {
+      this._processorClient.dispose();
+      this._processorClient = null;
     }
-    return this._granularShifter;
+    this._bufferCache.clear();
   }
 
   /**
@@ -549,31 +574,6 @@ export class MelodyPlayer {
     return this._spectralDistanceCache;
   }
 
-
-  /**
-   * Calculate adaptive grain size based on detected pitch.
-   *
-   * Analyzes the audio buffer to detect its fundamental frequency,
-   * then calculates an optimal grain size (approximately 2x pitch period).
-   *
-   * @param audioBuffer - The audio buffer to analyze
-   * @returns Optimal grain size in seconds
-   */
-  private _calculateAdaptiveGrainSize(audioBuffer: AudioBuffer): number {
-    // Use representative pitch detection for more stable results
-    const pitchPeriod = detectRepresentativePitch(audioBuffer, {
-      numSamples: 5,
-      sampleDuration: 0.05,
-      startOffset: 0.05, // Skip initial attack
-    });
-
-    return calculateOptimalGrainSize(pitchPeriod, {
-      periodMultiplier: 2.0,
-      minGrainSize: 0.02,
-      maxGrainSize: 0.2,
-      defaultGrainSize: 0.1,
-    });
-  }
 
   /**
    * Detect the fundamental pitch of a sample in its vowel region.
@@ -638,41 +638,18 @@ export class MelodyPlayer {
     const {
       otoEntry,
       audioBuffer,
-      useGranular = true,
-      useAdaptiveGrainSize = false,
-      grainSize = 0.1,
-      grainOverlap = 0.5,
       defaultEnvelope = DEFAULT_ENVELOPE,
       crossfadeType = 'equal-power',
-      usePsola = false,
     } = options;
 
-    // Calculate grain size - use adaptive if enabled, otherwise use provided value
-    // Note: When usePsola is true, grainSize is ignored by the granular shifter
-    let effectiveGrainSize = grainSize;
-    if (useAdaptiveGrainSize && useGranular && !usePsola) {
-      effectiveGrainSize = this._calculateAdaptiveGrainSize(audioBuffer);
-    }
-
     // Store synthesis settings
-    this._useGranular = useGranular;
-    this._grainSize = effectiveGrainSize;
-    this._grainOverlap = grainOverlap;
     this._defaultEnvelope = defaultEnvelope;
     this._crossfadeType = crossfadeType;
-    this._usePsola = usePsola;
 
     // Resume context if suspended (browser autoplay policy).
     // Must await to ensure currentTime is advancing before we capture it.
     if (this._audioContext.state === 'suspended') {
       await this._audioContext.resume();
-    }
-
-    // Pre-initialize granular shifter before capturing start time.
-    // This avoids async Tone.js initialization during note scheduling,
-    // which would cause the first notes to start late and overlap.
-    if (useGranular) {
-      await this._getGranularShifter().ensureInitialized();
     }
 
     // Calculate sample boundaries from oto parameters (convert ms to seconds)
@@ -702,7 +679,7 @@ export class MelodyPlayer {
     console.group('[MelodyPlayer] playSequence diagnostics');
     console.log('sequenceStartTime:', this._sequenceStartTime.toFixed(4));
     console.log('oto params (s):', { sampleStart, sampleDuration, preutterance, overlap });
-    console.log('notes:', sortedNotes.length, '| granular:', this._useGranular, '| psola:', this._usePsola);
+    console.log('notes:', sortedNotes.length);
 
     // Schedule each note
     for (let i = 0; i < sortedNotes.length; i++) {
@@ -728,9 +705,9 @@ export class MelodyPlayer {
     }
     console.groupEnd();
 
-    // Individual node cleanup is handled by source.onended (playback-rate path)
-    // and handle.onended (granular path). When the last ActiveNode is removed,
-    // _removeActiveNode() sets _isPlaying = false automatically.
+    // Individual node cleanup is handled by source.onended callbacks.
+    // When the last ActiveNode is removed, _removeActiveNode() sets
+    // _isPlaying = false automatically.
   }
 
 /**
@@ -769,23 +746,12 @@ export class MelodyPlayer {
    *
    * // Basic playback
    * player.playPhrase(phrase, sampleMap);
-   *
-   * // With adaptive grain sizing for better quality
-   * player.playPhrase(phrase, sampleMap, { useAdaptiveGrainSize: true });
    * ```
    */
   async playPhrase(
     notes: PhraseNote[],
     sampleMap: Map<string, SampleData>,
     options?: {
-      /** Use granular pitch shifting (default: true) */
-      useGranular?: boolean;
-      /** Use adaptive grain sizing per sample (default: false) */
-      useAdaptiveGrainSize?: boolean;
-      /** Default grain size if not using adaptive (default: 0.1) */
-      grainSize?: number;
-      /** Grain overlap factor (default: 0.5) */
-      grainOverlap?: number;
       /** Default ADSR envelope */
       defaultEnvelope?: ADSREnvelope;
       /** Crossfade curve type (default: 'equal-power') */
@@ -838,17 +804,6 @@ export class MelodyPlayer {
        */
       normalizationOptions?: NormalizationOptions;
       /**
-       * Use PSOLA (Pitch-Synchronous Overlap-Add) for pitch shifting (default: false).
-       *
-       * When enabled, uses TD-PSOLA algorithm which aligns grain windows to pitch
-       * period boundaries, eliminating beating artifacts. This is the gold standard
-       * for pitch manipulation in speech/singing synthesis.
-       *
-       * When usePsola is true, useAdaptiveGrainSize and grainSize are ignored
-       * since PSOLA uses pitch-synchronous grain alignment.
-       */
-      usePsola?: boolean;
-      /**
        * Use per-sample pitch matching to normalize all samples to a reference pitch (default: false).
        *
        * When enabled, detects each sample's fundamental frequency in its vowel region
@@ -863,6 +818,66 @@ export class MelodyPlayer {
        * so that pitch=0 plays at this frequency.
        */
       referencePitch?: number;
+      /**
+       * Use PSOLA for pitch shifts above threshold (default: true).
+       *
+       * When enabled, pitch shifts exceeding psolaThreshold semitones are
+       * processed through the PSOLA Web Worker for formant-preserving quality.
+       * Shifts at or below the threshold use fast playback-rate shifting.
+       */
+      usePsola?: boolean;
+      /**
+       * Semitone threshold for PSOLA vs playback-rate shifting (default: 2).
+       *
+       * Pitch shifts with absolute value greater than this use PSOLA processing.
+       * Shifts at or below this threshold use playback-rate shifting (faster,
+       * lower quality but acceptable for small intervals).
+       */
+      psolaThreshold?: number;
+      /**
+       * Preserve formants during PSOLA pitch shifting (default: true).
+       *
+       * When enabled, applies cepstral envelope correction after PSOLA to
+       * restore the original vocal tract shape (formants). This prevents
+       * chipmunk/Darth Vader effects on large pitch shifts while keeping
+       * the new fundamental frequency.
+       *
+       * Only applies to notes processed through PSOLA (above psolaThreshold).
+       */
+      preserveFormants?: boolean;
+      /**
+       * Formant scaling factor (0.0 - 1.0, default: 0.15).
+       *
+       * Controls how much formants follow the pitch shift:
+       * - 0.0 = full preservation (formants stay at original positions)
+       * - 0.15 = natural scaling (formants shift ~15% with pitch, sounds natural)
+       * - 1.0 = no correction (same as plain PSOLA, formants shift fully)
+       *
+       * Only used when preserveFormants is true.
+       */
+      formantScale?: number;
+      /**
+       * Apply spectral envelope smoothing at sample join boundaries (default: false).
+       *
+       * When enabled, analyzes spectral envelopes at the overlap region between
+       * consecutive samples and applies per-bin magnitude correction so the timbre
+       * transitions smoothly, not just the amplitude. This eliminates the
+       * "glued-together" quality of concatenated samples with different timbres.
+       *
+       * Processing cost: one STFT analysis + resynthesis per join. Opt-in because
+       * it adds latency to the pre-scheduling phase.
+       *
+       * Requires useDynamicOverlap=true (or at minimum that spectral distance is
+       * available for each join). When spectral distance is below the threshold,
+       * smoothing is automatically skipped for that join.
+       */
+      useSpectralSmoothing?: boolean;
+      /**
+       * Options for spectral smoothing at join boundaries.
+       *
+       * Only used when useSpectralSmoothing is true.
+       */
+      spectralSmoothingOptions?: SpectralSmoothingOptions;
     }
   ): Promise<void> {
     if (this._disposed) {
@@ -879,10 +894,6 @@ export class MelodyPlayer {
 
     // Extract options with defaults
     const {
-      useGranular = true,
-      useAdaptiveGrainSize = false,
-      grainSize = 0.1,
-      grainOverlap = 0.5,
       defaultEnvelope = DEFAULT_ENVELOPE,
       crossfadeType = 'equal-power',
       useDynamicOverlap = false,
@@ -890,30 +901,24 @@ export class MelodyPlayer {
       spectralDistanceOptions,
       useLoudnessNormalization = false,
       normalizationOptions,
-      usePsola = false,
       usePitchMatching = false,
       referencePitch = C4_FREQUENCY,
+      usePsola = true,
+      psolaThreshold = this._psolaThreshold,
+      preserveFormants = true,
+      formantScale = 0.15,
+      useSpectralSmoothing = false,
+      spectralSmoothingOptions,
     } = options ?? {};
 
     // Store synthesis settings
-    this._useGranular = useGranular;
-    this._grainSize = grainSize;
-    this._grainOverlap = grainOverlap;
     this._defaultEnvelope = defaultEnvelope;
     this._crossfadeType = crossfadeType;
-    this._usePsola = usePsola;
 
     // Resume context if suspended (browser autoplay policy).
     // Must await to ensure currentTime is advancing before we capture it.
     if (this._audioContext.state === 'suspended') {
       await this._audioContext.resume();
-    }
-
-    // Pre-initialize granular shifter before capturing start time.
-    // This avoids async Tone.js initialization during note scheduling,
-    // which would cause the first notes to start late and overlap.
-    if (useGranular) {
-      await this._getGranularShifter().ensureInitialized();
     }
 
     // Sort notes by start time for proper overlap handling
@@ -932,14 +937,6 @@ export class MelodyPlayer {
         `MelodyPlayer: Missing samples for aliases: ${missingAliases.join(', ')}`
       );
       // Continue with available samples, skip missing ones
-    }
-
-    // Pre-compute adaptive grain sizes for each unique sample if enabled
-    const grainSizeCache = new Map<string, number>();
-    if (useAdaptiveGrainSize && useGranular) {
-      for (const [alias, data] of sampleMap) {
-        grainSizeCache.set(alias, this._calculateAdaptiveGrainSize(data.audioBuffer));
-      }
     }
 
     // Pre-compute loudness normalization factors if enabled.
@@ -1026,7 +1023,7 @@ export class MelodyPlayer {
 
     console.group('[MelodyPlayer] playPhrase diagnostics');
     console.log('sequenceStartTime:', this._sequenceStartTime.toFixed(4));
-    console.log('notes:', sortedNotes.length, '| granular:', this._useGranular, '| psola:', this._usePsola);
+    console.log('notes:', sortedNotes.length);
 
     // Log normalization gains for volume diagnostics
     if (useLoudnessNormalization && normalizationGains.size > 0) {
@@ -1038,7 +1035,7 @@ export class MelodyPlayer {
 
     // Filter to schedulable notes (those with samples in the map)
     // Apply pitch corrections if pitch matching is enabled
-    const schedulableNotes: Array<{ note: PhraseNote; sampleData: SampleData; grainSize: number }> = [];
+    const schedulableNotes: Array<{ note: PhraseNote; sampleData: SampleData }> = [];
     for (const note of sortedNotes) {
       const sampleData = sampleMap.get(note.alias);
       if (sampleData) {
@@ -1049,7 +1046,6 @@ export class MelodyPlayer {
         schedulableNotes.push({
           note: correctedNote,
           sampleData,
-          grainSize: grainSizeCache.get(note.alias) ?? grainSize,
         });
       }
     }
@@ -1088,12 +1084,176 @@ export class MelodyPlayer {
       }
     }
 
-    // Get spectral cache if using dynamic overlap
-    const spectralCache = useDynamicOverlap ? this._getSpectralCache() : null;
+    // Get spectral cache if using dynamic overlap or spectral smoothing
+    const spectralCache = (useDynamicOverlap || useSpectralSmoothing) ? this._getSpectralCache() : null;
+
+    // Pre-process spectral smoothing at join boundaries if enabled.
+    // This creates cloned AudioBuffers for samples that participate in smoothed
+    // joins, applies the spectral correction in-place on the clones, then
+    // replaces the sample data references so the scheduling loop uses the
+    // smoothed versions. Original AudioBuffers are not mutated.
+    if (useSpectralSmoothing && spectralCache && schedulableNotes.length >= 2) {
+      // Track which note indices need cloned buffers (to avoid double-cloning)
+      const clonedBuffers = new Map<number, AudioBuffer>();
+
+      const getOrCloneBuffer = (idx: number): AudioBuffer => {
+        let cloned = clonedBuffers.get(idx);
+        if (!cloned) {
+          const orig = schedulableNotes[idx].sampleData.audioBuffer;
+          cloned = this._cloneAudioBuffer(orig);
+          clonedBuffers.set(idx, cloned);
+        }
+        return cloned;
+      };
+
+      for (let i = 0; i < schedulableNotes.length - 1; i++) {
+        const dataA = schedulableNotes[i].sampleData;
+        const dataB = schedulableNotes[i + 1].sampleData;
+
+        // Get spectral distance for this join
+        const distResult = spectralCache.getDistance(
+          dataA.audioBuffer,
+          dataB.audioBuffer,
+          spectralDistanceOptions,
+        );
+
+        // Skip if distance is below threshold (applySpectralSmoothing also checks,
+        // but we avoid unnecessary buffer cloning here)
+        const threshold = spectralSmoothingOptions?.distanceThreshold ?? 0.1;
+        if (distResult.distance < threshold) {
+          continue;
+        }
+
+        // Determine the overlap region in samples.
+        // tailA = end of sample A's playback region
+        // headB = start of sample B's playback region
+        const sampleRate = dataA.audioBuffer.sampleRate;
+        const smoothingMs = spectralSmoothingOptions?.smoothingRegionMs ?? 30;
+        const smoothingSamples = Math.floor((smoothingMs / 1000) * sampleRate);
+
+        // Sample A: playback ends at cutoff position
+        const endA = this._calculateSampleEnd(dataA.otoEntry, dataA.audioBuffer.duration);
+        const endASample = Math.floor(endA * sampleRate);
+        const startATail = Math.max(0, endASample - smoothingSamples);
+
+        // Sample B: playback starts at offset position
+        const startB = dataB.otoEntry.offset / 1000;
+        const startBSample = Math.floor(startB * sampleRate);
+        const endBHead = Math.min(
+          dataB.audioBuffer.length,
+          startBSample + smoothingSamples,
+        );
+
+        // Clone the buffers if not already cloned
+        const clonedA = getOrCloneBuffer(i);
+        const clonedB = getOrCloneBuffer(i + 1);
+
+        // Get mutable channel data from the clones
+        const channelA = clonedA.getChannelData(0);
+        const channelB = clonedB.getChannelData(0);
+
+        // Extract the tail/head regions as subarrays (views into the clone)
+        const tailA = channelA.subarray(startATail, endASample);
+        const headB = channelB.subarray(startBSample, endBHead);
+
+        if (tailA.length > 0 && headB.length > 0) {
+          applySpectralSmoothing(
+            tailA,
+            headB,
+            sampleRate,
+            distResult.distance,
+            spectralSmoothingOptions,
+          );
+          console.log(
+            `[SpectralSmooth] ${schedulableNotes[i].note.alias} → ${schedulableNotes[i + 1].note.alias}: ` +
+            `distance=${distResult.distance.toFixed(3)} tailA=${tailA.length}samp headB=${headB.length}samp`,
+          );
+        }
+      }
+
+      // Replace sample data references with cloned (smoothed) buffers
+      for (const [idx, clonedBuffer] of clonedBuffers) {
+        const original = schedulableNotes[idx].sampleData;
+        schedulableNotes[idx] = {
+          ...schedulableNotes[idx],
+          sampleData: {
+            ...original,
+            audioBuffer: clonedBuffer,
+          },
+        };
+      }
+    }
+
+    // Pre-process audio with PSOLA for notes with large pitch shifts or
+    // non-unity time stretch. This must happen BEFORE the scheduling loop
+    // so all processed buffers are ready for synchronous scheduling.
+    const processedBuffers = new Map<string, AudioBuffer>();
+    if (usePsola) {
+      // Collect unique (audioBuffer, effectivePitch, timeStretch) pairs that
+      // need PSOLA. A note needs PSOLA when either:
+      // - |pitch| exceeds psolaThreshold, OR
+      // - timeStretch !== 1.0 (playback-rate cannot time-stretch independently)
+      const batchRequests: Array<{
+        audioBuffer: AudioBuffer;
+        pitchShift: number;
+        timeStretch?: number;
+        preserveFormants?: boolean;
+        formantScale?: number;
+        cacheKey: string;
+      }> = [];
+
+      for (const { note, sampleData } of schedulableNotes) {
+        const effectivePitch = note.pitch;
+        const noteTimeStretch = note.timeStretch ?? 1.0;
+        const needsPsola = Math.abs(effectivePitch) > psolaThreshold || noteTimeStretch !== 1.0;
+
+        if (needsPsola) {
+          const bufferHash = ProcessedBufferCache.hashBuffer(sampleData.audioBuffer);
+          const cacheKey = ProcessedBufferCache.makeKey(bufferHash, effectivePitch, noteTimeStretch, preserveFormants, formantScale);
+
+          // Check local cache first
+          const cached = this._bufferCache.get(cacheKey);
+          if (cached) {
+            processedBuffers.set(cacheKey, cached);
+          } else if (!batchRequests.some((r) => r.cacheKey === cacheKey)) {
+            batchRequests.push({
+              audioBuffer: sampleData.audioBuffer,
+              pitchShift: effectivePitch,
+              timeStretch: noteTimeStretch,
+              preserveFormants,
+              formantScale,
+              cacheKey,
+            });
+          }
+        }
+      }
+
+      // Process cache misses in the worker
+      if (batchRequests.length > 0) {
+        try {
+          // Lazily create the worker client
+          if (!this._processorClient) {
+            this._processorClient = new AudioProcessorClient();
+          }
+
+          console.log(`[PSOLA] Processing ${batchRequests.length} unique pitch-shifted/time-stretched buffers in worker`);
+          const workerResults = await this._processorClient.processBatch(batchRequests);
+
+          // Store results in both the local map and the persistent cache
+          for (const [cacheKey, buffer] of workerResults) {
+            processedBuffers.set(cacheKey, buffer);
+            this._bufferCache.set(cacheKey, buffer);
+          }
+        } catch (err) {
+          console.warn('[PSOLA] Worker batch processing failed, falling back to playback-rate:', err);
+          // processedBuffers will be incomplete; scheduling loop handles fallback
+        }
+      }
+    }
 
     // Schedule each note with its specific sample
     for (let i = 0; i < schedulableNotes.length; i++) {
-      const { note, sampleData, grainSize: noteGrainSize } = schedulableNotes[i];
+      const { note, sampleData } = schedulableNotes[i];
       const prev = i > 0 ? schedulableNotes[i - 1] : null;
 
       // Calculate dynamic overlap if enabled and we have a previous sample
@@ -1139,24 +1299,34 @@ export class MelodyPlayer {
       const noteSpacing = nextSchedulable ? nextSchedulable.note.startTime - note.startTime : Infinity;
       const maxNoteDuration = 2 * noteSpacing;
 
+      // Look up PSOLA-processed buffer for this note if available.
+      // A note uses PSOLA when |pitch| > threshold OR timeStretch !== 1.0.
+      const noteTimeStretch = note.timeStretch ?? 1.0;
+      let processedBuffer: AudioBuffer | undefined;
+      if (usePsola && (Math.abs(note.pitch) > psolaThreshold || noteTimeStretch !== 1.0)) {
+        const bufferHash = ProcessedBufferCache.hashBuffer(sampleData.audioBuffer);
+        const cacheKey = ProcessedBufferCache.makeKey(bufferHash, note.pitch, noteTimeStretch, preserveFormants, formantScale);
+        processedBuffer = processedBuffers.get(cacheKey);
+      }
+
       this._schedulePhraseNote(
         note,
         prev?.note ?? null,
         prev?.sampleData ?? null,
         sampleData,
-        noteGrainSize,
         dynamicOverlapMs,
         normalizationGain,
         joinGain,
         maxNoteDuration,
+        processedBuffer,
       );
     }
 
     console.groupEnd();
 
-    // Individual node cleanup is handled by source.onended (playback-rate path)
-    // and handle.onended (granular path). When the last ActiveNode is removed,
-    // _removeActiveNode() sets _isPlaying = false automatically.
+    // Individual node cleanup is handled by source.onended callbacks.
+    // When the last ActiveNode is removed, _removeActiveNode() sets
+    // _isPlaying = false automatically.
   }
 
   /**
@@ -1172,9 +1342,7 @@ export class MelodyPlayer {
     // Detach all onended callbacks before stopping to prevent re-entrant
     // calls to _removeActiveNode during iteration.
     for (const node of this._activeNodes) {
-      if (node.granularHandle) {
-        node.granularHandle.onended = null;
-      } else if (node.source) {
+      if (node.source) {
         node.source.onended = null;
       }
     }
@@ -1182,11 +1350,7 @@ export class MelodyPlayer {
     // Stop all active nodes
     for (const node of this._activeNodes) {
       try {
-        if (node.granularHandle) {
-          // Stop granular playback
-          node.granularHandle.stop();
-        } else if (node.source) {
-          // Stop regular playback
+        if (node.source) {
           node.source.stop();
           node.source.disconnect();
           node.gainNode?.disconnect();
@@ -1196,11 +1360,6 @@ export class MelodyPlayer {
       }
       // Clean up vibrato LFO nodes
       this._cleanupVibratoNodes(node.vibratoNodes);
-    }
-
-    // Also stop any remaining granular playbacks
-    if (this._granularShifter) {
-      this._granularShifter.stopAll();
     }
 
     this._activeNodes = [];
@@ -1226,6 +1385,29 @@ export class MelodyPlayer {
       // Zero: play to end
       return audioDuration;
     }
+  }
+
+  /**
+   * Create a deep clone of an AudioBuffer.
+   *
+   * The Web Audio API's AudioBuffer.getChannelData() returns a mutable view
+   * into internal storage. To avoid mutating shared sample buffers (e.g. when
+   * applying spectral smoothing), we clone into a fresh AudioBuffer and copy
+   * all channel data.
+   *
+   * @param buffer - The AudioBuffer to clone
+   * @returns A new AudioBuffer with identical content
+   */
+  private _cloneAudioBuffer(buffer: AudioBuffer): AudioBuffer {
+    const clone = this._audioContext.createBuffer(
+      buffer.numberOfChannels,
+      buffer.length,
+      buffer.sampleRate,
+    );
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+      clone.getChannelData(ch).set(buffer.getChannelData(ch));
+    }
+    return clone;
   }
 
   /**
@@ -1257,9 +1439,6 @@ export class MelodyPlayer {
    *
    * Handles pitch shifting, timing adjustments for preutterance,
    * and crossfade with the previous note.
-   *
-   * When granular mode is enabled and |pitch| > 3 semitones, uses GranularPitchShifter
-   * for formant-preserving pitch shifts. Otherwise uses playback-rate shifting.
    */
   private _scheduleNote(
     note: NoteEvent,
@@ -1292,7 +1471,7 @@ export class MelodyPlayer {
     // Compute loop parameters for vowel-region looping
     const { canLoop, consonantSec, sampleEndSec } = this._computeLoopParams(otoEntry, audioBuffer);
 
-    // Calculate note duration (for granular, we don't adjust for playback rate).
+    // Calculate note duration.
     // Always include preutterance in duration for consistent note lengths.
     // Cap to maxNoteDuration to enforce UTAU-style 2-note polyphony: a note
     // must reach zero gain before the note-after-next starts playing.
@@ -1328,64 +1507,7 @@ export class MelodyPlayer {
       );
     }
 
-    if (this._useGranular) {
-      // Granular pitch shifting - preserves formants and ensures consistent
-      // timbre across all notes in a sequence regardless of pitch interval
-      this._scheduleGranularNote(note, {
-        audioBuffer,
-        sampleStart,
-        sampleDuration,
-        whenToStart,
-        noteDuration,
-        fadeInTime,
-        fadeTime,
-        velocity,
-        canLoop,
-        consonantSec,
-        sampleEndSec,
-      });
-    } else {
-      // Playback-rate pitch shifting - traditional method
-      // Pass the same timing values the dispatcher computed so both paths
-      // produce identical scheduling (whenToStart, noteDuration, fades).
-      this._schedulePlaybackRateNote(note, {
-        audioBuffer,
-        sampleStart,
-        sampleDuration,
-        whenToStart,
-        noteDuration,
-        fadeInTime,
-        fadeTime,
-        velocity,
-        canLoop,
-        consonantSec,
-        sampleEndSec,
-      });
-    }
-  }
-
-  /**
-   * Schedule a note using granular pitch shifting.
-   *
-   * Uses Tone.js GrainPlayer for formant-preserving pitch shifts.
-   */
-  private _scheduleGranularNote(
-    note: NoteEvent,
-    params: {
-      audioBuffer: AudioBuffer;
-      sampleStart: number;
-      sampleDuration: number;
-      whenToStart: number;
-      noteDuration: number;
-      fadeInTime: number;
-      fadeTime: number;
-      velocity: number;
-      canLoop: boolean;
-      consonantSec: number;
-      sampleEndSec: number;
-    }
-  ): void {
-    const {
+    this._schedulePlaybackRateNote(note, {
       audioBuffer,
       sampleStart,
       sampleDuration,
@@ -1397,82 +1519,14 @@ export class MelodyPlayer {
       canLoop,
       consonantSec,
       sampleEndSec,
-    } = params;
-
-    const shifter = this._getGranularShifter();
-
-    // Get the envelope for this note (note-specific or default).
-    // Cap attack/release to the crossfade timing so that the incoming
-    // ramp-up and outgoing ramp-down don't exceed the crossfade window,
-    // but keep the original ADSR values when they're shorter (e.g. 10ms
-    // attack preserves brief consonant bursts like "k").
-    const baseEnvelope = note.envelope ?? this._defaultEnvelope;
-    const envelope = {
-      ...baseEnvelope,
-      attack: Math.min(fadeInTime * 1000, baseEnvelope.attack),   // preserve fast attacks for consonants
-      release: Math.min(fadeTime * 1000, baseEnvelope.release),    // preserve fast releases
-    };
-
-    // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
-    // which means source material is consumed faster when pitching up. Adjust the
-    // maximum playable duration to prevent overlap with the next note.
-    // When looping is enabled, skip the clamp since the vowel region loops.
-    const playbackRate = Math.pow(2, note.pitch / 12);
-    const adjustedSampleDuration = sampleDuration / playbackRate;
-    const adjustedNoteDuration = canLoop ? noteDuration : Math.min(noteDuration, adjustedSampleDuration);
-
-    // Schedule granular playback
-    shifter
-      .playPitchShifted(audioBuffer, {
-        pitchShift: note.pitch,
-        startOffset: sampleStart,
-        duration: canLoop ? adjustedNoteDuration : Math.min(adjustedNoteDuration, sampleDuration),
-        when: whenToStart,
-        grainSize: this._grainSize,
-        overlap: this._grainOverlap,
-        gain: velocity,
-        fadeIn: fadeInTime,
-        fadeOut: fadeTime,
-        envelope,
-        vibrato: note.vibrato,
-        usePsola: this._usePsola,
-        loop: canLoop,
-        loopStart: canLoop ? consonantSec : undefined,
-        loopEnd: canLoop ? sampleEndSec : undefined,
-      })
-      .then((handle) => {
-        // Track active node for cleanup
-        const activeNode: ActiveNode = {
-          source: null,
-          gainNode: null,
-          granularHandle: handle,
-          vibratoNodes: null,
-          startTime: whenToStart,
-          endTime: whenToStart + adjustedNoteDuration,
-        };
-        this._activeNodes.push(activeNode);
-
-        // Hook into the granular handle's onended callback for event-driven cleanup.
-        // GranularPitchShifter fires this when its internal setTimeout triggers,
-        // since Tone.js GrainPlayer lacks a native onended event.
-        handle.onended = () => {
-          this._removeActiveNode(activeNode);
-        };
-      })
-      .catch((error) => {
-        // Fallback to playback-rate if granular fails
-        console.warn('Granular pitch shifting failed, falling back to playback rate:', error);
-        this._schedulePlaybackRateFallback(note, params);
-      });
+    });
   }
 
   /**
-   * Schedule a note using traditional playback-rate pitch shifting.
+   * Schedule a note using playback-rate pitch shifting.
    *
    * Timing values (whenToStart, noteDuration, fadeInTime, fadeTime) are
    * computed by the dispatcher (_scheduleNote) and passed in directly.
-   * This ensures identical scheduling regardless of whether the granular
-   * or playback-rate path is chosen.
    */
   private _schedulePlaybackRateNote(
     note: NoteEvent,
@@ -1529,7 +1583,7 @@ export class MelodyPlayer {
     // Get the envelope for this note (note-specific or default)
     const envelope = note.envelope ?? this._defaultEnvelope;
 
-    // Apply envelope using the same fade values the granular path uses
+    // Apply envelope shaping
     this._applyUnifiedEnvelope(gainNode, {
       whenToStart,
       noteDuration,
@@ -1540,11 +1594,14 @@ export class MelodyPlayer {
     });
 
     // Set up vibrato modulation if specified.
-    //
-    // On the playback-rate path, AudioBufferSourceNode.detune is a native
-    // AudioParam, so we can connect a Web Audio OscillatorNode LFO directly
-    // for sample-accurate pitch modulation with zero polling overhead.
+    // AudioBufferSourceNode.detune is a native AudioParam, so we connect a
+    // Web Audio OscillatorNode LFO directly for sample-accurate pitch
+    // modulation with zero polling overhead.
     const vibratoNodes = this._createVibratoLFO(note.vibrato, source.detune, whenToStart, noteDuration);
+
+    // Apply pitch bend keyframes to source.detune if specified.
+    // Pitch bend sets the base detune value; vibrato LFO adds on top additively.
+    this._applyPitchBend(note.pitchBend, source.detune, whenToStart);
 
     // Schedule the source node.
     // Use noteDuration + a release buffer instead of the full sampleDuration so
@@ -1560,7 +1617,6 @@ export class MelodyPlayer {
     const activeNode: ActiveNode = {
       source,
       gainNode,
-      granularHandle: null,
       vibratoNodes,
       startTime: whenToStart,
       endTime: whenToStart + noteDuration,
@@ -1574,136 +1630,31 @@ export class MelodyPlayer {
   }
 
   /**
-   * Fallback to playback-rate shifting when granular fails.
-   *
-   * Uses the current crossfade type setting for envelope shaping.
-   */
-  private _schedulePlaybackRateFallback(
-    note: NoteEvent,
-    params: {
-      audioBuffer: AudioBuffer;
-      sampleStart: number;
-      sampleDuration: number;
-      whenToStart: number;
-      noteDuration: number;
-      fadeInTime: number;
-      fadeTime: number;
-      velocity: number;
-      canLoop: boolean;
-      consonantSec: number;
-      sampleEndSec: number;
-    }
-  ): void {
-    const {
-      audioBuffer,
-      sampleStart,
-      sampleDuration,
-      whenToStart,
-      noteDuration,
-      fadeInTime,
-      fadeTime,
-      velocity,
-      canLoop,
-      consonantSec,
-      sampleEndSec,
-    } = params;
-
-    const playbackRate = Math.pow(2, note.pitch / 12);
-
-    const source = this._audioContext.createBufferSource();
-    const gainNode = this._audioContext.createGain();
-
-    source.buffer = audioBuffer;
-    source.playbackRate.value = playbackRate;
-
-    // Enable vowel-region looping for sustained notes
-    if (canLoop) {
-      source.loop = true;
-      source.loopStart = consonantSec;
-      source.loopEnd = sampleEndSec;
-    }
-
-    source.connect(gainNode);
-    gainNode.connect(this._audioContext.destination);
-
-    // Minimum fade time to avoid artifacts
-    const safeFadeInTime = Math.max(0.005, fadeInTime);
-    const safeFadeOutTime = Math.max(0.005, fadeTime);
-
-    // Apply crossfade using curve-based approach for equal-power or linear
-    gainNode.gain.setValueAtTime(0, whenToStart);
-
-    // Generate and apply fade-in curve
-    const fadeInCurve = this._generateCrossfadeCurve(safeFadeInTime, true, velocity);
-    gainNode.gain.setValueCurveAtTime(fadeInCurve, whenToStart, safeFadeInTime);
-
-    const fadeInEnd = whenToStart + safeFadeInTime;
-    const fadeOutStart = whenToStart + noteDuration - safeFadeOutTime;
-
-    if (fadeOutStart > fadeInEnd + 0.001) {
-      gainNode.gain.setValueAtTime(velocity, fadeInEnd);
-      gainNode.gain.setValueAtTime(velocity, fadeOutStart);
-    }
-
-    // Generate and apply fade-out curve
-    const fadeOutCurve = this._generateCrossfadeCurve(safeFadeOutTime, false, velocity);
-    gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, safeFadeOutTime);
-
-    // Set up vibrato modulation if specified (same native LFO approach as primary path)
-    const vibratoNodes = this._createVibratoLFO(note.vibrato, source.detune, whenToStart, noteDuration);
-
-    // Use noteDuration + a release buffer instead of the full sampleDuration so
-    // the AudioBufferSourceNode stops shortly after the envelope silences the
-    // audio, rather than running silently for the remainder of the sample.
-    // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
-    // When looping, don't clamp to sampleDuration since the source loops.
-    const releaseBuffer = Math.max(fadeTime, 0.05);
-    const sourceDuration = canLoop ? noteDuration + releaseBuffer : Math.min(noteDuration + releaseBuffer, sampleDuration);
-    source.start(whenToStart, sampleStart, sourceDuration);
-
-    const activeNode: ActiveNode = {
-      source,
-      gainNode,
-      granularHandle: null,
-      vibratoNodes,
-      startTime: whenToStart,
-      endTime: whenToStart + noteDuration,
-    };
-    this._activeNodes.push(activeNode);
-
-    source.onended = () => {
-      this._removeActiveNode(activeNode);
-    };
-  }
-
-  /**
    * Schedule a single phrase note for playback with its specific sample.
    *
    * This is similar to _scheduleNote but handles per-note sample data,
    * extracting oto parameters from each note's specific sample.
    *
-   * When granular mode is enabled and |pitch| > 3 semitones, uses GranularPitchShifter
-   * for formant-preserving pitch shifts. Otherwise uses playback-rate shifting.
-   *
    * @param note - The phrase note to schedule
    * @param prevNote - Previous note for overlap calculation (or null)
    * @param prevSampleData - Previous note's sample data (or null)
    * @param sampleData - Sample data for this note
-   * @param grainSize - Grain size to use for this note (optional, uses class default if not provided)
    * @param dynamicOverlapMs - Dynamic overlap in milliseconds calculated from spectral distance (optional)
    * @param normalizationGain - Global normalization gain for this sample (optional, default 1)
    * @param joinGain - Combined join correction gain (incoming gainB * outgoing gainA, default 1)
+   * @param maxNoteDuration - Maximum note duration for polyphony cap
+   * @param processedBuffer - Pre-processed PSOLA buffer with pitch already applied (optional)
    */
   private _schedulePhraseNote(
     note: PhraseNote,
     prevNote: PhraseNote | null,
     prevSampleData: SampleData | null,
     sampleData: SampleData,
-    grainSize?: number,
     dynamicOverlapMs?: number,
     normalizationGain = 1,
     joinGain = 1,
     maxNoteDuration?: number,
+    processedBuffer?: AudioBuffer,
   ): void {
     const { audioBuffer, otoEntry } = sampleData;
 
@@ -1781,67 +1732,7 @@ export class MelodyPlayer {
       );
     }
 
-    // Use provided grain size or fall back to class default
-    const effectiveGrainSize = grainSize ?? this._grainSize;
-
-    if (this._useGranular) {
-      // Granular pitch shifting - preserves formants and ensures consistent
-      // timbre across all notes in a phrase regardless of pitch interval
-      this._scheduleGranularPhraseNote(note, {
-        audioBuffer,
-        sampleStart,
-        sampleDuration,
-        whenToStart,
-        noteDuration,
-        fadeInTime,
-        fadeTime,
-        velocity: effectiveVelocity,
-        grainSize: effectiveGrainSize,
-        canLoop,
-        consonantSec,
-        sampleEndSec,
-      });
-    } else {
-      // Playback-rate pitch shifting - traditional method
-      // Pass the same timing values the dispatcher computed so both paths
-      // produce identical scheduling (whenToStart, noteDuration, fades).
-      this._schedulePlaybackRatePhraseNote(note, {
-        audioBuffer,
-        sampleStart,
-        sampleDuration,
-        whenToStart,
-        noteDuration,
-        fadeInTime,
-        fadeTime,
-        velocity: effectiveVelocity,
-        canLoop,
-        consonantSec,
-        sampleEndSec,
-      });
-    }
-  }
-
-  /**
-   * Schedule a phrase note using granular pitch shifting.
-   */
-  private _scheduleGranularPhraseNote(
-    note: PhraseNote,
-    params: {
-      audioBuffer: AudioBuffer;
-      sampleStart: number;
-      sampleDuration: number;
-      whenToStart: number;
-      noteDuration: number;
-      fadeInTime: number;
-      fadeTime: number;
-      velocity: number;
-      grainSize: number;
-      canLoop: boolean;
-      consonantSec: number;
-      sampleEndSec: number;
-    }
-  ): void {
-    const {
+    this._schedulePlaybackRatePhraseNote(note, {
       audioBuffer,
       sampleStart,
       sampleDuration,
@@ -1849,84 +1740,27 @@ export class MelodyPlayer {
       noteDuration,
       fadeInTime,
       fadeTime,
-      velocity,
-      grainSize,
+      velocity: effectiveVelocity,
       canLoop,
       consonantSec,
       sampleEndSec,
-    } = params;
-
-    const shifter = this._getGranularShifter();
-
-    // Get the envelope for this note (note-specific or default).
-    // Cap attack/release to the crossfade timing so that the incoming
-    // ramp-up and outgoing ramp-down don't exceed the crossfade window,
-    // but keep the original ADSR values when they're shorter (e.g. 10ms
-    // attack preserves brief consonant bursts like "k").
-    const baseEnvelope = note.envelope ?? this._defaultEnvelope;
-    const envelope = {
-      ...baseEnvelope,
-      attack: Math.min(fadeInTime * 1000, baseEnvelope.attack),   // preserve fast attacks for consonants
-      release: Math.min(fadeTime * 1000, baseEnvelope.release),    // preserve fast releases
-    };
-
-    // GrainPlayer internally plays grains at a rate corresponding to the pitch shift,
-    // which means source material is consumed faster when pitching up. Adjust the
-    // maximum playable duration to prevent overlap with the next note.
-    // When looping is enabled, skip the clamp since the vowel region loops.
-    const playbackRate = Math.pow(2, note.pitch / 12);
-    const adjustedSampleDuration = sampleDuration / playbackRate;
-    const adjustedNoteDuration = canLoop ? noteDuration : Math.min(noteDuration, adjustedSampleDuration);
-
-    shifter
-      .playPitchShifted(audioBuffer, {
-        pitchShift: note.pitch,
-        startOffset: sampleStart,
-        duration: canLoop ? adjustedNoteDuration : Math.min(adjustedNoteDuration, sampleDuration),
-        when: whenToStart,
-        grainSize,
-        overlap: this._grainOverlap,
-        gain: velocity,
-        fadeIn: fadeInTime,
-        fadeOut: fadeTime,
-        envelope,
-        vibrato: note.vibrato,
-        usePsola: this._usePsola,
-        loop: canLoop,
-        loopStart: canLoop ? consonantSec : undefined,
-        loopEnd: canLoop ? sampleEndSec : undefined,
-      })
-      .then((handle) => {
-        const activeNode: ActiveNode = {
-          source: null,
-          gainNode: null,
-          granularHandle: handle,
-          vibratoNodes: null,
-          startTime: whenToStart,
-          endTime: whenToStart + adjustedNoteDuration,
-        };
-        this._activeNodes.push(activeNode);
-
-        // Hook into the granular handle's onended callback for event-driven cleanup.
-        // GranularPitchShifter fires this when its internal setTimeout triggers,
-        // since Tone.js GrainPlayer lacks a native onended event.
-        handle.onended = () => {
-          this._removeActiveNode(activeNode);
-        };
-      })
-      .catch((error) => {
-        console.warn('Granular pitch shifting failed for phrase note, falling back:', error);
-        this._schedulePlaybackRateFallback(note, params);
-      });
+      processedBuffer,
+      timeStretch: note.timeStretch ?? 1.0,
+    });
   }
 
   /**
-   * Schedule a phrase note using traditional playback-rate pitch shifting.
+   * Schedule a phrase note for playback.
+   *
+   * Supports two pitch-shifting strategies:
+   * - If a processedBuffer is provided (from PSOLA worker), uses it as the
+   *   audio source with playbackRate=1.0 (pitch already baked in). Vibrato
+   *   still works via source.detune modulation on top of the base pitch.
+   * - Otherwise, uses the original audioBuffer with playbackRate-based
+   *   pitch shifting (existing behavior).
    *
    * Timing values (whenToStart, noteDuration, fadeInTime, fadeTime) are
    * computed by the dispatcher (_schedulePhraseNote) and passed in directly.
-   * This ensures identical scheduling regardless of whether the granular
-   * or playback-rate path is chosen.
    */
   private _schedulePlaybackRatePhraseNote(
     note: PhraseNote,
@@ -1942,6 +1776,10 @@ export class MelodyPlayer {
       canLoop: boolean;
       consonantSec: number;
       sampleEndSec: number;
+      /** Pre-processed PSOLA buffer with pitch already applied (optional). */
+      processedBuffer?: AudioBuffer;
+      /** Time stretch factor applied via PSOLA (default 1.0). */
+      timeStretch?: number;
     }
   ): void {
     const {
@@ -1956,21 +1794,38 @@ export class MelodyPlayer {
       canLoop,
       consonantSec,
       sampleEndSec,
+      processedBuffer,
+      timeStretch = 1.0,
     } = params;
 
-    const playbackRate = Math.pow(2, note.pitch / 12);
+    // When a PSOLA-processed buffer is available, pitch is already baked in.
+    // Use it as the source with playbackRate=1.0. Vibrato still works via
+    // source.detune modulation on top of the base pitch.
+    const usePsolaBuffer = processedBuffer !== undefined;
+    const effectiveBuffer = usePsolaBuffer ? processedBuffer : audioBuffer;
+    const playbackRate = usePsolaBuffer ? 1.0 : Math.pow(2, note.pitch / 12);
+
+    // When PSOLA time-stretching is applied, the processed buffer's timeline
+    // is scaled by the timeStretch factor. All position-based parameters
+    // (sampleStart, loop points, sampleEnd) must be scaled accordingly.
+    const tsScale = usePsolaBuffer ? timeStretch : 1.0;
+    const effectiveSampleStart = sampleStart * tsScale;
+    const effectiveSampleDuration = sampleDuration * tsScale;
 
     const source = this._audioContext.createBufferSource();
     const gainNode = this._audioContext.createGain();
 
-    source.buffer = audioBuffer;
+    source.buffer = effectiveBuffer;
     source.playbackRate.value = playbackRate;
 
-    // Enable vowel-region looping for sustained notes
+    // Enable vowel-region looping for sustained notes.
+    // Loop points refer to the buffer's timeline. When PSOLA time-stretching
+    // is applied, the processed buffer is proportionally longer/shorter,
+    // so loop boundaries must be scaled by the timeStretch factor.
     if (canLoop) {
       source.loop = true;
-      source.loopStart = consonantSec;
-      source.loopEnd = sampleEndSec;
+      source.loopStart = consonantSec * tsScale;
+      source.loopEnd = sampleEndSec * tsScale;
     }
 
     source.connect(gainNode);
@@ -1979,7 +1834,7 @@ export class MelodyPlayer {
     // Get the envelope for this note (note-specific or default)
     const envelope = note.envelope ?? this._defaultEnvelope;
 
-    // Apply envelope using the same fade values the granular path uses
+    // Apply envelope shaping
     this._applyUnifiedEnvelope(gainNode, {
       whenToStart,
       noteDuration,
@@ -1989,22 +1844,36 @@ export class MelodyPlayer {
       envelope,
     });
 
-    // Set up vibrato modulation if specified (same native LFO approach as primary path)
+    // Set up vibrato modulation if specified.
+    // Even with PSOLA-processed buffers, source.detune modulates pitch
+    // in real-time, providing vibrato on top of the base pitch.
     const vibratoNodes = this._createVibratoLFO(note.vibrato, source.detune, whenToStart, noteDuration);
+
+    // Apply pitch bend keyframes to source.detune if specified.
+    // For PSOLA-processed buffers, the base pitch is already baked in (detune base = 0),
+    // so pitch bend cents are deviations from that. For playback-rate buffers, detune
+    // adds on top of the playbackRate pitch shift. In both cases, vibrato LFO output
+    // adds additively via its GainNode connection to source.detune.
+    this._applyPitchBend(note.pitchBend, source.detune, whenToStart);
 
     // Use noteDuration + a release buffer instead of the full sampleDuration so
     // the AudioBufferSourceNode stops shortly after the envelope silences the
     // audio, rather than running silently for the remainder of the sample.
     // The actual release time used is fadeTime (crossfade-aligned), not envelope.release.
     // When looping, don't clamp to sampleDuration since the source loops.
+    // Use effectiveSampleDuration/effectiveSampleStart for PSOLA time-stretched buffers.
     const releaseBuffer = Math.max(fadeTime, 0.05);
-    const sourceDuration = canLoop ? noteDuration + releaseBuffer : Math.min(noteDuration + releaseBuffer, sampleDuration);
-    source.start(whenToStart, sampleStart, sourceDuration);
+    const sourceDuration = canLoop ? noteDuration + releaseBuffer : Math.min(noteDuration + releaseBuffer, effectiveSampleDuration);
+    source.start(whenToStart, effectiveSampleStart, sourceDuration);
+
+    if (usePsolaBuffer) {
+      const tsInfo = timeStretch !== 1.0 ? ` timeStretch=${timeStretch}` : '';
+      console.log(`  [PSOLA] Using pre-processed buffer for ${note.alias} (pitch=${note.pitch}${tsInfo})`);
+    }
 
     const activeNode: ActiveNode = {
       source,
       gainNode,
-      granularHandle: null,
       vibratoNodes,
       startTime: whenToStart,
       endTime: whenToStart + noteDuration,
@@ -2019,11 +1888,8 @@ export class MelodyPlayer {
   /**
    * Apply a unified envelope to a gain node using dispatcher-computed timing.
    *
-   * This method is used by the playback-rate path so that it receives the
-   * exact same whenToStart / noteDuration / fadeInTime / fadeTime values
-   * that the granular path receives.  When an ADSR envelope is present it
-   * delegates to _applyADSREnvelope; otherwise it applies a crossfade
-   * shaped by the current _crossfadeType setting.
+   * When an ADSR envelope is present, delegates to _applyADSREnvelope;
+   * otherwise applies a crossfade shaped by the current _crossfadeType setting.
    */
   private _applyUnifiedEnvelope(
     gainNode: GainNode,
@@ -2061,7 +1927,7 @@ export class MelodyPlayer {
     const safeFadeInTime = Math.max(0.005, fadeInTime);
     const safeFadeOutTime = Math.max(0.005, fadeTime);
 
-    // Apply crossfade using curve-based approach matching the fallback path
+    // Apply crossfade using curve-based approach
     gainNode.gain.setValueAtTime(0, whenToStart);
 
     // Generate and apply fade-in curve
@@ -2151,6 +2017,48 @@ export class MelodyPlayer {
 
     // Release: ramp to 0
     gainNode.gain.linearRampToValueAtTime(0, safeStartTime + safeDuration);
+  }
+
+  /**
+   * Apply pitch bend keyframes to a source node's detune AudioParam.
+   *
+   * Schedules `setValueAtTime` for the first keyframe and
+   * `linearRampToValueAtTime` for each subsequent keyframe, producing
+   * piecewise-linear pitch automation in cents.
+   *
+   * This operates on `source.detune` which is additive with any connected
+   * LFO (vibrato). The pitch bend sets the base detune value; the vibrato
+   * oscillator's output adds on top via its GainNode connection.
+   *
+   * @param pitchBend - Array of pitch bend keyframes, or undefined to skip
+   * @param detuneParam - The detune AudioParam to automate (source.detune)
+   * @param absoluteStart - Absolute AudioContext time when the note starts
+   */
+  private _applyPitchBend(
+    pitchBend: PitchBendPoint[] | undefined,
+    detuneParam: AudioParam,
+    absoluteStart: number
+  ): void {
+    if (!pitchBend || pitchBend.length === 0) {
+      return;
+    }
+
+    // Sort keyframes by time to ensure correct scheduling order
+    const sortedBends = [...pitchBend].sort((a, b) => a.time - b.time);
+
+    // Set the initial detune value at the first keyframe's time
+    detuneParam.setValueAtTime(
+      sortedBends[0].cents,
+      absoluteStart + sortedBends[0].time
+    );
+
+    // Linearly ramp to each subsequent keyframe
+    for (let i = 1; i < sortedBends.length; i++) {
+      detuneParam.linearRampToValueAtTime(
+        sortedBends[i].cents,
+        absoluteStart + sortedBends[i].time
+      );
+    }
   }
 
   /**
@@ -2259,12 +2167,8 @@ export class MelodyPlayer {
 
     // Disconnect nodes
     try {
-      if (node.granularHandle) {
-        node.granularHandle.stop();
-      } else {
-        node.source?.disconnect();
-        node.gainNode?.disconnect();
-      }
+      node.source?.disconnect();
+      node.gainNode?.disconnect();
     } catch {
       // Ignore disconnect errors
     }

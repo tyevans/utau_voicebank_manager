@@ -14,8 +14,7 @@
     "@vaadin/router": "^1.7.5",
     "@tailwindcss/vite": "^4.1.18",
     "lit": "^3.3.1",
-    "tailwindcss": "^4.1.18",
-    "tone": "^15.1.22"
+    "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
     "typescript": "~5.9.3",

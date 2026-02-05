@@ -644,8 +644,6 @@ export class UvmQuickPhrase extends LitElement {
       this._playbackStartTime = this._audioContext.currentTime;
 
       this._player.playPhrase(playableNotes, result.sampleMap, {
-        useGranular: true,
-        useAdaptiveGrainSize: true,
         useDynamicOverlap: true,
         useLoudnessNormalization: true,
         crossfadeType: 'equal-power',

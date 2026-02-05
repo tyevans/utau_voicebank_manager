@@ -25,18 +25,6 @@ export type {
   VibratoParams,
 } from './melody-player.js';
 
-// Granular pitch shifting
-export {
-  GranularPitchShifter,
-  getGranularPitchShifter,
-} from './granular-pitch-shifter.js';
-export type {
-  ADSREnvelope as GranularADSREnvelope,
-  CrossfadeType as GranularCrossfadeType,
-  PitchShiftOptions,
-  PlaybackHandle,
-} from './granular-pitch-shifter.js';
-
 // Sample preloading
 export { SampleLoader, loadSamplesForPhrase } from './sample-loader.js';
 export type { LoadSamplesResult } from './sample-loader.js';

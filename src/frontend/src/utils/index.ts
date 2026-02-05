@@ -21,12 +21,14 @@ export {
 } from './phoneme-groups.js';
 export type { PhonemeFamily } from './phoneme-groups.js';
 
-// Pitch detection for adaptive grain sizing
+// Pitch detection for adaptive grain sizing and pitch matching
 export {
   detectPitchPeriod,
   detectPitch,
   detectRepresentativePitch,
   calculateOptimalGrainSize,
+  calculatePitchCorrection,
+  C4_FREQUENCY,
 } from './pitch-detection.js';
 export type {
   PitchDetectionOptions,
@@ -76,6 +78,22 @@ export type {
   PsolaAnalysis,
   PitchMarkOptions,
 } from './psola.js';
+
+// Cepstral envelope for formant preservation
+export {
+  applyFormantPreservation,
+} from './cepstral-envelope.js';
+export type {
+  CepstralOptions,
+} from './cepstral-envelope.js';
+
+// Spectral smoothing at concatenation joins
+export {
+  applySpectralSmoothing,
+} from './spectral-smoothing.js';
+export type {
+  SpectralSmoothingOptions,
+} from './spectral-smoothing.js';
 
 // Alias matching for voicebank phoneme lookup
 export {
