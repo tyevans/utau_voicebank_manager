@@ -4,9 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from src.backend.domain.alignment_config import (
+    STYLE_ADJUSTMENTS,
     AlignmentConfig,
     AlignmentParams,
-    STYLE_ADJUSTMENTS,
     lerp,
 )
 
@@ -307,10 +307,10 @@ class TestMethodOverrideValidation:
         config = AlignmentConfig(method_override="fa")
         assert config.method_override == "fa"
 
-    def test_blind_method_valid(self) -> None:
-        """'blind' is a valid method override."""
-        config = AlignmentConfig(method_override="blind")
-        assert config.method_override == "blind"
+    def test_blind_method_now_invalid(self) -> None:
+        """'blind' is no longer a valid method override (wav2vec removed)."""
+        with pytest.raises(ValidationError):
+            AlignmentConfig(method_override="blind")
 
     def test_none_method_valid(self) -> None:
         """None is a valid method override."""

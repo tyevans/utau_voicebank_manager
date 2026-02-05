@@ -791,6 +791,63 @@ class ForcedAlignmentDetector:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    async def batch_detect_phonemes(
+        self,
+        items: list[tuple[Path, str]],
+        alignment_params: AlignmentParams | None = None,
+    ) -> dict[Path, PhonemeDetectionResult]:
+        """Detect phonemes for multiple audio files in batch.
+
+        Pre-loads the model once, then processes each (audio_path, transcript)
+        pair sequentially. Individual failures are logged and skipped.
+
+        Args:
+            items: List of (audio_path, transcript) pairs
+            alignment_params: Optional alignment parameters for energy threshold
+                tuning applied to all items.
+
+        Returns:
+            Dict mapping successful audio paths to their PhonemeDetectionResult
+
+        Raises:
+            ForcedAlignmentError: If ALL files fail alignment
+        """
+        if not items:
+            return {}
+
+        # Pre-load model once for entire batch
+        self._ensure_model_loaded()
+
+        results: dict[Path, PhonemeDetectionResult] = {}
+        failed: list[tuple[Path, Exception]] = []
+
+        for audio_path, transcript in items:
+            try:
+                result = await self.detect_phonemes_with_transcript(
+                    audio_path, transcript, alignment_params=alignment_params
+                )
+                results[audio_path] = result
+            except (ForcedAlignmentError, TranscriptExtractionError) as e:
+                logger.warning(f"MMS_FA alignment failed for {audio_path.name}: {e}")
+                failed.append((audio_path, e))
+
+        # Log summary
+        total = len(items)
+        succeeded = len(results)
+        failed_count = len(failed)
+        logger.info(
+            f"MMS_FA batch alignment: {succeeded} succeeded, "
+            f"{failed_count} failed out of {total} files"
+        )
+
+        if not results and failed:
+            raise ForcedAlignmentError(
+                f"All {failed_count} files failed MMS_FA alignment. "
+                f"First error: {failed[0][1]}"
+            )
+
+        return results
+
     def _spans_to_segments(
         self,
         token_spans: list,

@@ -91,14 +91,13 @@ class AlignmentConfig(BaseModel):
         ),
     )
 
-    method_override: Literal["sofa", "fa", "blind"] | None = Field(
+    method_override: Literal["sofa", "fa"] | None = Field(
         default=None,
         description=(
             "Override automatic alignment method selection. "
             "None = auto-select best method, "
             "'sofa' = SOFA neural aligner, "
-            "'fa' = Montreal Forced Aligner, "
-            "'blind' = energy-based without ML. "
+            "'fa' = MMS forced alignment (TorchAudio MMS_FA). "
             "Most users should leave this as None."
         ),
     )

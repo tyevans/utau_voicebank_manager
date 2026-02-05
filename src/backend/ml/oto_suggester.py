@@ -3,11 +3,12 @@
 import logging
 from pathlib import Path
 
+import librosa
 import numpy as np
 
 from src.backend.domain.alignment_config import AlignmentConfig, AlignmentParams
 from src.backend.domain.oto_suggestion import OtoSuggestion
-from src.backend.domain.phoneme import PhonemeSegment
+from src.backend.domain.phoneme import PhonemeDetectionResult, PhonemeSegment
 from src.backend.ml.forced_alignment_detector import (
     ForcedAlignmentDetector,
     ForcedAlignmentError,
@@ -15,7 +16,6 @@ from src.backend.ml.forced_alignment_detector import (
     extract_transcript_from_filename,
     get_forced_alignment_detector,
 )
-from src.backend.ml.phoneme_detector import PhonemeDetector, preprocess_audio
 from src.backend.ml.sofa_aligner import (
     AlignmentError,
     AlignmentResult,
@@ -153,13 +153,13 @@ class OtoSuggester:
 
     Supports multiple detection modes:
     - SOFA alignment: Optimized for singing voice (enabled with use_sofa=True)
-    - Forced alignment (default): Higher accuracy using expected phonemes from filename
-    - Blind detection: Fallback using Wav2Vec2 phoneme recognition
+    - MMS_FA forced alignment (default): Higher accuracy using expected phonemes
+      from filename with TorchAudio's MMS_FA model
+    - Defaults: Energy-based fallback when ML methods fail
     """
 
     def __init__(
         self,
-        phoneme_detector: PhonemeDetector | None = None,
         use_forced_alignment: bool = True,
         use_sofa: bool = False,
         alignment_config: AlignmentConfig | None = None,
@@ -167,33 +167,21 @@ class OtoSuggester:
         """Initialize the oto suggester.
 
         Args:
-            phoneme_detector: PhonemeDetector instance for blind phoneme detection.
-                             Loaded lazily if not provided.
-            use_forced_alignment: If True, attempt forced alignment first for higher
-                                  accuracy. Falls back to blind detection on failure.
+            use_forced_alignment: If True, attempt MMS_FA forced alignment.
+                                  Falls back to defaults on failure.
                                   Defaults to True.
             use_sofa: If True, attempt SOFA (Singing-Oriented Forced Aligner) first.
                      SOFA is optimized for singing voice and produces better results
-                     for sustained vowels. Falls back to forced alignment if unavailable.
+                     for sustained vowels. Falls back to MMS_FA if unavailable.
                      Defaults to False.
             alignment_config: Optional AlignmentConfig for controlling alignment
                              parameters. If not provided, uses default config.
         """
-        self._phoneme_detector = phoneme_detector
         self._forced_alignment_detector: ForcedAlignmentDetector | None = None
         self._sofa_aligner: SOFAForcedAligner | None = None
         self.use_forced_alignment = use_forced_alignment
         self.use_sofa = use_sofa
         self._alignment_config = alignment_config or AlignmentConfig()
-
-    @property
-    def phoneme_detector(self) -> PhonemeDetector:
-        """Get the phoneme detector, loading lazily if needed."""
-        if self._phoneme_detector is None:
-            from src.backend.ml.phoneme_detector import get_phoneme_detector
-
-            self._phoneme_detector = get_phoneme_detector()
-        return self._phoneme_detector
 
     @property
     def forced_alignment_detector(self) -> ForcedAlignmentDetector:
@@ -259,17 +247,12 @@ class OtoSuggester:
         method_override = self._alignment_config.method_override
         try_sofa = self.use_sofa and is_sofa_available()
         try_fa = self.use_forced_alignment
-        try_blind = True
 
         if method_override == "sofa":
             try_fa = False
-            try_blind = False
         elif method_override == "fa":
             try_sofa = False
-            try_blind = False
-        elif method_override == "blind":
-            try_sofa = False
-            try_fa = False
+        # "blind" is no longer a supported method - treat as auto (defaults)
 
         # Try SOFA alignment first if enabled and available
         if try_sofa:
@@ -292,15 +275,15 @@ class OtoSuggester:
                 logger.info(
                     f"SOFA dictionary validation failed for {filename}: "
                     f"unrecognized phonemes {e.unrecognized_phonemes}. "
-                    "Falling back to forced alignment."
+                    "Falling back to MMS_FA forced alignment."
                 )
             except AlignmentError as e:
                 logger.warning(
                     f"SOFA alignment failed for {filename}, "
-                    f"falling back to forced alignment: {e}"
+                    f"falling back to MMS_FA forced alignment: {e}"
                 )
 
-        # Try forced alignment if SOFA didn't work and forced alignment is enabled
+        # Try MMS_FA forced alignment if SOFA didn't work
         if not segments and try_fa:
             try:
                 detection_result = await self.forced_alignment_detector.detect_phonemes(
@@ -310,34 +293,23 @@ class OtoSuggester:
                 audio_duration_ms = detection_result.audio_duration_ms
                 detection_method = "forced_alignment"
                 logger.info(
-                    f"Forced alignment succeeded for {filename}: "
+                    f"MMS_FA forced alignment succeeded for {filename}: "
                     f"{len(segments)} segments detected"
                 )
             except (ForcedAlignmentError, TranscriptExtractionError) as e:
                 logger.warning(
-                    f"Forced alignment failed for {filename}, "
-                    f"falling back to blind detection: {e}"
+                    f"MMS_FA forced alignment failed for {filename}, "
+                    f"using defaults: {e}"
                 )
 
-        # Fall back to blind detection if forced alignment failed or is disabled
-        if not segments and try_blind:
+        # Fall back to defaults if all ML methods failed
+        if not segments and not audio_duration_ms:
             try:
-                detection_result = await self.phoneme_detector.detect_phonemes(
-                    audio_path
-                )
-                segments = detection_result.segments
-                audio_duration_ms = detection_result.audio_duration_ms
-                detection_method = "blind_detection"
-                logger.info(
-                    f"Blind detection used for {filename}: "
-                    f"{len(segments)} segments detected"
-                )
+                audio_duration_ms = librosa.get_duration(path=str(audio_path)) * 1000
             except Exception as e:
-                logger.warning(f"Phoneme detection failed, using defaults: {e}")
-                # Fall back to loading audio duration manually
-                _, _, audio_duration_ms = preprocess_audio(audio_path)
-                segments = []
-                detection_method = "defaults"
+                logger.warning(f"Failed to get audio duration for {filename}: {e}")
+                audio_duration_ms = 1000.0  # Default 1 second
+            detection_method = "defaults"
 
         logger.debug(f"Detection method for {filename}: {detection_method}")
 
@@ -391,8 +363,11 @@ class OtoSuggester:
     ) -> list[OtoSuggestion]:
         """Analyze multiple audio files and suggest oto parameters in batch.
 
-        When SOFA is enabled and available, this is much faster than calling
-        suggest_oto() repeatedly because the model is loaded only once.
+        Uses a multi-phase fallback strategy:
+        1. Batch SOFA alignment (if available)
+        2. Batch MMS_FA for SOFA failures
+        3. Individual suggest_oto() for remaining failures
+        4. Default suggestions for total failures
 
         Args:
             audio_paths: List of paths to WAV files
@@ -413,92 +388,134 @@ class OtoSuggester:
                 f"audio_paths length ({len(audio_paths)})"
             )
 
-        # If SOFA is not enabled or not available, fall back to sequential processing
-        if not self.use_sofa or not is_sofa_available():
-            logger.info(
-                "SOFA not available for batch processing, "
-                "falling back to sequential suggest_oto() calls"
-            )
-            return await self._batch_suggest_sequential(
-                audio_paths, aliases, sofa_language
-            )
-
-        # Extract transcripts and prepare items for batch alignment
-        items: list[tuple[Path, str]] = []
+        # Phase 1: Extract transcripts for all files
         path_to_transcript: dict[Path, str] = {}
-
         for audio_path in audio_paths:
             filename = audio_path.name
             try:
                 transcript = extract_transcript_from_filename(filename)
-                items.append((audio_path, transcript))
                 path_to_transcript[audio_path] = transcript
             except TranscriptExtractionError as e:
                 logger.warning(
                     f"Failed to extract transcript from {filename}: {e}. "
-                    "Will process individually."
+                    "Will use defaults."
                 )
-                # Keep track but don't add to batch items
                 path_to_transcript[audio_path] = ""
 
-        # Filter to only files with valid transcripts for batch processing
-        batch_items = [(p, t) for p, t in items if t]
+        # Initialize suggestions list with None placeholders
+        suggestions: list[OtoSuggestion | None] = [None] * len(audio_paths)
 
-        # Run batch alignment with SOFA
-        alignment_results: dict[Path, AlignmentResult] = {}
-        if batch_items:
-            try:
-                alignment_results = await self.sofa_aligner.batch_align(
-                    batch_items, language=sofa_language
-                )
-                logger.info(
-                    f"SOFA batch alignment succeeded for "
-                    f"{len(alignment_results)}/{len(batch_items)} files"
-                )
-            except AlignmentError as e:
-                logger.warning(
-                    f"SOFA batch alignment failed: {e}. "
-                    "Falling back to sequential processing."
-                )
-                return await self._batch_suggest_sequential(
-                    audio_paths, aliases, sofa_language
-                )
+        # Build a set of paths still needing alignment (have valid transcripts)
+        pending_indices: list[int] = list(range(len(audio_paths)))
 
-        # Build suggestions from alignment results
-        suggestions: list[OtoSuggestion] = []
-        failed_paths: list[tuple[int, Path]] = []  # (index, path) for fallback
+        # Phase 2: Batch SOFA (if available)
+        if self.use_sofa and is_sofa_available():
+            sofa_items = [
+                (audio_paths[idx], path_to_transcript[audio_paths[idx]])
+                for idx in pending_indices
+                if path_to_transcript[audio_paths[idx]]
+            ]
+            if sofa_items:
+                sofa_results: dict[Path, AlignmentResult] = {}
+                try:
+                    sofa_results = await self.sofa_aligner.batch_align(
+                        sofa_items, language=sofa_language
+                    )
+                    logger.info(
+                        f"SOFA batch alignment succeeded for "
+                        f"{len(sofa_results)}/{len(sofa_items)} files"
+                    )
+                except AlignmentError as e:
+                    logger.warning(
+                        f"SOFA batch alignment failed entirely: {e}. "
+                        "Proceeding to MMS_FA batch."
+                    )
 
-        for idx, audio_path in enumerate(audio_paths):
-            filename = audio_path.name
+                # Build suggestions from SOFA results
+                resolved_indices: list[int] = []
+                for idx in pending_indices:
+                    audio_path = audio_paths[idx]
+                    if audio_path in sofa_results:
+                        result = sofa_results[audio_path]
+                        alias = (
+                            aliases[idx]
+                            if aliases is not None
+                            else self._generate_alias_from_filename(audio_path.name)
+                        )
+                        suggestions[idx] = self._build_suggestion_from_alignment(
+                            filename=audio_path.name,
+                            alias=alias,
+                            segments=result.segments,
+                            audio_duration_ms=result.audio_duration_ms,
+                            detection_method="sofa",
+                        )
+                        resolved_indices.append(idx)
 
-            # Determine alias for this file
-            if aliases is not None:
-                alias = aliases[idx]
-            else:
-                alias = self._generate_alias_from_filename(filename)
+                # Remove resolved indices from pending
+                pending_indices = [
+                    idx for idx in pending_indices if idx not in resolved_indices
+                ]
 
-            # Check if we have alignment result for this file
-            if audio_path in alignment_results:
-                result = alignment_results[audio_path]
-                suggestion = self._build_suggestion_from_alignment(
-                    filename=filename,
-                    alias=alias,
-                    segments=result.segments,
-                    audio_duration_ms=result.audio_duration_ms,
-                    detection_method="sofa",
-                )
-                suggestions.append(suggestion)
-            else:
-                # Mark for fallback processing
-                failed_paths.append((idx, audio_path))
-                suggestions.append(None)  # type: ignore[arg-type] # Placeholder
+        # Phase 3: Batch MMS_FA for files that failed SOFA (or if SOFA unavailable)
+        if pending_indices and self.use_forced_alignment:
+            params = self._get_params()
+            mms_items = [
+                (audio_paths[idx], path_to_transcript[audio_paths[idx]])
+                for idx in pending_indices
+                if path_to_transcript[audio_paths[idx]]
+            ]
+            if mms_items:
+                mms_results: dict[Path, PhonemeDetectionResult] = {}
+                try:
+                    mms_results = (
+                        await self.forced_alignment_detector.batch_detect_phonemes(
+                            mms_items, alignment_params=params
+                        )
+                    )
+                    logger.info(
+                        f"MMS_FA batch alignment succeeded for "
+                        f"{len(mms_results)}/{len(mms_items)} files"
+                    )
+                except ForcedAlignmentError as e:
+                    logger.warning(
+                        f"MMS_FA batch alignment failed entirely: {e}. "
+                        "Proceeding to individual fallback."
+                    )
 
-        # Process failed files individually using suggest_oto()
-        if failed_paths:
+                # Build suggestions from MMS_FA results
+                resolved_indices = []
+                for idx in pending_indices:
+                    audio_path = audio_paths[idx]
+                    if audio_path in mms_results:
+                        result = mms_results[audio_path]
+                        alias = (
+                            aliases[idx]
+                            if aliases is not None
+                            else self._generate_alias_from_filename(audio_path.name)
+                        )
+                        suggestions[idx] = self._build_suggestion_from_alignment(
+                            filename=audio_path.name,
+                            alias=alias,
+                            segments=result.segments,
+                            audio_duration_ms=result.audio_duration_ms,
+                            detection_method="forced_alignment",
+                        )
+                        resolved_indices.append(idx)
+
+                # Remove resolved indices from pending
+                pending_indices = [
+                    idx for idx in pending_indices if idx not in resolved_indices
+                ]
+
+        # Phase 4: Individual suggest_oto() for remaining failures
+        if pending_indices:
             logger.info(
-                f"Processing {len(failed_paths)} files that failed batch alignment"
+                f"Processing {len(pending_indices)} files individually "
+                "after batch alignment"
             )
-            for idx, audio_path in failed_paths:
+            still_pending: list[int] = []
+            for idx in pending_indices:
+                audio_path = audio_paths[idx]
                 file_alias = aliases[idx] if aliases is not None else None
                 try:
                     suggestion = await self.suggest_oto(
@@ -507,12 +524,17 @@ class OtoSuggester:
                     suggestions[idx] = suggestion
                 except Exception as e:
                     logger.error(f"Failed to process {audio_path}: {e}")
-                    # Create a default suggestion
-                    suggestions[idx] = self._build_default_suggestion(
-                        audio_path, file_alias
-                    )
+                    still_pending.append(idx)
+            pending_indices = still_pending
 
-        return suggestions
+        # Phase 5: Default suggestions for total failures
+        for idx in pending_indices:
+            audio_path = audio_paths[idx]
+            file_alias = aliases[idx] if aliases is not None else None
+            suggestions[idx] = self._build_default_suggestion(audio_path, file_alias)
+
+        # All placeholders should now be filled
+        return suggestions  # type: ignore[return-value]
 
     async def _batch_suggest_sequential(
         self,
@@ -640,7 +662,7 @@ class OtoSuggester:
 
         # Try to get audio duration
         try:
-            _, _, audio_duration_ms = preprocess_audio(audio_path)
+            audio_duration_ms = librosa.get_duration(path=str(audio_path)) * 1000
         except Exception:
             audio_duration_ms = 1000.0  # Default 1 second
 
@@ -1072,7 +1094,6 @@ _default_suggester: OtoSuggester | None = None
 
 
 def get_oto_suggester(
-    phoneme_detector: PhonemeDetector | None = None,
     use_forced_alignment: bool = True,
     use_sofa: bool = True,
     alignment_config: AlignmentConfig | None = None,
@@ -1080,10 +1101,8 @@ def get_oto_suggester(
     """Get the default oto suggester singleton.
 
     Args:
-        phoneme_detector: Optional phoneme detector to use for blind detection.
-                         Loaded lazily if not provided.
-        use_forced_alignment: If True, attempt forced alignment first for higher
-                              accuracy. Falls back to blind detection on failure.
+        use_forced_alignment: If True, attempt MMS_FA forced alignment.
+                              Falls back to defaults on failure.
                               Defaults to True.
         use_sofa: If True, attempt SOFA (Singing-Oriented Forced Aligner) first.
                   SOFA is optimized for singing voice and produces better results
@@ -1103,7 +1122,6 @@ def get_oto_suggester(
 
     if _default_suggester is None:
         _default_suggester = OtoSuggester(
-            phoneme_detector=phoneme_detector,
             use_forced_alignment=use_forced_alignment,
             use_sofa=use_sofa,
             alignment_config=alignment_config,

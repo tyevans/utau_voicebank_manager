@@ -49,7 +49,7 @@ class AlignmentConfigResponse(BaseModel):
         le=1.0,
         description="Alignment tightness (0.0 = loose, 1.0 = tight)",
     )
-    method_override: Literal["sofa", "fa", "blind"] | None = Field(
+    method_override: Literal["sofa", "fa"] | None = Field(
         default=None,
         description="Manual override for alignment method, or None for auto-select",
     )
@@ -147,18 +147,14 @@ def get_batch_oto_service(
     Uses the current module-level alignment config for method selection.
     """
     # Determine alignment method from config
-    use_sofa = True  # Default to SOFA
-    if _alignment_config.method_override == "blind":
-        use_forced_alignment = False
-        use_sofa = False
-    elif _alignment_config.method_override == "fa":
+    if _alignment_config.method_override == "fa":
         use_forced_alignment = True
         use_sofa = False
     elif _alignment_config.method_override == "sofa":
         use_forced_alignment = True
         use_sofa = True
     else:
-        # Auto-select: prefer SOFA if available
+        # Auto-select: prefer SOFA if available, always use MMS_FA as fallback
         use_forced_alignment = True
         use_sofa = is_sofa_available()
 
@@ -674,14 +670,12 @@ async def get_alignment_methods() -> AlignmentMethodsResponse:
         sofa = get_sofa_aligner()
         sofa_languages = sofa.get_available_languages()
 
-    # Check MFA availability (basic check - could be expanded)
-    mfa_available = False
+    # MMS_FA is always available (TorchAudio bundled model)
+    mms_fa_available = True
     try:
-        import shutil
-
-        mfa_available = shutil.which("mfa") is not None
-    except Exception:
-        pass
+        import torchaudio  # noqa: F401
+    except ImportError:
+        mms_fa_available = False
 
     methods = [
         AlignmentMethodInfo(
@@ -696,33 +690,18 @@ async def get_alignment_methods() -> AlignmentMethodsResponse:
         ),
         AlignmentMethodInfo(
             name="fa",
-            display_name="Montreal Forced Aligner",
-            available=mfa_available,
+            display_name="MMS Forced Alignment",
+            available=mms_fa_available,
             description=(
-                "Traditional forced alignment using GMM-HMM models. "
-                "Good for speech, supports many languages."
+                "TorchAudio MMS_FA forced alignment model. "
+                "Supports 1100+ languages with good accuracy for speech and singing."
             ),
-            languages=["en", "ja", "zh"] if mfa_available else [],
-        ),
-        AlignmentMethodInfo(
-            name="blind",
-            display_name="Energy-based Detection",
-            available=True,  # Always available as fallback
-            description=(
-                "Simple energy-based phoneme boundary detection. "
-                "No ML required, works offline, but less accurate."
-            ),
-            languages=[],  # Language-agnostic
+            languages=[],  # MMS_FA supports 1100+ languages, too many to list
         ),
     ]
 
     # Determine recommended method
-    if sofa_available:
-        recommended = "sofa"
-    elif mfa_available:
-        recommended = "fa"
-    else:
-        recommended = "blind"
+    recommended = "sofa" if sofa_available else "fa"
 
     return AlignmentMethodsResponse(
         methods=methods,
