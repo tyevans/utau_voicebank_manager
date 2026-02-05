@@ -886,8 +886,7 @@ export class MelodyPlayer {
     const normalizationGains = new Map<string, number>();
     if (useLoudnessNormalization) {
       for (const [alias, data] of sampleMap) {
-        // Use vowel-region analysis that skips the consonant transient for RMS
-        // but still measures peak across the full playback region
+        // Use vowel-region analysis that skips the consonant transient
         const analysis = analyzeLoudnessForNormalization(data.audioBuffer, {
           offset: data.otoEntry.offset,
           consonant: data.otoEntry.consonant,
@@ -895,6 +894,13 @@ export class MelodyPlayer {
         });
         const gain = calculateNormalizationGain(analysis, normalizationOptions);
         normalizationGains.set(alias, gain);
+        const gainDb = 20 * Math.log10(gain);
+        console.log(
+          `[NormAnalysis] ${alias}: rms=${analysis.rmsDb.toFixed(1)}dB peak=${analysis.peakDb.toFixed(1)}dB ` +
+          `crest=${analysis.crestFactor.toFixed(1)} → gain=${gainDb.toFixed(1)}dB | ` +
+          `oto: off=${data.otoEntry.offset} cons=${data.otoEntry.consonant} cut=${data.otoEntry.cutoff} ` +
+          `bufDur=${(data.audioBuffer.duration * 1000).toFixed(0)}ms`
+        );
       }
     }
 

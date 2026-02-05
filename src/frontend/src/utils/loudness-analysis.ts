@@ -142,14 +142,19 @@ export interface NormalizationOptions {
   targetRmsDb?: number;
 
   /**
-   * Maximum allowed gain in dB (default: 12dB).
+   * Maximum allowed gain in dB (default: 24dB).
    * Prevents excessive amplification of quiet signals which could
-   * amplify noise or cause distortion.
+   * amplify noise or cause distortion. The peak limiter provides
+   * additional safety by clamping based on peak levels.
+   *
+   * 24dB allows normalization to handle voicebanks recorded at
+   * low levels (common in UTAU). The peak limiter will engage
+   * before clipping occurs regardless of this setting.
    */
   maxGainDb?: number;
 
   /**
-   * Minimum allowed gain in dB (default: -12dB).
+   * Minimum allowed gain in dB (default: -24dB).
    * Prevents excessive attenuation.
    */
   minGainDb?: number;
@@ -519,8 +524,8 @@ export function calculateNormalizationGain(
 ): number {
   const {
     targetRmsDb = DEFAULT_TARGET_RMS_DB,
-    maxGainDb = 12,
-    minGainDb = -12,
+    maxGainDb = 24,
+    minGainDb = -24,
     maxPeakDb = -0.3,
     softKneeDb = 6,
   } = options ?? {};
