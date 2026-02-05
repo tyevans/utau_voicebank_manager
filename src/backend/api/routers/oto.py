@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src.backend.domain.oto_entry import OtoEntry
+from src.backend.domain.pagination import PaginatedResponse
 from src.backend.repositories.oto_repository import OtoRepository
 from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.services.oto_service import (
@@ -159,28 +160,41 @@ def get_oto_service(
 # Route handlers
 
 
-@router.get("/{voicebank_id}/oto", response_model=list[OtoEntryResponse])
+@router.get("/{voicebank_id}/oto", response_model=PaginatedResponse[OtoEntryResponse])
 async def get_oto_entries(
     voicebank_id: str,
     service: Annotated[OtoService, Depends(get_oto_service)],
-) -> list[OtoEntryResponse]:
-    """Get all oto entries for a voicebank.
+    limit: Annotated[
+        int,
+        Query(ge=1, le=500, description="Maximum items to return"),
+    ] = 100,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of items to skip"),
+    ] = 0,
+) -> PaginatedResponse[OtoEntryResponse]:
+    """Get oto entries for a voicebank with pagination.
 
-    Returns all entries defined in the voicebank's oto.ini file.
+    Returns entries defined in the voicebank's oto.ini file.
     Returns empty list if oto.ini doesn't exist yet.
 
     Args:
         voicebank_id: Voicebank identifier
+        limit: Maximum number of items to return (1-500, default 100)
+        offset: Number of items to skip (default 0)
 
     Returns:
-        List of oto entries
+        Paginated list of oto entries
 
     Raises:
         HTTPException 404: If voicebank not found
     """
     try:
         entries = await service.get_entries(voicebank_id)
-        return [OtoEntryResponse.from_entry(e) for e in entries]
+        all_items = [OtoEntryResponse.from_entry(e) for e in entries]
+        total = len(all_items)
+        items = all_items[offset : offset + limit]
+        return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
     except OtoNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -188,13 +202,24 @@ async def get_oto_entries(
         ) from e
 
 
-@router.get("/{voicebank_id}/oto/{filename}", response_model=list[OtoEntryResponse])
+@router.get(
+    "/{voicebank_id}/oto/{filename}",
+    response_model=PaginatedResponse[OtoEntryResponse],
+)
 async def get_oto_entries_for_file(
     voicebank_id: str,
     filename: str,
     service: Annotated[OtoService, Depends(get_oto_service)],
-) -> list[OtoEntryResponse]:
-    """Get all oto entries for a specific WAV file.
+    limit: Annotated[
+        int,
+        Query(ge=1, le=500, description="Maximum items to return"),
+    ] = 100,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of items to skip"),
+    ] = 0,
+) -> PaginatedResponse[OtoEntryResponse]:
+    """Get oto entries for a specific WAV file with pagination.
 
     A single WAV file can have multiple oto entries with different aliases
     (e.g., for VCV voicebanks where one file contains multiple phonemes).
@@ -202,9 +227,11 @@ async def get_oto_entries_for_file(
     Args:
         voicebank_id: Voicebank identifier
         filename: WAV filename (URL-encoded)
+        limit: Maximum number of items to return (1-500, default 100)
+        offset: Number of items to skip (default 0)
 
     Returns:
-        List of oto entries for the file
+        Paginated list of oto entries for the file
 
     Raises:
         HTTPException 404: If voicebank not found
@@ -214,7 +241,10 @@ async def get_oto_entries_for_file(
 
     try:
         entries = await service.get_entries_for_file(voicebank_id, decoded_filename)
-        return [OtoEntryResponse.from_entry(e) for e in entries]
+        all_items = [OtoEntryResponse.from_entry(e) for e in entries]
+        total = len(all_items)
+        items = all_items[offset : offset + limit]
+        return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
     except OtoNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

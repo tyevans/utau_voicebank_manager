@@ -24,6 +24,18 @@
  * ```
  */
 
+// Polyfill AudioParam.cancelAndHoldAtTime for Firefox.
+// Firefox doesn't implement this Web Audio API method. The polyfill
+// falls back to cancelScheduledValues + setValueAtTime, which is
+// close enough for our envelope and LFO scheduling use cases.
+if (typeof AudioParam !== 'undefined' && !AudioParam.prototype.cancelAndHoldAtTime) {
+  AudioParam.prototype.cancelAndHoldAtTime = function (time: number): AudioParam {
+    this.cancelScheduledValues(time);
+    this.setValueAtTime(this.value, time);
+    return this;
+  };
+}
+
 let _sharedContext: AudioContext | null = null;
 
 /**

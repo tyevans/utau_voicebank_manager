@@ -37,6 +37,7 @@ import type { BatchSampleResult } from './uvm-batch-review.js';
 import type { EntryCreateDetail } from './uvm-entry-list.js';
 import type { OtoEntry } from '../services/types.js';
 import type { PrecisionDrawerChangeDetail } from './uvm-precision-drawer.js';
+import type { AlignmentMethod } from './uvm-alignment-settings.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
 
 /**
@@ -427,6 +428,16 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   @state()
   private _batchResults: BatchSampleResult[] = [];
 
+  // Alignment settings
+  @state()
+  private _alignmentTightness = 0.5;
+
+  @state()
+  private _alignmentMethodOverride: 'sofa' | 'fa' | 'blind' | null = null;
+
+  @state()
+  private _availableAlignmentMethods: AlignmentMethod[] = [];
+
   @state()
   private _undoStack: OtoEntry[] = [];
 
@@ -448,6 +459,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Add keyboard listener for shortcuts
     this._boundKeyHandler = this._onKeyDown.bind(this);
     document.addEventListener('keydown', this._boundKeyHandler);
+    this._loadAlignmentConfig();
   }
 
   /**
@@ -1027,6 +1039,52 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
+   * Load alignment configuration and available methods from the backend.
+   */
+  private async _loadAlignmentConfig(): Promise<void> {
+    try {
+      const [configResult, methodsResult] = await Promise.all([
+        api.getAlignmentConfig(),
+        api.getAlignmentMethods(),
+      ]);
+
+      this._alignmentTightness = configResult.tightness;
+      this._alignmentMethodOverride = configResult.method_override as typeof this._alignmentMethodOverride;
+
+      // Map backend methods to frontend AlignmentMethod shape
+      this._availableAlignmentMethods = methodsResult.methods.map(m => ({
+        name: m.name as 'sofa' | 'fa' | 'blind',
+        available: m.available,
+        displayName: m.display_name,
+        unavailableReason: m.available ? undefined : (m.description || 'Not available'),
+      }));
+    } catch (error) {
+      console.warn('Failed to load alignment config:', error);
+      // Use defaults - not critical
+    }
+  }
+
+  /**
+   * Handle alignment settings changes from the context bar.
+   * Updates local state immediately and persists to backend in the background.
+   */
+  private async _onAlignmentChange(e: CustomEvent<{tightness: number; methodOverride: 'sofa' | 'fa' | 'blind' | null}>): Promise<void> {
+    const { tightness, methodOverride } = e.detail;
+    this._alignmentTightness = tightness;
+    this._alignmentMethodOverride = methodOverride;
+
+    // Persist to backend (fire-and-forget, don't block UI)
+    try {
+      await api.updateAlignmentConfig({
+        tightness,
+        method_override: methodOverride === 'blind' ? null : methodOverride,
+      });
+    } catch (error) {
+      console.warn('Failed to persist alignment config:', error);
+    }
+  }
+
+  /**
    * Auto-detect oto parameters using ML phoneme detection.
    */
   private async _autoDetect(): Promise<void> {
@@ -1039,7 +1097,11 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       const suggestion = await api.suggestOto(
         this._currentVoicebankId,
         this._currentFilename,
-        { alias: this._currentEntry?.alias }
+        {
+          alias: this._currentEntry?.alias,
+          tightness: this._alignmentTightness,
+          methodOverride: this._alignmentMethodOverride === 'blind' ? null : this._alignmentMethodOverride,
+        }
       );
 
       // Push current state to undo stack before applying detection
@@ -1261,18 +1323,21 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
 
     return html`
-      <div class="entry-tabs">
+      <div class="entry-tabs" role="tablist" aria-label="Oto aliases">
         ${this._otoEntries.map(
           (entry, index) => html`
             <button
               class="entry-tab ${index === this._selectedEntryIndex ? 'active' : ''}"
+              role="tab"
+              aria-selected=${index === this._selectedEntryIndex}
+              aria-label="${entry.alias || `Entry ${index + 1}`}"
               @click=${() => this._selectEntry(index)}
             >
               ${entry.alias || `Entry ${index + 1}`}
             </button>
           `
         )}
-        <button class="entry-tab add-tab" @click=${this._addEntry}>
+        <button class="entry-tab add-tab" aria-label="Add new alias" @click=${this._addEntry}>
           <sl-icon name="plus"></sl-icon>
         </button>
       </div>
@@ -1348,7 +1413,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Show detecting state
     if (this._isDetecting) {
       return html`
-        <div class="status-indicator detecting">
+        <div class="status-indicator detecting" role="status" aria-label="Detecting parameters">
           <sl-spinner></sl-spinner>
           <span>Detecting parameters...</span>
         </div>
@@ -1358,7 +1423,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Show loading entries state
     if (this._loadingEntries) {
       return html`
-        <div class="status-indicator loading">
+        <div class="status-indicator loading" role="status" aria-label="Loading entries">
           <sl-spinner></sl-spinner>
           <span>Loading entries...</span>
         </div>
@@ -1368,7 +1433,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     // Show save success with confidence
     if (this._saveSuccess) {
       return html`
-        <div class="status-indicator success">
+        <div class="status-indicator success" role="status" aria-label="Entry saved successfully">
           <sl-icon name="check-circle"></sl-icon>
           <span>Saved</span>
           ${this._lastConfidence !== null
@@ -1425,7 +1490,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     const progress = this._getProgressCounts();
 
     return html`
-      <div class="editor-layout">
+      <div class="editor-layout" role="main" aria-label="Oto parameter editor">
         <uvm-context-bar
           .voicebankName=${this._getVoicebankName()}
           .sampleName=${this._currentFilename || ''}
@@ -1436,12 +1501,19 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
           .autoAdvance=${this._autoAdvance}
           .progressConfigured=${progress.configured}
           .progressTotal=${progress.total}
+          .detecting=${this._isDetecting}
+          .detectDisabled=${!this._currentFilename}
+          .alignmentTightness=${this._alignmentTightness}
+          .alignmentMethodOverride=${this._alignmentMethodOverride}
+          .availableAlignmentMethods=${this._availableAlignmentMethods}
           @uvm-context-bar:browse=${this._openBrowser}
           @uvm-context-bar:undo=${this._undo}
           @uvm-context-bar:redo=${this._redo}
           @uvm-context-bar:save=${this._saveEntry}
           @uvm-context-bar:auto-advance-toggle=${this._onAutoAdvanceToggle}
           @uvm-context-bar:metadata=${this._openMetadata}
+          @uvm-context-bar:detect=${this._autoDetect}
+          @uvm-context-bar:alignment-change=${this._onAlignmentChange}
         ></uvm-context-bar>
 
         ${this._renderEntryTabs()}

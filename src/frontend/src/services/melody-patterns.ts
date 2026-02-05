@@ -43,21 +43,31 @@ function createSequentialNotes(
 }
 
 /**
- * Simple ascending scale pattern.
+ * Diatonic scale pattern - ascending then descending.
  *
- * 5 notes: do-re-mi-fa-sol (0, 2, 4, 5, 7 semitones)
- * Tests basic pitch range and accuracy.
+ * Full major scale up and down: do-re-mi-fa-sol-la-ti-do-ti-la-sol-fa-mi-re-do
+ * Tests pitch range, accuracy, and smooth transitions across the full octave.
  */
 const scalePattern: MelodyPattern = {
   id: 'scale',
-  name: 'Simple Scale',
-  description: 'Tests basic pitch range with ascending do-re-mi-fa-sol',
+  name: 'Diatonic Scale',
+  description: 'Full major scale up then down across one octave',
   notes: createSequentialNotes([
-    { pitch: 0, duration: 0.4 },  // do
-    { pitch: 2, duration: 0.4 },  // re
-    { pitch: 4, duration: 0.4 },  // mi
-    { pitch: 5, duration: 0.4 },  // fa
-    { pitch: 7, duration: 0.4 },  // sol
+    { pitch: 0, duration: 0.3 },   // do
+    { pitch: 2, duration: 0.3 },   // re
+    { pitch: 4, duration: 0.3 },   // mi
+    { pitch: 5, duration: 0.3 },   // fa
+    { pitch: 7, duration: 0.3 },   // sol
+    { pitch: 9, duration: 0.3 },   // la
+    { pitch: 11, duration: 0.3 },  // ti
+    { pitch: 12, duration: 0.4 },  // do (top, slightly longer)
+    { pitch: 11, duration: 0.3 },  // ti
+    { pitch: 9, duration: 0.3 },   // la
+    { pitch: 7, duration: 0.3 },   // sol
+    { pitch: 5, duration: 0.3 },   // fa
+    { pitch: 4, duration: 0.3 },   // mi
+    { pitch: 2, duration: 0.3 },   // re
+    { pitch: 0, duration: 0.4 },   // do (bottom, slightly longer)
   ]),
 };
 

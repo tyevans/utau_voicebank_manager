@@ -6,6 +6,20 @@
  */
 
 /**
+ * Generic paginated response wrapper returned by list endpoints.
+ */
+export interface PaginatedResponse<T> {
+  /** Page of results */
+  items: T[];
+  /** Total number of items available (before pagination) */
+  total: number;
+  /** Maximum items per page */
+  limit: number;
+  /** Number of items skipped */
+  offset: number;
+}
+
+/**
  * Lightweight voicebank summary for list views.
  */
 export interface VoicebankSummary {

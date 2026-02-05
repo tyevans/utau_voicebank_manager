@@ -7,7 +7,7 @@ from pathlib import Path
 from src.backend.domain.batch_oto import BatchOtoResult
 from src.backend.domain.oto_entry import OtoEntry
 from src.backend.ml.oto_suggester import OtoSuggester
-from src.backend.repositories.oto_repository import OtoRepository
+from src.backend.repositories.interfaces import OtoRepositoryInterface
 from src.backend.services.voicebank_service import (
     VoicebankNotFoundError,
     VoicebankService,
@@ -15,8 +15,7 @@ from src.backend.services.voicebank_service import (
 
 logger = logging.getLogger(__name__)
 
-# Confidence threshold below which a suggestion is considered low-confidence
-# (likely used default values due to detection failure)
+# Confidence threshold below which a suggestion is flagged for manual review
 LOW_CONFIDENCE_THRESHOLD = 0.3
 
 
@@ -32,14 +31,14 @@ class BatchOtoService:
         self,
         voicebank_service: VoicebankService,
         oto_suggester: OtoSuggester,
-        oto_repository: OtoRepository,
+        oto_repository: OtoRepositoryInterface,
     ) -> None:
         """Initialize the batch oto service.
 
         Args:
             voicebank_service: Service for voicebank operations
             oto_suggester: ML-based oto parameter suggester
-            oto_repository: Repository for oto entry persistence
+            oto_repository: OtoRepositoryInterface for oto entry persistence
         """
         self._voicebank_service = voicebank_service
         self._oto_suggester = oto_suggester
@@ -134,6 +133,10 @@ class BatchOtoService:
             for (filename, _), suggestion in zip(
                 samples_to_process, suggestions, strict=True
             ):
+                if suggestion is None:
+                    failed_files.append(filename)
+                    continue
+
                 # Convert OtoSuggestion to OtoEntry
                 entry = OtoEntry(
                     filename=suggestion.filename,
@@ -149,7 +152,7 @@ class BatchOtoService:
                 confidence_sum += suggestion.confidence
                 processed += 1
 
-                # Track low-confidence suggestions (likely used defaults)
+                # Track low-confidence suggestions
                 if suggestion.confidence < LOW_CONFIDENCE_THRESHOLD:
                     low_confidence_files.append(filename)
                     logger.debug(

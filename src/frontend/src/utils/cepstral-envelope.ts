@@ -23,6 +23,8 @@
  * This module runs in a Web Worker (no DOM/Web Audio API dependencies).
  */
 
+import { fftInterleaved as fft } from './fft.js';
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -45,92 +47,6 @@ export interface CepstralOptions {
    * Default: 0.0
    */
   formantScale?: number;
-}
-
-// ---------------------------------------------------------------------------
-// FFT Implementation (Cooley-Tukey radix-2 DIT, iterative, in-place)
-// ---------------------------------------------------------------------------
-
-/**
- * Bit-reversal permutation for radix-2 FFT.
- *
- * Reorders the interleaved complex array so that the iterative butterfly
- * stages produce the correct output without recursion.
- *
- * @param data - Interleaved [real, imag, real, imag, ...] array
- * @param n - Number of complex elements (data.length / 2)
- */
-function bitReversalPermutation(data: Float64Array, n: number): void {
-  let j = 0;
-  for (let i = 0; i < n - 1; i++) {
-    if (i < j) {
-      // Swap complex elements at positions i and j
-      const ri = i * 2;
-      const rj = j * 2;
-      const tmpReal = data[ri];
-      const tmpImag = data[ri + 1];
-      data[ri] = data[rj];
-      data[ri + 1] = data[rj + 1];
-      data[rj] = tmpReal;
-      data[rj + 1] = tmpImag;
-    }
-    let m = n >> 1;
-    while (m >= 1 && j >= m) {
-      j -= m;
-      m >>= 1;
-    }
-    j += m;
-  }
-}
-
-/**
- * In-place iterative radix-2 Cooley-Tukey FFT.
- *
- * Operates on interleaved complex data: [re0, im0, re1, im1, ...].
- * The array length must be 2*N where N is a power of 2.
- *
- * @param data - Interleaved complex array (modified in place)
- * @param inverse - If true, compute the inverse FFT (with 1/N scaling)
- */
-function fft(data: Float64Array, inverse: boolean = false): void {
-  const n = data.length / 2;
-
-  // Bit-reversal permutation
-  bitReversalPermutation(data, n);
-
-  // Butterfly stages
-  const sign = inverse ? 1 : -1;
-
-  for (let size = 2; size <= n; size *= 2) {
-    const halfSize = size / 2;
-    const angleStep = (sign * 2 * Math.PI) / size;
-
-    for (let i = 0; i < n; i += size) {
-      for (let j = 0; j < halfSize; j++) {
-        const angle = angleStep * j;
-        const twiddleReal = Math.cos(angle);
-        const twiddleImag = Math.sin(angle);
-
-        const evenIdx = (i + j) * 2;
-        const oddIdx = (i + j + halfSize) * 2;
-
-        const oddReal = data[oddIdx] * twiddleReal - data[oddIdx + 1] * twiddleImag;
-        const oddImag = data[oddIdx] * twiddleImag + data[oddIdx + 1] * twiddleReal;
-
-        data[oddIdx] = data[evenIdx] - oddReal;
-        data[oddIdx + 1] = data[evenIdx + 1] - oddImag;
-        data[evenIdx] += oddReal;
-        data[evenIdx + 1] += oddImag;
-      }
-    }
-  }
-
-  // Scale by 1/N for inverse transform
-  if (inverse) {
-    for (let i = 0; i < data.length; i++) {
-      data[i] /= n;
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

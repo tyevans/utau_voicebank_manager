@@ -23,6 +23,8 @@
  * ```
  */
 
+import { fftSplit as fft } from '../utils/fft.js';
+
 export interface FFTWorkerInput {
   channelData: Float32Array;
   sampleRate: number;
@@ -38,69 +40,6 @@ export interface FFTWorkerOutput {
 
 export interface FFTWorkerError {
   error: string;
-}
-
-/**
- * Simple in-place Cooley-Tukey FFT implementation.
- * Operates on real and imaginary arrays of power-of-2 length.
- */
-function fft(real: Float32Array, imag: Float32Array): void {
-  const n = real.length;
-
-  if (n <= 1) return;
-
-  // Bit-reversal permutation
-  let j = 0;
-  for (let i = 0; i < n - 1; i++) {
-    if (i < j) {
-      // Swap real[i] and real[j]
-      let temp = real[i];
-      real[i] = real[j];
-      real[j] = temp;
-      // Swap imag[i] and imag[j]
-      temp = imag[i];
-      imag[i] = imag[j];
-      imag[j] = temp;
-    }
-    let k = n >> 1;
-    while (k <= j) {
-      j -= k;
-      k >>= 1;
-    }
-    j += k;
-  }
-
-  // Cooley-Tukey iterative FFT
-  for (let len = 2; len <= n; len <<= 1) {
-    const halfLen = len >> 1;
-    const angle = (-2 * Math.PI) / len;
-    const wReal = Math.cos(angle);
-    const wImag = Math.sin(angle);
-
-    for (let i = 0; i < n; i += len) {
-      let curReal = 1;
-      let curImag = 0;
-
-      for (let k = 0; k < halfLen; k++) {
-        const evenIdx = i + k;
-        const oddIdx = i + k + halfLen;
-
-        const tReal = curReal * real[oddIdx] - curImag * imag[oddIdx];
-        const tImag = curReal * imag[oddIdx] + curImag * real[oddIdx];
-
-        real[oddIdx] = real[evenIdx] - tReal;
-        imag[oddIdx] = imag[evenIdx] - tImag;
-        real[evenIdx] = real[evenIdx] + tReal;
-        imag[evenIdx] = imag[evenIdx] + tImag;
-
-        // Update twiddle factor
-        const newReal = curReal * wReal - curImag * wImag;
-        const newImag = curReal * wImag + curImag * wReal;
-        curReal = newReal;
-        curImag = newImag;
-      }
-    }
-  }
 }
 
 /**

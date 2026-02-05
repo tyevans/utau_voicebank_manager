@@ -21,6 +21,8 @@
  * ```
  */
 
+import { fftSplit as fft } from './fft.js';
+
 /**
  * Options for spectral distance calculation.
  */
@@ -123,66 +125,6 @@ const DEFAULT_OPTIONS: Required<SpectralDistanceOptions> = {
   magnitudeWeight: 0.4,
   energyWeight: 0.2,
 };
-
-/**
- * Simple in-place FFT implementation (Cooley-Tukey radix-2 DIT).
- *
- * This is a minimal FFT for browser environments without external dependencies.
- * For production use with large datasets, consider using a Web Audio AnalyserNode
- * or a dedicated FFT library.
- *
- * @param real - Real part of input (modified in place)
- * @param imag - Imaginary part of input (modified in place)
- */
-function fft(real: Float32Array, imag: Float32Array): void {
-  const n = real.length;
-
-  // Bit-reversal permutation
-  let j = 0;
-  for (let i = 0; i < n - 1; i++) {
-    if (i < j) {
-      // Swap real[i] and real[j]
-      let temp = real[i];
-      real[i] = real[j];
-      real[j] = temp;
-      // Swap imag[i] and imag[j]
-      temp = imag[i];
-      imag[i] = imag[j];
-      imag[j] = temp;
-    }
-    let k = n >> 1;
-    while (k <= j) {
-      j -= k;
-      k >>= 1;
-    }
-    j += k;
-  }
-
-  // Cooley-Tukey iterative FFT
-  for (let step = 1; step < n; step <<= 1) {
-    const halfStep = step;
-    const tableStep = (Math.PI / step);
-
-    for (let group = 0; group < n; group += step << 1) {
-      for (let pair = 0; pair < halfStep; pair++) {
-        const angle = pair * tableStep;
-        const wr = Math.cos(angle);
-        const wi = -Math.sin(angle);
-
-        const i = group + pair;
-        const j2 = i + halfStep;
-
-        const tr = wr * real[j2] - wi * imag[j2];
-        const ti = wr * imag[j2] + wi * real[j2];
-
-        real[j2] = real[i] - tr;
-        imag[j2] = imag[i] - ti;
-        real[i] += tr;
-        imag[i] += ti;
-      }
-    }
-  }
-}
 
 /**
  * Compute magnitude spectrum from time-domain samples.

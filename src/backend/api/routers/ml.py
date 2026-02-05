@@ -307,6 +307,16 @@ async def suggest_oto(
         "ja",
         description="Language code for SOFA alignment (ja, en, zh, ko, fr)",
     ),
+    tightness: float | None = Query(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Alignment tightness (0.0=loose, 1.0=tight). If not provided, uses global config.",
+    ),
+    method_override: str | None = Query(
+        None,
+        description="Override alignment method: 'sofa' or 'fa'. If not provided, uses global config.",
+    ),
 ) -> OtoSuggestion:
     """Get ML-suggested oto parameters for a voicebank sample.
 
@@ -350,8 +360,21 @@ async def suggest_oto(
             )
 
     try:
-        # Use SOFA-enabled suggester if preferred and available
-        if prefer_sofa and is_sofa_available():
+        # Determine which method to use:
+        # 1. Explicit method_override param takes precedence
+        # 2. Then global _alignment_config.method_override
+        # 3. Then prefer_sofa param (legacy)
+        # 4. Then auto-detect
+        effective_method = method_override or _alignment_config.method_override
+        if effective_method == "sofa" and is_sofa_available():
+            suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
+            suggestion = await suggester.suggest_oto(
+                audio_path, alias, sofa_language=sofa_language
+            )
+        elif effective_method == "fa":
+            suggester = OtoSuggester(use_forced_alignment=True, use_sofa=False)
+            suggestion = await suggester.suggest_oto(audio_path, alias)
+        elif prefer_sofa and is_sofa_available():
             suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
             suggestion = await suggester.suggest_oto(
                 audio_path, alias, sofa_language=sofa_language
@@ -528,11 +551,39 @@ async def batch_generate_oto(
         HTTPException 503: If ML model not available
     """
     try:
-        result = await service.generate_oto_for_voicebank(
-            voicebank_id=request.voicebank_id,
-            overwrite_existing=request.overwrite_existing,
-            sofa_language=request.sofa_language,
-        )
+        # If request includes alignment overrides, create a custom service
+        if request.tightness is not None or request.method_override is not None:
+            effective_method = request.method_override or _alignment_config.method_override
+            if effective_method == "fa":
+                use_forced_alignment = True
+                use_sofa = False
+            elif effective_method == "sofa":
+                use_forced_alignment = True
+                use_sofa = True
+            else:
+                use_forced_alignment = True
+                use_sofa = is_sofa_available()
+
+            custom_suggester = OtoSuggester(
+                use_forced_alignment=use_forced_alignment, use_sofa=use_sofa
+            )
+            # Create a new service with the custom suggester
+            voicebank_repo = VoicebankRepository(VOICEBANKS_BASE_PATH)
+            oto_repo = OtoRepository(voicebank_repo)
+            vb_service = VoicebankService(voicebank_repo)
+            custom_service = BatchOtoService(vb_service, custom_suggester, oto_repo)
+
+            result = await custom_service.generate_oto_for_voicebank(
+                voicebank_id=request.voicebank_id,
+                overwrite_existing=request.overwrite_existing,
+                sofa_language=request.sofa_language,
+            )
+        else:
+            result = await service.generate_oto_for_voicebank(
+                voicebank_id=request.voicebank_id,
+                overwrite_existing=request.overwrite_existing,
+                sofa_language=request.sofa_language,
+            )
 
         logger.info(
             f"Batch oto generation for voicebank '{request.voicebank_id}': "

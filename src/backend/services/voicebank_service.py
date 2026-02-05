@@ -7,7 +7,7 @@ from pathlib import Path
 from slugify import slugify
 
 from src.backend.domain.voicebank import Voicebank, VoicebankSummary
-from src.backend.repositories.voicebank_repository import VoicebankRepository
+from src.backend.repositories.interfaces import VoicebankRepositoryInterface
 
 
 class VoicebankValidationError(Exception):
@@ -28,11 +28,11 @@ class VoicebankService:
     Handles validation, ZIP extraction, and delegates storage to repository.
     """
 
-    def __init__(self, repository: VoicebankRepository) -> None:
+    def __init__(self, repository: VoicebankRepositoryInterface) -> None:
         """Initialize service with repository.
 
         Args:
-            repository: VoicebankRepository for data access
+            repository: VoicebankRepositoryInterface for data access
         """
         self._repository = repository
 

@@ -5,6 +5,11 @@ import { customElement, property } from 'lit/decorators.js';
 import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
+import '@shoelace-style/shoelace/dist/components/button/button.js';
+import '@shoelace-style/shoelace/dist/components/dropdown/dropdown.js';
+
+// Import child components
+import './uvm-alignment-settings.js';
 
 /**
  * Context bar showing current voicebank/sample with undo/redo/save actions.
@@ -22,6 +27,9 @@ import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
  * @fires uvm-context-bar:redo - Fired when user clicks redo or presses Cmd/Ctrl+Shift+Z
  * @fires uvm-context-bar:save - Fired when user clicks save or presses Cmd/Ctrl+S
  * @fires uvm-context-bar:auto-advance-toggle - Fired when user toggles auto-advance
+ * @fires uvm-context-bar:metadata - Fired when user clicks the metadata/info button
+ * @fires uvm-context-bar:detect - Fired when user clicks the Detect button
+ * @fires uvm-context-bar:alignment-change - Re-dispatched from inner alignment settings. Detail: { tightness: number, methodOverride: string | null }
  *
  * @example
  * ```html
@@ -218,6 +226,34 @@ export class UvmContextBar extends LitElement {
       background-color: var(--uvm-border, #e5e7eb);
       margin: 0 4px;
     }
+
+    /* Detect split button */
+    .detect-split-button {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .detect-split-button sl-button::part(base) {
+      font-size: var(--uvm-text-sm, 13px);
+    }
+
+    .detect-split-button .detect-caret::part(base) {
+      padding-left: 4px;
+      padding-right: 4px;
+      border-left: 1px solid var(--sl-color-neutral-300);
+      margin-left: -1px;
+    }
+
+    .detect-spinner {
+      font-size: 14px;
+      --indicator-color: currentColor;
+    }
+
+    /* Alignment dropdown content */
+    .alignment-dropdown-content {
+      padding: 4px;
+      min-width: 280px;
+    }
   `;
 
   /**
@@ -273,6 +309,42 @@ export class UvmContextBar extends LitElement {
    */
   @property({ type: Number })
   progressTotal = 0;
+
+  /**
+   * Whether the detect button is disabled (e.g., no sample loaded).
+   */
+  @property({ type: Boolean })
+  detectDisabled = false;
+
+  /**
+   * Whether phoneme detection is currently in progress.
+   * When true, shows a spinner instead of the CPU icon.
+   */
+  @property({ type: Boolean })
+  detecting = false;
+
+  /**
+   * Current alignment tightness value (0.0 to 1.0).
+   */
+  @property({ type: Number })
+  alignmentTightness = 0.5;
+
+  /**
+   * Alignment method override. When null, uses automatic selection.
+   */
+  @property({ attribute: false })
+  alignmentMethodOverride: 'sofa' | 'fa' | 'blind' | null = null;
+
+  /**
+   * Available alignment methods with their status.
+   */
+  @property({ attribute: false })
+  availableAlignmentMethods: Array<{
+    name: 'sofa' | 'fa' | 'blind';
+    available: boolean;
+    displayName: string;
+    unavailableReason?: string;
+  }> = [];
 
   /**
    * Bound keyboard handler for cleanup.
@@ -419,6 +491,44 @@ export class UvmContextBar extends LitElement {
   }
 
   /**
+   * Dispatch metadata editor open event.
+   */
+  private _dispatchMetadata(): void {
+    this.dispatchEvent(
+      new CustomEvent('uvm-context-bar:metadata', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  /**
+   * Dispatch detect event to trigger phoneme auto-detection.
+   */
+  private _dispatchDetect(): void {
+    if (this.detectDisabled || this.detecting) return;
+    this.dispatchEvent(
+      new CustomEvent('uvm-context-bar:detect', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  /**
+   * Re-dispatch alignment-change event from the inner alignment settings component.
+   */
+  private _onAlignmentChange(e: CustomEvent): void {
+    this.dispatchEvent(
+      new CustomEvent('uvm-context-bar:alignment-change', {
+        detail: e.detail,
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  /**
    * Render the breadcrumb section.
    */
   private _renderBreadcrumb() {
@@ -481,7 +591,7 @@ export class UvmContextBar extends LitElement {
           label="Save (Cmd+S)"
           @click=${this._dispatchSave}
         ></sl-icon-button>
-        ${this.hasUnsavedChanges ? html`<span class="unsaved-indicator"></span>` : null}
+        ${this.hasUnsavedChanges ? html`<span class="unsaved-indicator" role="status" aria-label="Unsaved changes"></span>` : null}
       </div>
     `;
   }
@@ -495,12 +605,53 @@ export class UvmContextBar extends LitElement {
     const percent = Math.round((this.progressConfigured / this.progressTotal) * 100);
 
     return html`
-      <div class="progress-indicator">
-        <div class="progress-bar">
+      <div
+        class="progress-indicator"
+        role="status"
+        aria-label="${this.progressConfigured} of ${this.progressTotal} samples configured"
+      >
+        <div class="progress-bar" role="progressbar" aria-valuenow=${this.progressConfigured} aria-valuemin="0" aria-valuemax=${this.progressTotal}>
           <div class="progress-bar-fill" style="width: ${percent}%"></div>
         </div>
         <span class="progress-text">${this.progressConfigured}/${this.progressTotal}</span>
       </div>
+    `;
+  }
+
+  /**
+   * Render the detect split button with alignment settings dropdown.
+   */
+  private _renderDetectButton() {
+    return html`
+      <sl-dropdown>
+        <div slot="trigger" class="detect-split-button">
+          <sl-button
+            size="small"
+            variant="default"
+            ?disabled=${this.detectDisabled || this.detecting}
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              this._dispatchDetect();
+            }}
+          >
+            ${this.detecting
+              ? html`<sl-spinner class="detect-spinner" slot="prefix"></sl-spinner>`
+              : html`<sl-icon slot="prefix" name="cpu"></sl-icon>`}
+            Detect
+          </sl-button>
+          <sl-button size="small" variant="default" class="detect-caret">
+            <sl-icon name="chevron-down" style="font-size: 12px;"></sl-icon>
+          </sl-button>
+        </div>
+        <div class="alignment-dropdown-content">
+          <uvm-alignment-settings
+            .tightness=${this.alignmentTightness}
+            .methodOverride=${this.alignmentMethodOverride}
+            .availableMethods=${this.availableAlignmentMethods}
+            @alignment-change=${this._onAlignmentChange}
+          ></uvm-alignment-settings>
+        </div>
+      </sl-dropdown>
     `;
   }
 
@@ -513,6 +664,17 @@ export class UvmContextBar extends LitElement {
           ${this._renderProgressIndicator()}
 
           ${this.progressTotal > 0 ? html`<div class="action-divider"></div>` : null}
+
+          ${this._renderDetectButton()}
+
+          <div class="action-divider"></div>
+
+          <sl-icon-button
+            class="action-button"
+            name="info-circle"
+            label="Voicebank metadata"
+            @click=${this._dispatchMetadata}
+          ></sl-icon-button>
 
           <sl-icon-button
             class="action-button auto-advance-btn ${this.autoAdvance ? 'active' : ''}"

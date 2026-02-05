@@ -92,6 +92,45 @@ export interface PitchDetectionResult {
 }
 
 /**
+ * Standard pitch reference: C4 (middle C) in Hz.
+ *
+ * Used as the default reference pitch for pitch matching.
+ * When pitch matching is enabled, each sample's detected fundamental
+ * frequency is corrected so that pitch=0 plays at C4.
+ */
+export const C4_FREQUENCY = 261.63;
+
+/**
+ * Calculate the pitch correction needed to transpose a sample from its
+ * detected frequency to a reference pitch.
+ *
+ * Returns a value in semitones that, when added to the note's pitch,
+ * makes the sample sound at the reference frequency.
+ *
+ * Formula: correction = 12 * log₂(referencePitch / detectedFrequency)
+ *
+ * @param detectedFrequency - The sample's detected fundamental frequency in Hz
+ * @param referenceFrequency - Target frequency in Hz (default: C4 = 261.63Hz)
+ * @returns Correction in semitones (negative = sample is sharp, positive = sample is flat)
+ *
+ * @example
+ * ```typescript
+ * // Sample recorded at A4 (440Hz), want it to play at C4 (261.63Hz)
+ * const correction = calculatePitchCorrection(440);
+ * // Returns ~-9.0 semitones (pitch down from A4 to C4)
+ *
+ * // Apply to note: note.pitch + correction
+ * ```
+ */
+export function calculatePitchCorrection(
+  detectedFrequency: number,
+  referenceFrequency: number = C4_FREQUENCY
+): number {
+  if (detectedFrequency <= 0 || referenceFrequency <= 0) return 0;
+  return 12 * Math.log2(referenceFrequency / detectedFrequency);
+}
+
+/**
  * Default options for pitch detection.
  */
 const DEFAULT_OPTIONS: Required<PitchDetectionOptions> = {

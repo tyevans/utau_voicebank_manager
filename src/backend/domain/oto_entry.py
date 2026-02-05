@@ -1,6 +1,6 @@
 """Pydantic model for oto.ini entries."""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class OtoEntry(BaseModel):
@@ -46,6 +46,49 @@ class OtoEntry(BaseModel):
         if not v.lower().endswith(".wav"):
             raise ValueError("Filename must end with .wav")
         return v
+
+    @model_validator(mode="after")
+    def validate_cross_field_relationships(self) -> "OtoEntry":
+        """Validate relationships between fields that are always invalid.
+
+        Only rejects configurations that are physically impossible --
+        the consonant marker before playback starts, or the note alignment
+        point before playback starts. UTAU power users may have unusual
+        but valid configs, so we keep this conservative.
+        """
+        if self.consonant < self.offset:
+            raise ValueError(
+                f"consonant ({self.consonant}) must be >= offset ({self.offset}): "
+                f"the fixed region end cannot be before the playback start"
+            )
+        if self.preutterance < self.offset:
+            raise ValueError(
+                f"preutterance ({self.preutterance}) must be >= offset ({self.offset}): "
+                f"the note alignment point cannot be before the playback start"
+            )
+        return self
+
+    def check_relationships(self) -> list[str]:
+        """Return warnings for unusual-but-valid field relationships.
+
+        These are soft checks the API or UI can surface to the user
+        without rejecting the entry. An empty list means no warnings.
+        """
+        warnings: list[str] = []
+
+        if self.cutoff >= 0:
+            warnings.append(
+                f"cutoff is non-negative ({self.cutoff}): typically negative "
+                f"to mark playback end relative to audio end"
+            )
+
+        if self.overlap > self.preutterance:
+            warnings.append(
+                f"overlap ({self.overlap}) exceeds preutterance ({self.preutterance}): "
+                f"overlap longer than preutterance may cause synthesis artifacts"
+            )
+
+        return warnings
 
     def to_oto_line(self) -> str:
         """Serialize this entry back to oto.ini line format.

@@ -18,6 +18,8 @@ import '@shoelace-style/shoelace/dist/components/details/details.js';
 
 // Import sample card component
 import './uvm-sample-card.js';
+import './uvm-alignment-settings.js';
+import type { AlignmentMethod, AlignmentChangeDetail } from './uvm-alignment-settings.js';
 
 /** View mode for the sample browser */
 type SampleViewMode = 'grid' | 'list';
@@ -34,7 +36,7 @@ const VIRTUAL_SCROLL_CONFIG = {
 const VIEW_MODE_STORAGE_KEY = 'uvm-sample-browser-view-mode';
 
 import { api, ApiError, getDefaultApiUrl } from '../services/api.js';
-import type { BatchOtoResult, VoicebankSummary } from '../services/types.js';
+import type { BatchOtoResult, OtoEntry, VoicebankSummary } from '../services/types.js';
 import './uvm-upload-zone.js';
 import './uvm-phrase-preview.js';
 import type { UvmUploadZone } from './uvm-upload-zone.js';
@@ -804,6 +806,8 @@ export class UvmSampleBrowser extends LitElement {
   @state()
   private _sampleOtoMap: Map<string, boolean> = new Map();
 
+  private _sampleOtoEntryMap: Map<string, OtoEntry> = new Map();
+
   @state()
   private _availableAliases: Set<string> = new Set();
 
@@ -839,6 +843,15 @@ export class UvmSampleBrowser extends LitElement {
 
   @state()
   private _batchOverwriteExisting = false;
+
+  @state()
+  private _batchAlignmentTightness = 0.5;
+
+  @state()
+  private _batchAlignmentMethodOverride: 'sofa' | 'fa' | 'blind' | null = null;
+
+  @state()
+  private _availableAlignmentMethods: AlignmentMethod[] = [];
 
   @state()
   private _isDownloading = false;
@@ -912,19 +925,23 @@ export class UvmSampleBrowser extends LitElement {
       const columnsPerRow = this._getColumnsPerRow();
 
       switch (e.key) {
-        case 'h': // Left
+        case 'h': // Left (vim)
+        case 'ArrowLeft':
           e.preventDefault();
           this._navigateGrid(-1, 0, columnsPerRow);
           break;
-        case 'l': // Right
+        case 'l': // Right (vim)
+        case 'ArrowRight':
           e.preventDefault();
           this._navigateGrid(1, 0, columnsPerRow);
           break;
-        case 'k': // Up
+        case 'k': // Up (vim)
+        case 'ArrowUp':
           e.preventDefault();
           this._navigateGrid(0, -1, columnsPerRow);
           break;
-        case 'j': // Down
+        case 'j': // Down (vim)
+        case 'ArrowDown':
           e.preventDefault();
           this._navigateGrid(0, 1, columnsPerRow);
           break;
@@ -1102,6 +1119,16 @@ export class UvmSampleBrowser extends LitElement {
     if (changedProperties.has('_samples') || changedProperties.has('_searchQuery')) {
       this._selectedGridIndex = -1;
     }
+
+    // Re-attach ResizeObserver when the cards container appears
+    // (it doesn't exist until samples load and view mode is grid)
+    if (
+      this._viewMode === 'grid' &&
+      this._cardsContainer &&
+      this._containerHeight === 0
+    ) {
+      this._setupResizeObserver();
+    }
   }
 
   /**
@@ -1229,6 +1256,7 @@ export class UvmSampleBrowser extends LitElement {
     this._samples = [];
     this._selectedSample = null;
     this._sampleOtoMap.clear();
+    this._sampleOtoEntryMap.clear();
     this._availableAliases = new Set();
 
     try {
@@ -1240,13 +1268,19 @@ export class UvmSampleBrowser extends LitElement {
 
       this._samples = samples;
 
-      // Build a set of filenames that have oto entries
-      const filesWithOto = new Set(otoEntries.map((e) => e.filename));
+      // Build maps: filename → hasOto (boolean) and filename → first oto entry
       const newOtoMap = new Map<string, boolean>();
+      const newOtoEntryMap = new Map<string, OtoEntry>();
+      for (const entry of otoEntries) {
+        if (!newOtoEntryMap.has(entry.filename)) {
+          newOtoEntryMap.set(entry.filename, entry);
+        }
+      }
       for (const sample of samples) {
-        newOtoMap.set(sample, filesWithOto.has(sample));
+        newOtoMap.set(sample, newOtoEntryMap.has(sample));
       }
       this._sampleOtoMap = newOtoMap;
+      this._sampleOtoEntryMap = newOtoEntryMap;
 
       // Build a set of all available aliases for phrase preview
       this._availableAliases = new Set(otoEntries.map((e) => e.alias));
@@ -1386,7 +1420,7 @@ export class UvmSampleBrowser extends LitElement {
    */
   private _renderVoicebanksPanel() {
     return html`
-      <div class="panel voicebank-panel">
+      <div class="panel voicebank-panel" role="region" aria-label="Voicebanks">
         <div class="panel-header">
           <sl-icon name="folder2"></sl-icon>
           Voicebanks
@@ -1472,7 +1506,7 @@ export class UvmSampleBrowser extends LitElement {
     const filteredSamples = this._getFilteredSamples();
 
     return html`
-      <div class="panel samples-panel">
+      <div class="panel samples-panel" role="region" aria-label="Samples">
         <div class="panel-header">
           <sl-icon name="music-note-list"></sl-icon>
           Samples
@@ -1537,7 +1571,7 @@ export class UvmSampleBrowser extends LitElement {
         ${this._samples.length > 0
           ? html`<div class="keyboard-hint">
               ${this._viewMode === 'grid'
-                ? 'hjkl to navigate, Enter to load'
+                ? 'Arrow keys or hjkl to navigate, Enter to load'
                 : 'Arrow keys to navigate, Enter to load'}
             </div>`
           : null}
@@ -1595,6 +1629,9 @@ export class UvmSampleBrowser extends LitElement {
                   voicebankId=${this._selectedVoicebank || ''}
                   ?hasOto=${this._sampleOtoMap.get(filename) || false}
                   ?selected=${isSelected}
+                  otoOffset=${this._sampleOtoEntryMap.get(filename)?.offset ?? 0}
+                  otoConsonant=${this._sampleOtoEntryMap.get(filename)?.consonant ?? 0}
+                  otoCutoff=${this._sampleOtoEntryMap.get(filename)?.cutoff ?? 0}
                   data-sample-filename=${filename}
                   data-sample-index=${globalIndex}
                   @sample-click=${() => this._onCardClick(filename, globalIndex)}
@@ -1798,17 +1835,24 @@ export class UvmSampleBrowser extends LitElement {
     const { configured, total } = this._getSampleCounts();
 
     return html`
-      <div class="backdrop" @click=${this._onBackdropClick}></div>
-      <div class="modal-container" @click=${(e: Event) => e.stopPropagation()}>
+      <div class="backdrop" @click=${this._onBackdropClick} aria-hidden="true"></div>
+      <div
+        class="modal-container"
+        role="dialog"
+        aria-label="Sample browser"
+        aria-modal="true"
+        @click=${(e: Event) => e.stopPropagation()}
+      >
         <div class="modal-header">
           <sl-icon-button
             name="x-lg"
-            label="Close"
+            label="Close sample browser"
             @click=${this._close}
           ></sl-icon-button>
           <sl-input
             class="search-input"
             placeholder="Search samples..."
+            aria-label="Search samples"
             .value=${this._searchQuery}
             @sl-input=${this._onSearchInput}
             clearable
@@ -1820,7 +1864,7 @@ export class UvmSampleBrowser extends LitElement {
           ${this._renderVoicebanksPanel()}
           ${this._renderSamplesPanel()}
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" role="status" aria-label="Sample configuration progress">
           ${this._selectedVoicebank && total > 0
             ? html`${configured} configured / ${total} total`
             : html`Select a voicebank to browse samples`}
@@ -2108,6 +2152,31 @@ export class UvmSampleBrowser extends LitElement {
     this._showBatchDialog = true;
     this._batchResult = null;
     this._batchOverwriteExisting = false;
+    this._loadBatchAlignmentConfig();
+  }
+
+  /**
+   * Load alignment configuration and available methods for the batch dialog.
+   */
+  private async _loadBatchAlignmentConfig(): Promise<void> {
+    try {
+      const [configResult, methodsResult] = await Promise.all([
+        api.getAlignmentConfig(),
+        api.getAlignmentMethods(),
+      ]);
+
+      this._batchAlignmentTightness = configResult.tightness;
+      this._batchAlignmentMethodOverride = configResult.method_override as typeof this._batchAlignmentMethodOverride;
+
+      this._availableAlignmentMethods = methodsResult.methods.map(m => ({
+        name: m.name as 'sofa' | 'fa' | 'blind',
+        available: m.available,
+        displayName: m.display_name,
+        unavailableReason: m.available ? undefined : (m.description || 'Not available'),
+      }));
+    } catch (error) {
+      console.warn('Failed to load alignment config for batch:', error);
+    }
   }
 
   /**
@@ -2118,6 +2187,8 @@ export class UvmSampleBrowser extends LitElement {
     this._showBatchDialog = false;
     this._batchResult = null;
     this._batchOverwriteExisting = false;
+    this._batchAlignmentTightness = 0.5;
+    this._batchAlignmentMethodOverride = null;
   }
 
   /**
@@ -2140,6 +2211,14 @@ export class UvmSampleBrowser extends LitElement {
   }
 
   /**
+   * Handle alignment settings change from the batch dialog.
+   */
+  private _onBatchAlignmentChange(e: CustomEvent<AlignmentChangeDetail>): void {
+    this._batchAlignmentTightness = e.detail.tightness;
+    this._batchAlignmentMethodOverride = e.detail.methodOverride;
+  }
+
+  /**
    * Run batch autodetect on all samples.
    */
   private async _runBatchAutodetect(): Promise<void> {
@@ -2151,7 +2230,11 @@ export class UvmSampleBrowser extends LitElement {
     try {
       const result = await api.batchGenerateOto(
         this._selectedVoicebank,
-        this._batchOverwriteExisting
+        this._batchOverwriteExisting,
+        {
+          tightness: this._batchAlignmentTightness,
+          methodOverride: this._batchAlignmentMethodOverride === 'blind' ? null : this._batchAlignmentMethodOverride,
+        }
       );
 
       this._batchResult = result;
@@ -2241,6 +2324,13 @@ export class UvmSampleBrowser extends LitElement {
           <sl-icon slot="icon" name="info-circle"></sl-icon>
           This may take a while for large voicebanks. Each sample is processed through the ML pipeline.
         </sl-alert>
+
+        <uvm-alignment-settings
+          .tightness=${this._batchAlignmentTightness}
+          .methodOverride=${this._batchAlignmentMethodOverride}
+          .availableMethods=${this._availableAlignmentMethods}
+          @alignment-change=${this._onBatchAlignmentChange}
+        ></uvm-alignment-settings>
 
         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
           <input

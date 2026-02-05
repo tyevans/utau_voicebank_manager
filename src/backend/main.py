@@ -1,6 +1,7 @@
 """FastAPI application entry point for UTAU Voicebank Manager."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -76,15 +77,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware for local development and Docker
+# CORS middleware — configurable via UVM_CORS_ORIGINS env var (comma-separated)
+_default_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:8989",
+]
+_cors_origins = os.environ.get("UVM_CORS_ORIGINS")
+_allowed_origins = (
+    [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    if _cors_origins
+    else _default_origins
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://localhost:8989",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

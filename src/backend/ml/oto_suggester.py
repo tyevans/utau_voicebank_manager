@@ -138,8 +138,76 @@ CUTOFF_PADDING_MS = 20.0
 # Minimum confidence threshold for using detected segments
 MIN_CONFIDENCE_THRESHOLD = 0.3
 
-# Overlap ratio relative to preutterance
+# Overlap ratio relative to preutterance (default fallback)
 OVERLAP_RATIO = 0.4
+
+# Consonant-type-aware overlap ratios.
+# Different consonant types need different crossfade amounts:
+# - Plosives have a sharp stop closure that creates a natural boundary
+# - Fricatives have gradual noise onset allowing smooth crossfade
+# - Nasals are voiced and smooth, benefit from longer crossfade
+# - Liquids/glides are vowel-like with very smooth transitions
+# - Affricates have a stop component like plosives
+# Keys include both IPA and romanized forms used by aligners.
+CONSONANT_OVERLAP_RATIOS: dict[str, float] = {
+    # Plosives - sharp onset, short overlap
+    "k": 0.2,
+    "g": 0.2,
+    "t": 0.2,
+    "d": 0.2,
+    "p": 0.2,
+    "b": 0.2,
+    "q": 0.2,
+    "c": 0.2,
+    # Affricates - stop component, short overlap
+    "ch": 0.25,
+    "ts": 0.25,
+    "dz": 0.25,
+    "t\u0283": 0.25,  # t + esh (IPA ch)
+    "d\u0292": 0.25,  # d + ezh (IPA j/dʒ)
+    # Fricatives - gradual noise, medium overlap
+    "s": 0.4,
+    "sh": 0.4,
+    "h": 0.4,
+    "f": 0.4,
+    "z": 0.4,
+    "v": 0.4,
+    "x": 0.4,
+    "\u03b8": 0.4,  # theta
+    "\u00f0": 0.4,  # eth
+    "\u0283": 0.4,  # esh (sh)
+    "\u0292": 0.4,  # ezh (zh)
+    "\u0282": 0.4,  # retroflex s
+    "\u0290": 0.4,  # retroflex z
+    "\u00e7": 0.4,  # palatal fricative
+    "\u0278": 0.4,  # bilabial fricative (Japanese f)
+    # Nasals - voiced and smooth, longer overlap
+    "n": 0.6,
+    "m": 0.6,
+    "ny": 0.6,
+    "\u014b": 0.6,  # eng (ng)
+    "\u0272": 0.6,  # palatal n
+    "\u0273": 0.6,  # retroflex n
+    # Liquids/Glides - vowel-like, longest overlap
+    "r": 0.6,
+    "w": 0.6,
+    "y": 0.6,
+    "j": 0.6,  # IPA glide (= English y)
+    "l": 0.6,
+    "\u027e": 0.6,  # alveolar tap
+    "\u0279": 0.6,  # alveolar approximant
+    "\u027b": 0.6,  # retroflex approximant
+    "\u026d": 0.6,  # retroflex l
+    "\u0265": 0.6,  # labial-palatal approximant
+    # Japanese palatalized consonants - use base consonant type
+    "ky": 0.2,
+    "gy": 0.2,
+    "py": 0.2,
+    "by": 0.2,
+    "hy": 0.4,
+    "my": 0.6,
+    "ry": 0.6,
+}
 
 # Consonant extension into vowel region ratio
 CONSONANT_VOWEL_EXTENSION_RATIO = 0.3
@@ -327,7 +395,12 @@ class OtoSuggester:
             )
             preutterance = self._estimate_preutterance(segments, classification)
             cutoff = self._estimate_cutoff(audio_duration_ms, segments, params)
-            overlap = self._estimate_overlap(offset, preutterance, params)
+            consonant_at_preutterance = self._find_preutterance_consonant(
+                classification
+            )
+            overlap = self._estimate_overlap(
+                offset, preutterance, params, consonant_at_preutterance
+            )
         else:
             # Use reasonable defaults
             logger.info(
@@ -360,14 +433,14 @@ class OtoSuggester:
         audio_paths: list[Path],
         aliases: list[str] | None = None,
         sofa_language: str = "ja",
-    ) -> list[OtoSuggestion]:
+    ) -> list[OtoSuggestion | None]:
         """Analyze multiple audio files and suggest oto parameters in batch.
 
-        Uses a multi-phase fallback strategy:
+        Uses batch alignment only:
         1. Batch SOFA alignment (if available)
         2. Batch MMS_FA for SOFA failures
-        3. Individual suggest_oto() for remaining failures
-        4. Default suggestions for total failures
+
+        Files that fail both techniques are returned as None.
 
         Args:
             audio_paths: List of paths to WAV files
@@ -376,7 +449,8 @@ class OtoSuggester:
             sofa_language: Language code for SOFA alignment (ja, en, zh, ko, fr)
 
         Returns:
-            List of OtoSuggestion objects (same order as input paths)
+            List of OtoSuggestion | None (same order as input paths).
+            None entries indicate files that failed all alignment techniques.
         """
         if not audio_paths:
             return []
@@ -388,7 +462,7 @@ class OtoSuggester:
                 f"audio_paths length ({len(audio_paths)})"
             )
 
-        # Phase 1: Extract transcripts for all files
+        # Extract transcripts for all files
         path_to_transcript: dict[Path, str] = {}
         for audio_path in audio_paths:
             filename = audio_path.name
@@ -398,7 +472,7 @@ class OtoSuggester:
             except TranscriptExtractionError as e:
                 logger.warning(
                     f"Failed to extract transcript from {filename}: {e}. "
-                    "Will use defaults."
+                    "File will be skipped."
                 )
                 path_to_transcript[audio_path] = ""
 
@@ -408,7 +482,7 @@ class OtoSuggester:
         # Build a set of paths still needing alignment (have valid transcripts)
         pending_indices: list[int] = list(range(len(audio_paths)))
 
-        # Phase 2: Batch SOFA (if available)
+        # Phase 1: Batch SOFA (if available)
         if self.use_sofa and is_sofa_available():
             sofa_items = [
                 (audio_paths[idx], path_to_transcript[audio_paths[idx]])
@@ -456,7 +530,7 @@ class OtoSuggester:
                     idx for idx in pending_indices if idx not in resolved_indices
                 ]
 
-        # Phase 3: Batch MMS_FA for files that failed SOFA (or if SOFA unavailable)
+        # Phase 2: Batch MMS_FA for files that failed SOFA (or if SOFA unavailable)
         if pending_indices and self.use_forced_alignment:
             params = self._get_params()
             mms_items = [
@@ -479,7 +553,7 @@ class OtoSuggester:
                 except ForcedAlignmentError as e:
                     logger.warning(
                         f"MMS_FA batch alignment failed entirely: {e}. "
-                        "Proceeding to individual fallback."
+                        "Remaining files will be skipped."
                     )
 
                 # Build suggestions from MMS_FA results
@@ -507,65 +581,13 @@ class OtoSuggester:
                     idx for idx in pending_indices if idx not in resolved_indices
                 ]
 
-        # Phase 4: Individual suggest_oto() for remaining failures
+        # Log files that failed all batch techniques (left as None)
         if pending_indices:
-            logger.info(
-                f"Processing {len(pending_indices)} files individually "
-                "after batch alignment"
+            failed_names = [audio_paths[idx].name for idx in pending_indices]
+            logger.warning(
+                f"{len(pending_indices)} files failed all batch alignment "
+                f"techniques: {failed_names[:10]}"
             )
-            still_pending: list[int] = []
-            for idx in pending_indices:
-                audio_path = audio_paths[idx]
-                file_alias = aliases[idx] if aliases is not None else None
-                try:
-                    suggestion = await self.suggest_oto(
-                        audio_path, alias=file_alias, sofa_language=sofa_language
-                    )
-                    suggestions[idx] = suggestion
-                except Exception as e:
-                    logger.error(f"Failed to process {audio_path}: {e}")
-                    still_pending.append(idx)
-            pending_indices = still_pending
-
-        # Phase 5: Default suggestions for total failures
-        for idx in pending_indices:
-            audio_path = audio_paths[idx]
-            file_alias = aliases[idx] if aliases is not None else None
-            suggestions[idx] = self._build_default_suggestion(audio_path, file_alias)
-
-        # All placeholders should now be filled
-        return suggestions  # type: ignore[return-value]
-
-    async def _batch_suggest_sequential(
-        self,
-        audio_paths: list[Path],
-        aliases: list[str] | None,
-        sofa_language: str,
-    ) -> list[OtoSuggestion]:
-        """Process files sequentially when batch processing is not available.
-
-        Args:
-            audio_paths: List of paths to WAV files
-            aliases: Optional list of aliases
-            sofa_language: Language code for SOFA alignment
-
-        Returns:
-            List of OtoSuggestion objects
-        """
-        suggestions: list[OtoSuggestion] = []
-
-        for idx, audio_path in enumerate(audio_paths):
-            file_alias = aliases[idx] if aliases is not None else None
-            try:
-                suggestion = await self.suggest_oto(
-                    audio_path, alias=file_alias, sofa_language=sofa_language
-                )
-                suggestions.append(suggestion)
-            except Exception as e:
-                logger.error(f"Failed to process {audio_path}: {e}")
-                suggestions.append(
-                    self._build_default_suggestion(audio_path, file_alias)
-                )
 
         return suggestions
 
@@ -613,7 +635,12 @@ class OtoSuggester:
             )
             preutterance = self._estimate_preutterance(segments, classification)
             cutoff = self._estimate_cutoff(audio_duration_ms, segments, params)
-            overlap = self._estimate_overlap(offset, preutterance, params)
+            consonant_at_preutterance = self._find_preutterance_consonant(
+                classification
+            )
+            overlap = self._estimate_overlap(
+                offset, preutterance, params, consonant_at_preutterance
+            )
         else:
             # Use reasonable defaults
             logger.info(
@@ -638,44 +665,6 @@ class OtoSuggester:
             overlap=round(overlap, 1),
             confidence=round(confidence, 3),
             phonemes_detected=segments,
-            audio_duration_ms=round(audio_duration_ms, 1),
-        )
-
-    def _build_default_suggestion(
-        self,
-        audio_path: Path,
-        alias: str | None,
-    ) -> OtoSuggestion:
-        """Build a default OtoSuggestion when all detection methods fail.
-
-        Args:
-            audio_path: Path to the audio file
-            alias: Optional alias override
-
-        Returns:
-            OtoSuggestion with default parameters
-        """
-        filename = audio_path.name
-
-        if alias is None:
-            alias = self._generate_alias_from_filename(filename)
-
-        # Try to get audio duration
-        try:
-            audio_duration_ms = librosa.get_duration(path=str(audio_path)) * 1000
-        except Exception:
-            audio_duration_ms = 1000.0  # Default 1 second
-
-        return OtoSuggestion(
-            filename=filename,
-            alias=alias,
-            offset=DEFAULT_OFFSET_MS,
-            consonant=DEFAULT_CONSONANT_MS,
-            cutoff=-DEFAULT_CUTOFF_PADDING_MS,
-            preutterance=DEFAULT_PREUTTERANCE_MS,
-            overlap=DEFAULT_OVERLAP_MS,
-            confidence=0.0,
-            phonemes_detected=[],
             audio_duration_ms=round(audio_duration_ms, 1),
         )
 
@@ -786,6 +775,60 @@ class OtoSuggester:
             "by",
         }
 
+    def _find_main_vowel(
+        self,
+        consonants: list[PhonemeSegment],
+        vowels: list[PhonemeSegment],
+    ) -> PhonemeSegment:
+        """Identify the main (sustain) vowel for oto parameter estimation.
+
+        For CV samples (e.g., [k, a]), the main vowel is the first and only
+        vowel. For VCV samples (e.g., [a1, k, a2]), the main vowel is the
+        vowel after the consonant(s) -- the sustain vowel, not the preceding
+        vowel that gets crossfaded out.
+
+        The detection is purely structural: if any vowel appears after a
+        consonant, the first such vowel is the main vowel. Otherwise, the
+        first vowel overall is used.
+
+        Args:
+            consonants: Classified consonant segments (may be empty).
+            vowels: Classified vowel segments (must be non-empty).
+
+        Returns:
+            The PhonemeSegment representing the main vowel.
+        """
+        if not consonants:
+            # No consonants -- just use the first vowel
+            return min(vowels, key=lambda s: s.start_ms)
+
+        # Find the latest consonant end time
+        last_consonant_end = max(c.end_ms for c in consonants)
+
+        # Look for vowels that start at or after any consonant ends.
+        # These are post-consonant vowels (the sustain vowel in VCV).
+        vowels_after_consonant = [
+            v for v in vowels if v.start_ms >= last_consonant_end - 1e-3
+        ]
+
+        if vowels_after_consonant:
+            # Use the first vowel after the last consonant block
+            return min(vowels_after_consonant, key=lambda s: s.start_ms)
+
+        # Broader check: any vowel that starts after ANY consonant's start.
+        # This handles cases where consonant/vowel boundaries overlap slightly.
+        earliest_consonant_start = min(c.start_ms for c in consonants)
+        vowels_after_any_consonant = [
+            v for v in vowels if v.start_ms > earliest_consonant_start
+        ]
+
+        if vowels_after_any_consonant:
+            return min(vowels_after_any_consonant, key=lambda s: s.start_ms)
+
+        # Fallback: all vowels come before all consonants (unusual, e.g., VC).
+        # Use the first vowel.
+        return min(vowels, key=lambda s: s.start_ms)
+
     def _estimate_offset(
         self,
         segments: list[PhonemeSegment],
@@ -854,15 +897,17 @@ class OtoSuggester:
         vowels = classification.get("vowels", [])
 
         # If we have both consonants and vowels, the fixed region typically
-        # extends from offset through the consonant and slightly into the vowel
+        # extends from offset through the consonant and slightly into the vowel.
+        # For VCV samples, use the sustain vowel (after consonant), not the
+        # preceding vowel.
         if consonants and vowels:
-            # Find the first vowel
-            first_vowel = min(vowels, key=lambda s: s.start_ms)
+            # Find the main (sustain) vowel -- handles both CV and VCV
+            main_vowel = self._find_main_vowel(consonants, vowels)
 
             # Consonant region extends to end of consonant + part of vowel
             last_consonant_before_vowel = None
             for c in consonants:
-                if c.end_ms <= first_vowel.start_ms and (
+                if c.end_ms <= main_vowel.start_ms + 1e-3 and (
                     last_consonant_before_vowel is None
                     or c.end_ms > last_consonant_before_vowel.end_ms
                 ):
@@ -870,12 +915,12 @@ class OtoSuggester:
 
             if last_consonant_before_vowel:
                 # Extend into vowel by ratio
-                vowel_extension = first_vowel.duration_ms * cv_extension_ratio
+                vowel_extension = main_vowel.duration_ms * cv_extension_ratio
                 return last_consonant_before_vowel.end_ms + vowel_extension
 
-            # No consonant before vowel - use vowel start + extension
-            vowel_extension = first_vowel.duration_ms * cv_extension_ratio
-            return first_vowel.start_ms + vowel_extension
+            # No consonant before main vowel - use vowel start + extension
+            vowel_extension = main_vowel.duration_ms * cv_extension_ratio
+            return main_vowel.start_ms + vowel_extension
 
         elif consonants:
             # Only consonants detected - use end of last consonant + buffer
@@ -914,22 +959,25 @@ class OtoSuggester:
         consonants = classification.get("consonants", [])
         vowels = classification.get("vowels", [])
 
-        # Standard case: preutterance = position at consonant-vowel boundary
+        # Standard case: preutterance = position at consonant-vowel boundary.
+        # For VCV samples, use the boundary before the sustain vowel (after
+        # the consonant), not the preceding vowel.
         if consonants and vowels:
-            first_vowel = min(vowels, key=lambda s: s.start_ms)
+            # Find the main (sustain) vowel -- handles both CV and VCV
+            main_vowel = self._find_main_vowel(consonants, vowels)
 
-            # Find last consonant before the first vowel
+            # Find last consonant before the main vowel
             consonants_before_vowel = [
-                c for c in consonants if c.end_ms <= first_vowel.start_ms
+                c for c in consonants if c.end_ms <= main_vowel.start_ms + 1e-3
             ]
 
             if consonants_before_vowel:
-                # Preutterance is at the end of the last consonant (CV boundary)
+                # Preutterance is at the end of the last consonant (C->V boundary)
                 last_consonant = max(consonants_before_vowel, key=lambda s: s.end_ms)
                 return last_consonant.end_ms
 
-            # No consonant before vowel - preutterance at vowel start
-            return first_vowel.start_ms
+            # No consonant before main vowel - preutterance at vowel start
+            return main_vowel.start_ms
 
         elif consonants:
             # Only consonants - preutterance at end of last consonant
@@ -944,28 +992,116 @@ class OtoSuggester:
         # Fallback: use first segment end
         return segments[0].end_ms if segments else DEFAULT_PREUTTERANCE_MS
 
+    @staticmethod
+    def _strip_ipa_modifiers(phoneme: str) -> str:
+        """Strip IPA modifier characters to get the base phoneme.
+
+        Removes aspiration markers, length markers, diacritics, and
+        other IPA modifiers to produce a lookup key for consonant
+        type classification.
+
+        Args:
+            phoneme: Raw phoneme string (e.g., "kʰ", "sː", "t̪")
+
+        Returns:
+            Base phoneme string (e.g., "k", "s", "t")
+        """
+        # IPA modifier/diacritic codepoints to strip
+        modifiers = frozenset(
+            "\u02b0"  # ʰ aspiration
+            "\u02d0"  # ː length mark
+            "\u02d1"  # ˑ half-length
+            "\u0325"  # ̥ voiceless diacritic (combining)
+            "\u032a"  # ̪ dental diacritic (combining)
+            "\u0339"  # ̹ more rounded (combining)
+            "\u031c"  # ̜ less rounded (combining)
+            "\u0334"  # ̴ velarized (combining)
+            "\u02bc"  # ʼ ejective
+            "\u0361"  # ͡ tie bar (combining)
+            "\u035c"  # ͜ tie bar below (combining)
+            "\u207f"  # ⁿ nasal release
+            ":"  # ASCII length mark alternative
+        )
+        return "".join(ch for ch in phoneme if ch not in modifiers)
+
+    def _find_preutterance_consonant(
+        self,
+        classification: dict[str, list[PhonemeSegment]],
+    ) -> str | None:
+        """Find the consonant phoneme closest to the preutterance point.
+
+        The preutterance sits at the consonant-vowel boundary, so the
+        relevant consonant is the last one before the main vowel. This
+        mirrors the logic in _estimate_preutterance().
+
+        Args:
+            classification: Phoneme classification with 'consonants' and
+                'vowels' keys.
+
+        Returns:
+            Base phoneme string of the consonant at preutterance, or None
+            if no consonant is found.
+        """
+        consonants = classification.get("consonants", [])
+        vowels = classification.get("vowels", [])
+
+        if not consonants:
+            return None
+
+        if consonants and vowels:
+            main_vowel = self._find_main_vowel(consonants, vowels)
+            consonants_before_vowel = [
+                c for c in consonants if c.end_ms <= main_vowel.start_ms + 1e-3
+            ]
+            if consonants_before_vowel:
+                last_consonant = max(consonants_before_vowel, key=lambda s: s.end_ms)
+                return self._strip_ipa_modifiers(last_consonant.phoneme.lower().strip())
+
+        # Fallback: use the last consonant overall
+        last_consonant = max(consonants, key=lambda s: s.end_ms)
+        return self._strip_ipa_modifiers(last_consonant.phoneme.lower().strip())
+
     def _estimate_overlap(
         self,
         offset: float,
         preutterance: float,
         params: AlignmentParams | None = None,
+        consonant_phoneme: str | None = None,
     ) -> float:
         """Estimate overlap position (absolute position from audio start).
 
         Overlap is the position where crossfade with the previous note occurs,
-        typically positioned between offset and preutterance.
+        typically positioned between offset and preutterance. The overlap ratio
+        is selected based on the consonant type at the preutterance point:
+
+        - Plosives (k, t, p, ...): Short overlap (0.2) -- sharp stop closure
+        - Affricates (ch, ts, ...): Short overlap (0.25) -- stop component
+        - Fricatives (s, sh, f, ...): Medium overlap (0.4) -- gradual noise
+        - Nasals (n, m, ...): Longer overlap (0.6) -- smooth and voiced
+        - Liquids/Glides (r, w, y, ...): Longest overlap (0.6) -- vowel-like
 
         Args:
             offset: Estimated offset position (from audio start)
             preutterance: Estimated preutterance position (from audio start)
-            params: Optional alignment params for overlap ratio.
+            params: Optional alignment params for default overlap ratio.
                    If not provided, uses module-level defaults.
+            consonant_phoneme: Optional base phoneme string (e.g., "k", "sh")
+                   for consonant-type-aware overlap ratio selection. If None
+                   or not found in the lookup table, falls back to the ratio
+                   from params.
 
         Returns:
             Estimated overlap position in milliseconds (from audio start)
         """
-        # Use params or fall back to module-level constant
-        overlap_ratio = params.overlap_ratio if params else OVERLAP_RATIO
+        # Determine overlap ratio: consonant-type-aware lookup, then fallback
+        default_ratio = params.overlap_ratio if params else OVERLAP_RATIO
+
+        if consonant_phoneme is not None:
+            overlap_ratio = CONSONANT_OVERLAP_RATIOS.get(
+                consonant_phoneme, default_ratio
+            )
+        else:
+            overlap_ratio = default_ratio
 
         # Overlap is typically positioned between offset and preutterance
         # Use overlap_ratio to position it partway between them
@@ -1040,6 +1176,12 @@ class OtoSuggester:
         The raw FA confidence is often low for sustained vowels (model expects
         short phonemes), so we prioritize coverage as the main quality signal.
 
+        A low-confidence penalty is applied when the average raw FA confidence
+        is below 0.1. This prevents genuinely bad alignments (where the aligner
+        itself is very uncertain) from scoring highly due to good coverage and
+        consistency alone. The penalty scales linearly from a 50% reduction at
+        confidence 0.0 to no reduction at confidence 0.1.
+
         Args:
             segments: List of detected phoneme segments
             audio_duration_ms: Total audio duration
@@ -1078,13 +1220,23 @@ class OtoSuggester:
                 consistency_score *= 0.7
 
         # Factor 3: Raw detection confidence (minor factor)
-        # This is often low for sustained vowels, so we weight it less
+        # This is often low for sustained vowels, so we weight it less.
+        # Note: The normalization floors at 0.0 (raw_score is always >= 0),
+        # but very low raw confidence (< 0.1) triggers a separate penalty
+        # after the weighted combination to cap the final score.
         avg_raw_confidence = float(np.mean([s.confidence for s in segments]))
         # Normalize: FA confidence of 0.3+ is considered good
         raw_score = min(1.0, avg_raw_confidence / 0.3)
 
         # Weighted combination: coverage is primary, raw confidence is secondary
         confidence = coverage_score * 0.6 + consistency_score * 0.25 + raw_score * 0.15
+
+        # Low-confidence penalty: if the aligner itself is very uncertain
+        # (avg_raw_confidence < 0.1), scale down the final score to prevent
+        # bad alignments from appearing confident due to high coverage.
+        # Scales linearly: 0.0 raw -> 50% penalty, 0.1 raw -> no penalty.
+        if avg_raw_confidence < 0.1:
+            confidence *= max(0.5, avg_raw_confidence / 0.1)
 
         return min(1.0, max(0.0, confidence))
 

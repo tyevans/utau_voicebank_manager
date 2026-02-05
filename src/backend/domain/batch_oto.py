@@ -20,6 +20,16 @@ class BatchOtoRequest(BaseModel):
         default="ja",
         description="Language code for SOFA alignment (ja, en, zh, ko, fr). Defaults to Japanese.",
     )
+    tightness: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Alignment tightness. If not provided, uses global config.",
+    )
+    method_override: str | None = Field(
+        default=None,
+        description="Override alignment method: 'sofa' or 'fa'. If not provided, uses global config.",
+    )
 
 
 class BatchOtoResult(BaseModel):

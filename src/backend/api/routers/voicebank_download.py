@@ -4,8 +4,8 @@ Provides endpoints for downloading voicebanks as ZIP archives containing
 all WAV samples and the current oto.ini configuration.
 """
 
-import io
 import logging
+import tempfile
 import zipfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -68,31 +68,45 @@ async def create_voicebank_zip(
     Yields:
         Chunks of ZIP file bytes
     """
-    # Create ZIP in memory
-    buffer = io.BytesIO()
+    # Write ZIP to a temporary file instead of memory to avoid OOM on large voicebanks
+    tmp = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024)  # 10MB in-memory, then spill to disk
 
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Add all WAV files
-        for wav_file in voicebank_path.glob("*.wav"):
-            zf.write(wav_file, arcname=wav_file.name)
+    try:
+        with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # Add all WAV files
+            for wav_file in voicebank_path.glob("*.wav"):
+                zf.write(wav_file, arcname=wav_file.name)
 
-        # Also check for uppercase .WAV extension
-        for wav_file in voicebank_path.glob("*.WAV"):
-            zf.write(wav_file, arcname=wav_file.name)
+            # Also check for uppercase .WAV extension
+            for wav_file in voicebank_path.glob("*.WAV"):
+                zf.write(wav_file, arcname=wav_file.name)
 
-        # Add oto.ini with current entries
-        if oto_entries_content:
-            zf.writestr("oto.ini", oto_entries_content.encode("utf-8"))
+            # Add oto.ini with current entries
+            if oto_entries_content:
+                zf.writestr("oto.ini", oto_entries_content.encode("utf-8"))
 
-    # Seek to beginning and yield content in chunks
-    buffer.seek(0)
-    chunk_size = 64 * 1024  # 64KB chunks
+            # Add metadata files (character.txt, readme.txt) if they exist
+            for metadata_filename in ("character.txt", "readme.txt"):
+                metadata_path = voicebank_path / metadata_filename
+                if metadata_path.exists() and metadata_path.is_file():
+                    zf.write(metadata_path, arcname=metadata_filename)
 
-    while True:
-        chunk = buffer.read(chunk_size)
-        if not chunk:
-            break
-        yield chunk
+            # Add icon.bmp if it exists
+            icon_path = voicebank_path / "icon.bmp"
+            if icon_path.exists() and icon_path.is_file():
+                zf.write(icon_path, arcname="icon.bmp")
+
+        # Seek to beginning and yield content in chunks
+        tmp.seek(0)
+        chunk_size = 64 * 1024  # 64KB chunks
+
+        while True:
+            chunk = tmp.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        tmp.close()
 
 
 @router.get(

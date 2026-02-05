@@ -116,8 +116,13 @@ COPY src/ ./src/
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./src/frontend/dist
 
-# Create directories for runtime data
-RUN mkdir -p /app/models /app/data/voicebanks
+# Create non-root user and runtime directories
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --no-create-home appuser && \
+    mkdir -p /app/models /app/data/voicebanks && \
+    chown -R appuser:appuser /app
+
+USER appuser
 
 # Expose port 8989
 EXPOSE 8989

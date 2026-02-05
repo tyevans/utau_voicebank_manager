@@ -11,6 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.backend.domain.pagination import PaginatedResponse
 from src.backend.domain.paragraph_prompt import ParagraphLibrary, ParagraphPrompt
 from src.backend.services.paragraph_library_service import (
     ParagraphLibraryNotFoundError,
@@ -29,21 +30,35 @@ def get_library_service() -> ParagraphLibraryService:
     return get_paragraph_library_service()
 
 
-@router.get("/libraries", response_model=list[ParagraphLibrarySummary])
+@router.get("/libraries", response_model=PaginatedResponse[ParagraphLibrarySummary])
 async def list_libraries(
     service: Annotated[ParagraphLibraryService, Depends(get_library_service)],
-) -> list[ParagraphLibrarySummary]:
-    """List all available paragraph libraries.
+    limit: Annotated[
+        int,
+        Query(ge=1, le=500, description="Maximum items to return"),
+    ] = 100,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of items to skip"),
+    ] = 0,
+) -> PaginatedResponse[ParagraphLibrarySummary]:
+    """List all available paragraph libraries with pagination.
 
     Returns lightweight summaries of all registered paragraph libraries,
     including phoneme coverage statistics.
 
+    Args:
+        limit: Maximum number of items to return (1-500, default 100)
+        offset: Number of items to skip (default 0)
+
     Returns:
-        List of library summaries sorted by name
+        Paginated list of library summaries sorted by name
     """
-    libraries = service.list_libraries()
-    logger.debug(f"Listed {len(libraries)} paragraph libraries")
-    return libraries
+    all_items = service.list_libraries()
+    total = len(all_items)
+    items = all_items[offset : offset + limit]
+    logger.debug(f"Listed {len(items)} of {total} paragraph libraries")
+    return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/libraries/{library_id}", response_model=ParagraphLibrary)
@@ -78,7 +93,7 @@ async def get_library(
         ) from e
 
 
-@router.get("/{language}/{style}", response_model=list[ParagraphPrompt])
+@router.get("/{language}/{style}", response_model=PaginatedResponse[ParagraphPrompt])
 async def get_paragraphs(
     language: str,
     style: str,
@@ -90,8 +105,16 @@ async def get_paragraphs(
             "needed for full phoneme coverage"
         ),
     ] = True,
-) -> list[ParagraphPrompt]:
-    """Get paragraph prompts for a language and recording style.
+    limit: Annotated[
+        int,
+        Query(ge=1, le=500, description="Maximum items to return"),
+    ] = 100,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of items to skip"),
+    ] = 0,
+) -> PaginatedResponse[ParagraphPrompt]:
+    """Get paragraph prompts for a language and recording style with pagination.
 
     Returns paragraph prompts from the library matching the specified
     language and style combination. By default, returns the minimal set
@@ -101,20 +124,24 @@ async def get_paragraphs(
         language: ISO 639-1 language code (e.g., 'ja' for Japanese)
         style: Recording style (e.g., 'cv', 'vcv', 'cvvc', 'vccv', 'arpasing')
         minimal: If true, return only minimal set for full coverage
+        limit: Maximum number of items to return (1-500, default 100)
+        offset: Number of items to skip (default 0)
 
     Returns:
-        List of paragraph prompts
+        Paginated list of paragraph prompts
 
     Raises:
         HTTPException 404: If no library found for language/style combination
     """
     try:
-        paragraphs = service.get_paragraphs(language, style, minimal=minimal)
+        all_items = service.get_paragraphs(language, style, minimal=minimal)
+        total = len(all_items)
+        items = all_items[offset : offset + limit]
         logger.debug(
-            f"Retrieved {len(paragraphs)} paragraphs for {language}/{style} "
+            f"Retrieved {len(items)} of {total} paragraphs for {language}/{style} "
             f"(minimal={minimal})"
         )
-        return paragraphs
+        return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
     except ParagraphLibraryNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

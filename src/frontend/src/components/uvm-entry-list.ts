@@ -118,7 +118,13 @@ export class UvmEntryList extends LitElement {
       background-color: var(--sl-color-neutral-100, #f1f5f9);
     }
 
-    .entry-item:hover .entry-delete {
+    .entry-item:focus {
+      outline: 2px solid var(--sl-color-primary-500, #3b82f6);
+      outline-offset: -2px;
+    }
+
+    .entry-item:hover .entry-delete,
+    .entry-item:focus-within .entry-delete {
       opacity: 1;
     }
 
@@ -369,6 +375,42 @@ export class UvmEntryList extends LitElement {
   }
 
   /**
+   * Handle keyboard navigation on entry items.
+   */
+  private _onEntryKeyDown(e: KeyboardEvent, entry: OtoEntry): void {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      this._selectEntry(entry);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const currentIndex = this.entries.indexOf(entry);
+      if (currentIndex < this.entries.length - 1) {
+        const nextEntry = this.entries[currentIndex + 1];
+        this._selectEntry(nextEntry);
+        this._focusEntry(currentIndex + 1);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const currentIndex = this.entries.indexOf(entry);
+      if (currentIndex > 0) {
+        const prevEntry = this.entries[currentIndex - 1];
+        this._selectEntry(prevEntry);
+        this._focusEntry(currentIndex - 1);
+      }
+    }
+  }
+
+  /**
+   * Focus an entry item by index.
+   */
+  private _focusEntry(index: number): void {
+    const items = this.shadowRoot?.querySelectorAll('.entry-item');
+    if (items && items[index]) {
+      (items[index] as HTMLElement).focus();
+    }
+  }
+
+  /**
    * Format timing info for display.
    */
   private _formatTiming(entry: OtoEntry): string {
@@ -397,12 +439,17 @@ export class UvmEntryList extends LitElement {
     }
 
     return html`
-      <div class="entries">
+      <div class="entries" role="listbox" aria-label="Oto aliases">
         ${this.entries.map(
           (entry) => html`
             <div
               class="entry-item ${entry.alias === this.selectedAlias ? 'selected' : ''}"
+              role="option"
+              aria-selected=${entry.alias === this.selectedAlias}
+              aria-label="${entry.alias}, ${this._formatTiming(entry)}"
+              tabindex="0"
               @click=${() => this._selectEntry(entry)}
+              @keydown=${(e: KeyboardEvent) => this._onEntryKeyDown(e, entry)}
             >
               <div class="entry-info">
                 <span class="alias">${entry.alias}</span>
@@ -411,7 +458,7 @@ export class UvmEntryList extends LitElement {
               <sl-icon-button
                 class="entry-delete"
                 name="trash"
-                label="Delete alias"
+                label="Delete alias ${entry.alias}"
                 @click=${(e: Event) => this._deleteEntry(e, entry)}
               ></sl-icon-button>
             </div>

@@ -1,5 +1,6 @@
 """Service layer for recording session business logic."""
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -17,10 +18,10 @@ from src.backend.domain.recording_session import (
     SessionProgress,
     SessionStatus,
 )
-from src.backend.repositories.recording_session_repository import (
-    RecordingSessionRepository,
+from src.backend.repositories.interfaces import (
+    RecordingSessionRepositoryInterface,
+    VoicebankRepositoryInterface,
 )
-from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.utils.audio_converter import (
     AudioConversionError,
     convert_to_wav,
@@ -77,8 +78,8 @@ class RecordingSessionService:
 
     def __init__(
         self,
-        session_repository: RecordingSessionRepository,
-        voicebank_repository: VoicebankRepository,
+        session_repository: RecordingSessionRepositoryInterface,
+        voicebank_repository: VoicebankRepositoryInterface,
     ) -> None:
         """Initialize service with repositories.
 
@@ -88,6 +89,23 @@ class RecordingSessionService:
         """
         self._session_repo = session_repository
         self._voicebank_repo = voicebank_repository
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, session_id: str) -> asyncio.Lock:
+        """Get or create an asyncio lock for a specific session.
+
+        Serializes mutating operations on the same session to prevent
+        read-modify-write races (e.g., concurrent upload_segment calls).
+
+        Args:
+            session_id: Session identifier (stringified UUID)
+
+        Returns:
+            asyncio.Lock for the given session_id
+        """
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+        return self._locks[session_id]
 
     def _validate_create_request(self, request: RecordingSessionCreate) -> None:
         """Validate session creation request.
@@ -397,15 +415,16 @@ class RecordingSessionService:
             SessionNotFoundError: If session not found
             SessionStateError: If session cannot be started
         """
-        session = await self.get(session_id)
+        async with self._get_lock(str(session_id)):
+            session = await self.get(session_id)
 
-        if session.status not in (SessionStatus.PENDING, SessionStatus.RECORDING):
-            raise SessionStateError(
-                f"Cannot start recording: session is {session.status.value}"
-            )
+            if session.status not in (SessionStatus.PENDING, SessionStatus.RECORDING):
+                raise SessionStateError(
+                    f"Cannot start recording: session is {session.status.value}"
+                )
 
-        session.status = SessionStatus.RECORDING
-        return await self._session_repo.update(session)
+            session.status = SessionStatus.RECORDING
+            return await self._session_repo.update(session)
 
     async def upload_segment(
         self,
@@ -431,73 +450,76 @@ class RecordingSessionService:
             SessionStateError: If session is not in recording state
             SessionValidationError: If segment validation fails
         """
-        session = await self.get(session_id)
-
-        # Validate session state
-        if session.status not in (SessionStatus.PENDING, SessionStatus.RECORDING):
-            raise SessionStateError(
-                f"Cannot upload segment: session is {session.status.value}"
-            )
-
-        # Validate prompt index
-        if segment_info.prompt_index < 0 or segment_info.prompt_index >= len(
-            session.prompts
-        ):
-            raise SessionValidationError(
-                f"Invalid prompt index: {segment_info.prompt_index}"
-            )
-
-        # Validate audio data size
+        # Validate audio data size before acquiring lock (cheap check)
         if len(audio_data) < 44:
             raise SessionValidationError("Invalid audio data: too small")
 
-        # Mode-specific duration validation
-        if session.recording_mode == "paragraph":
-            self._validate_paragraph_duration(segment_info.duration_ms)
-
-        # Convert to WAV if needed (browser sends WebM/Opus)
+        # Convert to WAV if needed before acquiring lock (expensive I/O)
         if not is_wav(audio_data):
             try:
                 audio_data = await convert_to_wav(audio_data)
             except AudioConversionError as e:
                 raise SessionValidationError(f"Audio conversion failed: {e}") from e
 
-        # Generate filename based on mode
-        filename = self._generate_segment_filename(
-            session=session,
-            prompt_index=segment_info.prompt_index,
-            prompt_text=segment_info.prompt_text,
-        )
+        async with self._get_lock(str(session_id)):
+            session = await self.get(session_id)
 
-        # Save audio
-        await self._session_repo.save_segment_audio(session_id, filename, audio_data)
+            # Validate session state
+            if session.status not in (SessionStatus.PENDING, SessionStatus.RECORDING):
+                raise SessionStateError(
+                    f"Cannot upload segment: session is {session.status.value}"
+                )
 
-        # Create segment record
-        segment = RecordingSegment(
-            prompt_index=segment_info.prompt_index,
-            prompt_text=segment_info.prompt_text,
-            audio_filename=filename,
-            duration_ms=segment_info.duration_ms,
-        )
+            # Validate prompt index
+            if segment_info.prompt_index < 0 or segment_info.prompt_index >= len(
+                session.prompts
+            ):
+                raise SessionValidationError(
+                    f"Invalid prompt index: {segment_info.prompt_index}"
+                )
 
-        # Add to session
-        session.segments.append(segment)
+            # Mode-specific duration validation
+            if session.recording_mode == "paragraph":
+                self._validate_paragraph_duration(segment_info.duration_ms)
 
-        # Update status and current index
-        if session.status == SessionStatus.PENDING:
-            session.status = SessionStatus.RECORDING
+            # Generate filename based on mode
+            filename = self._generate_segment_filename(
+                session=session,
+                prompt_index=segment_info.prompt_index,
+                prompt_text=segment_info.prompt_text,
+            )
 
-        # Move to next prompt if this was the current one
-        if segment_info.prompt_index == session.current_prompt_index:
-            session.current_prompt_index += 1
+            # Save audio
+            await self._session_repo.save_segment_audio(
+                session_id, filename, audio_data
+            )
 
-        # Check if complete
-        if session.is_complete:
-            session.status = SessionStatus.PROCESSING
+            # Create segment record
+            segment = RecordingSegment(
+                prompt_index=segment_info.prompt_index,
+                prompt_text=segment_info.prompt_text,
+                audio_filename=filename,
+                duration_ms=segment_info.duration_ms,
+            )
 
-        await self._session_repo.update(session)
+            # Add to session
+            session.segments.append(segment)
 
-        return segment
+            # Update status and current index
+            if session.status == SessionStatus.PENDING:
+                session.status = SessionStatus.RECORDING
+
+            # Move to next prompt if this was the current one
+            if segment_info.prompt_index == session.current_prompt_index:
+                session.current_prompt_index += 1
+
+            # Check if complete
+            if session.is_complete:
+                session.status = SessionStatus.PROCESSING
+
+            await self._session_repo.update(session)
+
+            return segment
 
     def _validate_paragraph_duration(self, duration_ms: float) -> None:
         """Validate duration for paragraph recordings.
@@ -579,29 +601,30 @@ class RecordingSessionService:
             SessionNotFoundError: If session not found
             SessionValidationError: If segment not found
         """
-        session = await self.get(session_id)
+        async with self._get_lock(str(session_id)):
+            session = await self.get(session_id)
 
-        # Find segment
-        segment = None
-        for s in session.segments:
-            if s.id == segment_id:
-                segment = s
-                break
+            # Find segment
+            segment = None
+            for s in session.segments:
+                if s.id == segment_id:
+                    segment = s
+                    break
 
-        if segment is None:
-            raise SessionValidationError(f"Segment '{segment_id}' not found")
+            if segment is None:
+                raise SessionValidationError(f"Segment '{segment_id}' not found")
 
-        # Mark as rejected
-        segment.is_accepted = False
-        segment.rejection_reason = reason
+            # Mark as rejected
+            segment.is_accepted = False
+            segment.rejection_reason = reason
 
-        # Update session status back to recording if needed
-        if session.status == SessionStatus.PROCESSING:
-            session.status = SessionStatus.RECORDING
+            # Update session status back to recording if needed
+            if session.status == SessionStatus.PROCESSING:
+                session.status = SessionStatus.RECORDING
 
-        await self._session_repo.update(session)
+            await self._session_repo.update(session)
 
-        return segment
+            return segment
 
     async def complete_session(self, session_id: UUID) -> RecordingSession:
         """Mark session as completed.
@@ -616,16 +639,17 @@ class RecordingSessionService:
             SessionNotFoundError: If session not found
             SessionStateError: If session cannot be completed
         """
-        session = await self.get(session_id)
+        async with self._get_lock(str(session_id)):
+            session = await self.get(session_id)
 
-        if session.status == SessionStatus.CANCELLED:
-            raise SessionStateError("Cannot complete cancelled session")
+            if session.status == SessionStatus.CANCELLED:
+                raise SessionStateError("Cannot complete cancelled session")
 
-        if session.status == SessionStatus.COMPLETED:
-            return session  # Already complete
+            if session.status == SessionStatus.COMPLETED:
+                return session  # Already complete
 
-        session.status = SessionStatus.COMPLETED
-        return await self._session_repo.update(session)
+            session.status = SessionStatus.COMPLETED
+            return await self._session_repo.update(session)
 
     async def cancel_session(self, session_id: UUID) -> RecordingSession:
         """Cancel a recording session.
@@ -639,9 +663,10 @@ class RecordingSessionService:
         Raises:
             SessionNotFoundError: If session not found
         """
-        session = await self.get(session_id)
-        session.status = SessionStatus.CANCELLED
-        return await self._session_repo.update(session)
+        async with self._get_lock(str(session_id)):
+            session = await self.get(session_id)
+            session.status = SessionStatus.CANCELLED
+            return await self._session_repo.update(session)
 
     async def delete(self, session_id: UUID) -> None:
         """Delete a recording session and all its data.
@@ -652,10 +677,11 @@ class RecordingSessionService:
         Raises:
             SessionNotFoundError: If session not found
         """
-        if not await self._session_repo.exists(session_id):
-            raise SessionNotFoundError(f"Session '{session_id}' not found")
+        async with self._get_lock(str(session_id)):
+            if not await self._session_repo.exists(session_id):
+                raise SessionNotFoundError(f"Session '{session_id}' not found")
 
-        await self._session_repo.delete(session_id)
+            await self._session_repo.delete(session_id)
 
     async def get_segment_audio_path(
         self,

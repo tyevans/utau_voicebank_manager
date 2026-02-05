@@ -5,9 +5,10 @@ from datetime import datetime
 from pathlib import Path
 
 from src.backend.domain.voicebank import Voicebank, VoicebankSummary
+from src.backend.repositories.interfaces import VoicebankRepositoryInterface
 
 
-class VoicebankRepository:
+class VoicebankRepository(VoicebankRepositoryInterface):
     """Filesystem-based repository for voicebank storage.
 
     Manages voicebanks stored as subdirectories containing WAV files
@@ -112,17 +113,21 @@ class VoicebankRepository:
             FileExistsError: If voicebank with this ID already exists
         """
         vb_path = self.base_path / voicebank_id
-        if vb_path.exists():
-            raise FileExistsError(f"Voicebank '{voicebank_id}' already exists")
-
-        vb_path.mkdir(parents=True)
+        try:
+            vb_path.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            raise FileExistsError(
+                f"Voicebank '{voicebank_id}' already exists"
+            ) from None
 
         # Write all files
         for filename, content in files.items():
             file_path = vb_path / filename
-            # Ensure we don't write outside the voicebank directory
+            # Reject path traversal attempts
             if not file_path.resolve().is_relative_to(vb_path.resolve()):
-                continue
+                raise ValueError(
+                    f"Path traversal detected: '{filename}' resolves outside voicebank directory"
+                )
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
 
@@ -209,3 +214,134 @@ class VoicebankRepository:
         """
         vb_path = self.base_path / voicebank_id
         return vb_path.exists() and vb_path.is_dir()
+
+    # Allowed metadata filenames to prevent path traversal
+    ALLOWED_METADATA_FILES: frozenset[str] = frozenset({"character.txt", "readme.txt"})
+
+    def _validate_metadata_filename(self, filename: str) -> None:
+        """Validate that the filename is an allowed metadata file.
+
+        Args:
+            filename: Metadata filename to validate
+
+        Raises:
+            ValueError: If filename is not in the allowed set
+        """
+        if filename not in self.ALLOWED_METADATA_FILES:
+            raise ValueError(
+                f"Invalid metadata filename '{filename}'. "
+                f"Allowed: {', '.join(sorted(self.ALLOWED_METADATA_FILES))}"
+            )
+
+    async def get_metadata_file(self, voicebank_id: str, filename: str) -> str | None:
+        """Read character.txt or readme.txt content from a voicebank.
+
+        Args:
+            voicebank_id: Slugified voicebank identifier
+            filename: Metadata filename ("character.txt" or "readme.txt")
+
+        Returns:
+            File content as string, or None if voicebank not found.
+            Returns empty string if voicebank exists but file does not.
+
+        Raises:
+            ValueError: If filename is not an allowed metadata file
+        """
+        self._validate_metadata_filename(filename)
+
+        vb_path = self.base_path / voicebank_id
+        if not vb_path.exists() or not vb_path.is_dir():
+            return None
+
+        file_path = vb_path / filename
+        if not file_path.exists() or not file_path.is_file():
+            return ""
+
+        return file_path.read_text(encoding="utf-8")
+
+    async def save_metadata_file(
+        self, voicebank_id: str, filename: str, content: str
+    ) -> bool:
+        """Write character.txt or readme.txt content to a voicebank.
+
+        Args:
+            voicebank_id: Slugified voicebank identifier
+            filename: Metadata filename ("character.txt" or "readme.txt")
+            content: File content to write
+
+        Returns:
+            True if written successfully, False if voicebank not found
+
+        Raises:
+            ValueError: If filename is not an allowed metadata file
+        """
+        self._validate_metadata_filename(filename)
+
+        vb_path = self.base_path / voicebank_id
+        if not vb_path.exists() or not vb_path.is_dir():
+            return False
+
+        file_path = vb_path / filename
+        file_path.write_text(content, encoding="utf-8")
+        return True
+
+    # Icon file management
+
+    ICON_FILENAME: str = "icon.bmp"
+
+    async def save_icon(self, voicebank_id: str, icon_data: bytes) -> bool:
+        """Save icon.bmp to a voicebank directory.
+
+        Args:
+            voicebank_id: Slugified voicebank identifier
+            icon_data: Raw BMP image bytes to write
+
+        Returns:
+            True if saved successfully, False if voicebank not found
+        """
+        vb_path = self.base_path / voicebank_id
+        if not vb_path.exists() or not vb_path.is_dir():
+            return False
+
+        icon_path = vb_path / self.ICON_FILENAME
+        icon_path.write_bytes(icon_data)
+        return True
+
+    async def get_icon_path(self, voicebank_id: str) -> Path | None:
+        """Get the absolute path to a voicebank's icon.bmp.
+
+        Args:
+            voicebank_id: Slugified voicebank identifier
+
+        Returns:
+            Absolute path to icon.bmp, or None if voicebank or icon not found
+        """
+        vb_path = self.base_path / voicebank_id
+        if not vb_path.exists() or not vb_path.is_dir():
+            return None
+
+        icon_path = vb_path / self.ICON_FILENAME
+        if not icon_path.exists() or not icon_path.is_file():
+            return None
+
+        return icon_path.resolve()
+
+    async def delete_icon(self, voicebank_id: str) -> bool:
+        """Delete icon.bmp from a voicebank directory.
+
+        Args:
+            voicebank_id: Slugified voicebank identifier
+
+        Returns:
+            True if deleted successfully, False if voicebank or icon not found
+        """
+        vb_path = self.base_path / voicebank_id
+        if not vb_path.exists() or not vb_path.is_dir():
+            return False
+
+        icon_path = vb_path / self.ICON_FILENAME
+        if not icon_path.exists() or not icon_path.is_file():
+            return False
+
+        icon_path.unlink()
+        return True

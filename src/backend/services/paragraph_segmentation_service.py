@@ -35,6 +35,9 @@ UTAU_SAMPLE_RATE = 44100
 # Default padding around phoneme boundaries (ms)
 DEFAULT_PADDING_MS = 15.0
 
+# Minimum confidence for sequential fallback mapping (below this, phoneme is unmapped)
+MIN_FALLBACK_CONFIDENCE = 0.3
+
 
 class ExtractedSample(BaseModel):
     """A single phoneme sample extracted from a paragraph recording.
@@ -617,21 +620,30 @@ class ParagraphSegmentationService:
                     )
                     phoneme_index += 1
                 else:
-                    # Try sequential matching as fallback
+                    # Try sequential matching as fallback, but only if
+                    # the segment has sufficient confidence
                     if phoneme_index < len(phoneme_segments):
                         segment = phoneme_segments[phoneme_index]
-                        mappings.append(
-                            {
-                                "expected_phoneme": expected_phoneme,
-                                "detected_phoneme": segment.phoneme,
-                                "source_word": word.romaji,
-                                "start_ms": segment.start_ms,
-                                "end_ms": segment.end_ms,
-                                "confidence": segment.confidence
-                                * 0.5,  # Lower confidence
-                            }
-                        )
-                        phoneme_index += 1
+                        fallback_confidence = segment.confidence * 0.5
+                        if fallback_confidence >= MIN_FALLBACK_CONFIDENCE:
+                            mappings.append(
+                                {
+                                    "expected_phoneme": expected_phoneme,
+                                    "detected_phoneme": segment.phoneme,
+                                    "source_word": word.romaji,
+                                    "start_ms": segment.start_ms,
+                                    "end_ms": segment.end_ms,
+                                    "confidence": fallback_confidence,
+                                }
+                            )
+                            phoneme_index += 1
+                        else:
+                            logger.warning(
+                                f"Unmapped phoneme '{expected_phoneme}' in word "
+                                f"'{word.romaji}': fallback confidence "
+                                f"{fallback_confidence:.2f} below threshold "
+                                f"{MIN_FALLBACK_CONFIDENCE}"
+                            )
 
         return mappings
 

@@ -5,6 +5,7 @@ These files are often encoded in Shift-JIS (Japanese Windows encoding)
 but may also be UTF-8.
 """
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -163,7 +164,11 @@ def write_oto_file(
     entries: list[OtoEntry],
     encoding: str = "utf-8",
 ) -> None:
-    """Write OtoEntry objects to an oto.ini file.
+    """Write OtoEntry objects to an oto.ini file atomically.
+
+    Writes to a temporary file first, then uses os.replace() to
+    atomically move it to the final path. This prevents partial
+    writes from corrupting the file if the process is interrupted.
 
     Args:
         path: Path where the oto.ini file should be written.
@@ -171,9 +176,28 @@ def write_oto_file(
         encoding: File encoding (default: utf-8). Use 'cp932' for
                   compatibility with older UTAU versions.
     """
+    import os
+    import tempfile
+
     path = Path(path)
     content = serialize_oto_entries(entries)
-    path.write_text(content + "\n", encoding=encoding)
+
+    # Write to a temp file in the same directory (same filesystem),
+    # then atomically replace the target. os.replace() is atomic on Linux.
+    fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=".oto_",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(content + "\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        # Clean up temp file on any failure
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
 
 
 def decode_oto_bytes(data: bytes) -> str:

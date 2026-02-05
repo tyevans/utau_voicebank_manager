@@ -1,7 +1,7 @@
 """Service layer for oto.ini business logic."""
 
 from src.backend.domain.oto_entry import OtoEntry
-from src.backend.repositories.oto_repository import OtoRepository
+from src.backend.repositories.interfaces import OtoRepositoryInterface
 
 
 class OtoNotFoundError(Exception):
@@ -23,11 +23,11 @@ class OtoService:
     delegates storage to OtoRepository.
     """
 
-    def __init__(self, repository: OtoRepository) -> None:
+    def __init__(self, repository: OtoRepositoryInterface) -> None:
         """Initialize service with repository.
 
         Args:
-            repository: OtoRepository for data access
+            repository: OtoRepositoryInterface for data access
         """
         self._repository = repository
 

@@ -30,6 +30,7 @@ import type {
   OtoEntryCreate,
   OtoEntryUpdate,
   OtoSuggestion,
+  PaginatedResponse,
   PhonemeSegment,
   Voicebank,
   VoicebankSummary,
@@ -181,7 +182,8 @@ export class ApiClient {
    * @returns Array of voicebank summaries sorted by name
    */
   async listVoicebanks(): Promise<VoicebankSummary[]> {
-    return this.request<VoicebankSummary[]>('/voicebanks');
+    const response = await this.request<PaginatedResponse<VoicebankSummary>>('/voicebanks');
+    return response.items;
   }
 
   /**
@@ -255,9 +257,10 @@ export class ApiClient {
    * @throws {ApiError} 404 if voicebank not found
    */
   async listSamples(voicebankId: string): Promise<string[]> {
-    return this.request<string[]>(
+    const response = await this.request<PaginatedResponse<string>>(
       `/voicebanks/${encodeURIComponent(voicebankId)}/samples`
     );
+    return response.items;
   }
 
   /**
@@ -322,9 +325,10 @@ export class ApiClient {
    */
   async getOtoEntries(voicebankId: string): Promise<OtoEntry[]> {
     try {
-      return await this.request<OtoEntry[]>(
+      const response = await this.request<PaginatedResponse<OtoEntry>>(
         `/voicebanks/${encodeURIComponent(voicebankId)}/oto`
       );
+      return response.items;
     } catch (error) {
       // Return empty array if oto.ini doesn't exist
       if (error instanceof ApiError && error.isNotFound()) {
@@ -350,9 +354,10 @@ export class ApiClient {
     filename: string
   ): Promise<OtoEntry[]> {
     try {
-      return await this.request<OtoEntry[]>(
+      const response = await this.request<PaginatedResponse<OtoEntry>>(
         `/voicebanks/${encodeURIComponent(voicebankId)}/oto/${encodeURIComponent(filename)}`
       );
+      return response.items;
     } catch (error) {
       // Return empty array if no entries exist for this file
       if (error instanceof ApiError && error.isNotFound()) {
@@ -494,6 +499,8 @@ export class ApiClient {
       preferSofa?: boolean;
       /** Language code for SOFA alignment. Defaults to 'ja'. */
       sofaLanguage?: string;
+      tightness?: number;
+      methodOverride?: string | null;
     }
   ): Promise<OtoSuggestion> {
     const params = new URLSearchParams({
@@ -507,6 +514,12 @@ export class ApiClient {
     params.append('prefer_sofa', String(options?.preferSofa ?? true));
     if (options?.sofaLanguage) {
       params.append('sofa_language', options.sofaLanguage);
+    }
+    if (options?.tightness !== undefined) {
+      params.append('tightness', String(options.tightness));
+    }
+    if (options?.methodOverride) {
+      params.append('method_override', options.methodOverride);
     }
 
     return this.request<OtoSuggestion>(`/ml/oto/suggest?${params}`, {
@@ -529,12 +542,151 @@ export class ApiClient {
    */
   async batchGenerateOto(
     voicebankId: string,
-    overwriteExisting = false
+    overwriteExisting = false,
+    options?: { tightness?: number; methodOverride?: string | null }
   ): Promise<BatchOtoResult> {
-    return this.requestJson<BatchOtoResult>('/ml/oto/batch-generate', 'POST', {
+    const body: Record<string, unknown> = {
       voicebank_id: voicebankId,
       overwrite_existing: overwriteExisting,
-    });
+    };
+    if (options?.tightness !== undefined) {
+      body.tightness = options.tightness;
+    }
+    if (options?.methodOverride) {
+      body.method_override = options.methodOverride;
+    }
+    return this.requestJson<BatchOtoResult>('/ml/oto/batch-generate', 'POST', body);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Alignment Config
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get the current alignment configuration.
+   */
+  async getAlignmentConfig(): Promise<{ tightness: number; method_override: string | null; computed_params: Record<string, number> }> {
+    return this.request('/ml/alignment/config');
+  }
+
+  /**
+   * Update the alignment configuration.
+   */
+  async updateAlignmentConfig(config: { tightness: number; method_override?: string | null }): Promise<{ tightness: number; method_override: string | null; computed_params: Record<string, number> }> {
+    return this.requestJson('/ml/alignment/config', 'POST', config);
+  }
+
+  /**
+   * Get available alignment methods.
+   */
+  async getAlignmentMethods(): Promise<{ methods: Array<{ name: string; display_name: string; available: boolean; description: string; languages: string[] }>; recommended: string }> {
+    return this.request('/ml/alignment/methods');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Voicebank Icon
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Upload an icon image for a voicebank.
+   *
+   * Accepts PNG, JPG, or BMP images. The backend auto-converts to 100x100 BMP.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @param file - Image file to upload
+   * @throws {ApiError} 400 if file format is invalid
+   * @throws {ApiError} 404 if voicebank not found
+   */
+  async uploadIcon(voicebankId: string, file: File): Promise<void> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    await this.request<{ success: boolean }>(
+      `/voicebanks/${encodeURIComponent(voicebankId)}/icon`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  /**
+   * Get the URL for a voicebank's icon image.
+   *
+   * This is a synchronous method that returns the URL without making
+   * a network request. The URL may 404 if no icon has been uploaded.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @returns URL to the icon image
+   */
+  getIconUrl(voicebankId: string): string {
+    return `${this.baseUrl}/voicebanks/${encodeURIComponent(voicebankId)}/icon`;
+  }
+
+  /**
+   * Delete a voicebank's icon image.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @throws {ApiError} 404 if voicebank not found
+   */
+  async deleteIcon(voicebankId: string): Promise<void> {
+    await this.request<{ success: boolean }>(
+      `/voicebanks/${encodeURIComponent(voicebankId)}/icon`,
+      { method: 'DELETE' }
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Metadata Files (character.txt, readme.txt)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get the content of a voicebank metadata file.
+   *
+   * Retrieves the raw text content of character.txt or readme.txt.
+   * Returns an empty string if the file does not exist yet.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @param filename - Metadata filename ('character.txt' or 'readme.txt')
+   * @returns File content as a string
+   * @throws {ApiError} 404 if voicebank not found
+   */
+  async getMetadataFile(voicebankId: string, filename: string): Promise<string> {
+    try {
+      const result = await this.request<{ content: string }>(
+        `/voicebanks/${encodeURIComponent(voicebankId)}/metadata/${encodeURIComponent(filename)}`
+      );
+      return result.content;
+    } catch (error) {
+      // Return empty string if file doesn't exist yet
+      if (error instanceof ApiError && error.isNotFound()) {
+        return '';
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Save content to a voicebank metadata file.
+   *
+   * Writes text content to character.txt or readme.txt.
+   * Creates the file if it does not exist.
+   *
+   * @param voicebankId - Voicebank identifier
+   * @param filename - Metadata filename ('character.txt' or 'readme.txt')
+   * @param content - File content to save
+   * @throws {ApiError} 404 if voicebank not found
+   */
+  async saveMetadataFile(
+    voicebankId: string,
+    filename: string,
+    content: string
+  ): Promise<void> {
+    await this.requestJson<{ success: boolean }>(
+      `/voicebanks/${encodeURIComponent(voicebankId)}/metadata/${encodeURIComponent(filename)}`,
+      'PUT',
+      { content }
+    );
   }
 }
 

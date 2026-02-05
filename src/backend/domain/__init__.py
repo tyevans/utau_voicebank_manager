@@ -17,6 +17,7 @@ from src.backend.domain.job import (
 )
 from src.backend.domain.oto_entry import OtoEntry
 from src.backend.domain.oto_suggestion import OtoSuggestion, OtoSuggestionRequest
+from src.backend.domain.pagination import PaginatedResponse
 from src.backend.domain.paragraph_prompt import (
     ParagraphLibrary,
     ParagraphPrompt,
@@ -40,6 +41,13 @@ from src.backend.domain.recording_session import (
     SessionProgress,
     SessionStatus,
 )
+from src.backend.domain.utau import (
+    CharacterMetadata,
+    PhonemeInventory,
+    PrefixMap,
+    PrefixMapEntry,
+    SampleQualityMetrics,
+)
 from src.backend.domain.voicebank import Voicebank, VoicebankCreate, VoicebankSummary
 
 __all__ = [
@@ -48,6 +56,7 @@ __all__ = [
     "BatchOtoRequest",
     "BatchOtoResult",
     "CVCoverage",
+    "CharacterMetadata",
     "GenerateVoicebankParams",
     "GenerateVoicebankRequest",
     "GeneratedVoicebank",
@@ -59,18 +68,23 @@ __all__ = [
     "OtoEntry",
     "OtoSuggestion",
     "OtoSuggestionRequest",
+    "PaginatedResponse",
     "ParagraphLibrary",
     "ParagraphPrompt",
     "ParagraphRecordingProgress",
     "PhonemeCoverage",
     "PhonemeDetectionResult",
+    "PhonemeInventory",
     "PhonemePrompt",
     "PhonemeSegment",
+    "PrefixMap",
+    "PrefixMapEntry",
     "PromptLibrary",
     "RecordingSegment",
     "RecordingSession",
     "RecordingSessionCreate",
     "RecordingSessionSummary",
+    "SampleQualityMetrics",
     "SegmentUpload",
     "SessionProgress",
     "SessionStatus",

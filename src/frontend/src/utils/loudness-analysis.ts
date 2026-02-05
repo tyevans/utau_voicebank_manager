@@ -142,19 +142,14 @@ export interface NormalizationOptions {
   targetRmsDb?: number;
 
   /**
-   * Maximum allowed gain in dB (default: 24dB).
+   * Maximum allowed gain in dB (default: 12dB).
    * Prevents excessive amplification of quiet signals which could
-   * amplify noise or cause distortion. The peak limiter provides
-   * additional safety by clamping based on peak levels.
-   *
-   * 24dB allows normalization to handle voicebanks recorded at
-   * low levels (common in UTAU). The peak limiter will engage
-   * before clipping occurs regardless of this setting.
+   * amplify noise or cause distortion.
    */
   maxGainDb?: number;
 
   /**
-   * Minimum allowed gain in dB (default: -24dB).
+   * Minimum allowed gain in dB (default: -12dB).
    * Prevents excessive attenuation.
    */
   minGainDb?: number;
@@ -180,6 +175,19 @@ export interface NormalizationOptions {
    * Set to 0 to disable soft-knee behavior and use hard limiting.
    */
   softKneeDb?: number;
+
+  /**
+   * Median RMS level in decibels for relative normalization.
+   *
+   * When provided, normalization targets this value instead of `targetRmsDb`.
+   * This enables relative normalization: each sample is brought toward the
+   * median RMS of all samples in the phrase, keeping overall volume at the
+   * voicebank's natural level while correcting per-sample differences.
+   *
+   * Typical usage: compute the median RMS across all samples in a phrase
+   * using `calculateMedianRmsDb()`, then pass it here.
+   */
+  medianRmsDb?: number;
 }
 
 /**
@@ -524,10 +532,11 @@ export function calculateNormalizationGain(
 ): number {
   const {
     targetRmsDb = DEFAULT_TARGET_RMS_DB,
-    maxGainDb = 24,
-    minGainDb = -24,
+    maxGainDb = 12,
+    minGainDb = -12,
     maxPeakDb = -0.3,
     softKneeDb = 6,
+    medianRmsDb,
   } = options ?? {};
 
   // Handle silent audio
@@ -535,8 +544,12 @@ export function calculateNormalizationGain(
     return 1; // No gain change for silence
   }
 
-  // Calculate required gain to reach target RMS
-  const requiredGainDb = targetRmsDb - analysis.rmsDb;
+  // Calculate required gain to reach target RMS.
+  // When medianRmsDb is provided, normalize relative to the median of
+  // all samples (keeping overall volume at the voicebank's natural level).
+  // Otherwise, normalize to the absolute targetRmsDb.
+  const effectiveTargetDb = medianRmsDb ?? targetRmsDb;
+  const requiredGainDb = effectiveTargetDb - analysis.rmsDb;
 
   // Clamp to gain limits
   const rmsGainDb = Math.max(minGainDb, Math.min(maxGainDb, requiredGainDb));
@@ -569,6 +582,45 @@ export function calculateNormalizationGain(
   }
 
   return dbToLinear(gainDb);
+}
+
+/**
+ * Calculate the median RMS (in dB) across an array of loudness analyses.
+ *
+ * Used for relative normalization: instead of targeting an absolute RMS level,
+ * each sample is normalized toward the median RMS of all samples in the phrase.
+ * This keeps the overall volume at the voicebank's natural level while correcting
+ * per-sample volume differences.
+ *
+ * @param analyses - Array of LoudnessAnalysis results
+ * @returns Median RMS in dB, or DEFAULT_TARGET_RMS_DB if no valid analyses
+ *
+ * @example
+ * ```typescript
+ * const analyses = samples.map(s => analyzeLoudnessForNormalization(s.buffer, s.oto));
+ * const medianRmsDb = calculateMedianRmsDb(analyses);
+ * // Use medianRmsDb in NormalizationOptions for relative normalization
+ * const gain = calculateNormalizationGain(analysis, { medianRmsDb });
+ * ```
+ */
+export function calculateMedianRmsDb(analyses: LoudnessAnalysis[]): number {
+  // Filter to analyses with actual audio content
+  const validRmsValues = analyses
+    .filter(a => a.hasContent)
+    .map(a => a.rmsDb)
+    .sort((a, b) => a - b);
+
+  if (validRmsValues.length === 0) {
+    return DEFAULT_TARGET_RMS_DB;
+  }
+
+  const mid = Math.floor(validRmsValues.length / 2);
+  if (validRmsValues.length % 2 === 0) {
+    // Even count: average the two middle values
+    return (validRmsValues[mid - 1] + validRmsValues[mid]) / 2;
+  }
+  // Odd count: take the middle value
+  return validRmsValues[mid];
 }
 
 /**

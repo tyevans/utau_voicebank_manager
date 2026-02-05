@@ -12,9 +12,10 @@ from src.backend.domain.recording_session import (
     RecordingSessionSummary,
     SessionStatus,
 )
+from src.backend.repositories.interfaces import RecordingSessionRepositoryInterface
 
 
-class RecordingSessionRepository:
+class RecordingSessionRepository(RecordingSessionRepositoryInterface):
     """Filesystem-based repository for recording session storage.
 
     Manages recording sessions stored as JSON metadata with audio segments

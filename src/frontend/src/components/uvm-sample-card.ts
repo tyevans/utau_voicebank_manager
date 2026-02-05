@@ -193,6 +193,18 @@ export class UvmSampleCard extends LitElement {
   @property({ type: Number })
   otoOffset = 0;
 
+  /**
+   * Oto consonant marker for loop region (ms).
+   */
+  @property({ type: Number })
+  otoConsonant = 0;
+
+  /**
+   * Oto cutoff for loop region (ms). Negative = from end.
+   */
+  @property({ type: Number })
+  otoCutoff = 0;
+
   @state()
   private _audioBuffer: AudioBuffer | null = null;
 
@@ -423,6 +435,40 @@ export class UvmSampleCard extends LitElement {
       const offsetSec = Math.max(0, this.otoOffset / 1000);
       const duration = 0.5; // 500ms preview
 
+      // Compute vowel-region loop boundaries for sustained preview
+      const consonantSec = Math.max(this.otoOffset, this.otoConsonant) / 1000;
+      let sampleEndSec: number;
+      if (this.otoCutoff < 0) {
+        sampleEndSec = this._audioBuffer.duration + (this.otoCutoff / 1000);
+      } else if (this.otoCutoff > 0) {
+        sampleEndSec = this.otoCutoff / 1000;
+      } else {
+        sampleEndSec = this._audioBuffer.duration;
+      }
+      const vowelDuration = sampleEndSec - consonantSec;
+      const canLoop = vowelDuration >= 0.04; // MIN_LOOP_REGION
+
+      if (canLoop) {
+        source.loop = true;
+        source.loopStart = consonantSec;
+        source.loopEnd = sampleEndSec;
+      }
+
+      // Diagnostic: measure RMS of the preview region
+      const ch = this._audioBuffer.getChannelData(0);
+      const sr = this._audioBuffer.sampleRate;
+      const s0 = Math.floor(offsetSec * sr);
+      const s1 = Math.min(ch.length, Math.floor((offsetSec + duration) * sr));
+      let sum = 0;
+      for (let j = s0; j < s1; j++) sum += ch[j] * ch[j];
+      const rms = Math.sqrt(sum / Math.max(1, s1 - s0));
+      const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+      console.log(
+        `[Preview] ${this.filename}: otoOffset=${this.otoOffset}ms offsetSec=${offsetSec.toFixed(3)} ` +
+        `dur=${duration} bufDur=${this._audioBuffer.duration.toFixed(3)} ` +
+        `previewRms=${rmsDb.toFixed(1)}dB samples=${s0}-${s1} loop=${canLoop}`
+      );
+
       source.start(0, offsetSec, duration);
       this._sourceNode = source;
 
@@ -491,6 +537,9 @@ export class UvmSampleCard extends LitElement {
           composed: true,
         })
       );
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      this._onClick();
     }
   }
 
@@ -508,6 +557,7 @@ export class UvmSampleCard extends LitElement {
         tabindex="0"
         role="option"
         aria-selected=${this.selected}
+        aria-label="${this._displayName()}${this.hasOto ? ', configured' : ', not configured'}"
         @click=${this._onClick}
         @dblclick=${this._onDblClick}
         @keydown=${this._onKeyDown}
@@ -515,12 +565,15 @@ export class UvmSampleCard extends LitElement {
         @mouseleave=${this._onMouseLeave}
       >
         <div class="waveform-container">
-          <canvas></canvas>
-          ${this._loading ? html`<div class="loading-indicator"></div>` : null}
-          ${this._isPlayingPreview ? html`<div class="preview-indicator"></div>` : null}
+          <canvas aria-hidden="true"></canvas>
+          ${this._loading ? html`<div class="loading-indicator" aria-label="Loading waveform"></div>` : null}
+          ${this._isPlayingPreview ? html`<div class="preview-indicator" aria-label="Playing preview"></div>` : null}
         </div>
         <div class="card-footer">
-          <span class="status-dot ${this.hasOto ? 'configured' : 'pending'}"></span>
+          <span
+            class="status-dot ${this.hasOto ? 'configured' : 'pending'}"
+            aria-hidden="true"
+          ></span>
           <span class="sample-name" title=${this.filename}>${this._displayName()}</span>
         </div>
       </div>

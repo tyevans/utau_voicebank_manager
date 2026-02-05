@@ -727,7 +727,16 @@ class SOFAForcedAligner(ForcedAligner):
                 cwd=str(self._sofa_path),  # Run from SOFA directory
             )
 
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=120
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                raise AlignmentError(
+                    "SOFA alignment timed out after 120s (possible GPU OOM)"
+                )
 
             if process.returncode != 0:
                 error_msg = (
@@ -932,7 +941,18 @@ class SOFAForcedAligner(ForcedAligner):
                 cwd=str(self._sofa_path),
             )
 
-            stdout, stderr = await process.communicate()
+            # Batch alignment gets longer timeout (5 min) since it processes multiple files
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=300
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                raise AlignmentError(
+                    f"SOFA batch alignment timed out after 300s for {len(items)} files "
+                    "(possible GPU OOM)"
+                )
 
             # Always log SOFA output for debugging
             if stdout:

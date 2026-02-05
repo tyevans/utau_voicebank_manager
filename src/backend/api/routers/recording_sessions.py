@@ -24,6 +24,7 @@ from src.backend.domain.generated_voicebank import (
     GenerateVoicebankRequest,
 )
 from src.backend.domain.job import GenerateVoicebankParams, Job, JobType
+from src.backend.domain.pagination import PaginatedResponse
 from src.backend.domain.paragraph_prompt import ParagraphRecordingProgress
 from src.backend.domain.recording_session import (
     RecordingSegment,
@@ -142,25 +143,39 @@ async def create_session(
         ) from e
 
 
-@router.get("", response_model=list[RecordingSessionSummary])
+@router.get("", response_model=PaginatedResponse[RecordingSessionSummary])
 async def list_sessions(
     service: Annotated[RecordingSessionService, Depends(get_session_service)],
     voicebank_id: str | None = None,
-) -> list[RecordingSessionSummary]:
-    """List recording sessions.
+    limit: Annotated[
+        int,
+        Query(ge=1, le=500, description="Maximum items to return"),
+    ] = 100,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of items to skip"),
+    ] = 0,
+) -> PaginatedResponse[RecordingSessionSummary]:
+    """List recording sessions with pagination.
 
     Returns summaries of all recording sessions, optionally filtered
     by voicebank.
 
     Args:
         voicebank_id: Optional filter for specific voicebank
+        limit: Maximum number of items to return (1-500, default 100)
+        offset: Number of items to skip (default 0)
 
     Returns:
-        List of session summaries sorted by creation date (newest first)
+        Paginated list of session summaries sorted by creation date (newest first)
     """
     if voicebank_id:
-        return await service.list_by_voicebank(voicebank_id)
-    return await service.list_all()
+        all_items = await service.list_by_voicebank(voicebank_id)
+    else:
+        all_items = await service.list_all()
+    total = len(all_items)
+    items = all_items[offset : offset + limit]
+    return PaginatedResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/{session_id}", response_model=RecordingSession)

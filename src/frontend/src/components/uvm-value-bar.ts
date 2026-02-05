@@ -208,8 +208,8 @@ export class UvmValueBar extends LitElement {
   private _renderMarkerGroup(marker: MarkerConfig) {
     const value = this._getMarkerValue(marker.key);
     return html`
-      <div class="value-group" title="${marker.label}">
-        <span class="marker-icon ${marker.key}">${marker.icon}</span>
+      <div class="value-group" title="${marker.label}" aria-label="${marker.label}: ${this._formatValue(value)}">
+        <span class="marker-icon ${marker.key}" aria-hidden="true">${marker.icon}</span>
         <span class="value-text">${this._formatValue(value)}</span>
       </div>
     `;
