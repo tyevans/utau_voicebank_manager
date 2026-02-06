@@ -243,7 +243,7 @@ export class UvmSampleGrid extends LitElement {
       new CustomEvent('sample-select', {
         detail: { filename },
         bubbles: true,
-        composed: true,
+        composed: false,
       })
     );
   }

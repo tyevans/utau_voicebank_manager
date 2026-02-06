@@ -118,9 +118,9 @@ COPY --from=frontend-builder /app/frontend/dist ./src/frontend/dist
 
 # Create non-root user and runtime directories
 RUN groupadd --gid 1000 appuser && \
-    useradd --uid 1000 --gid appuser --no-create-home appuser && \
-    mkdir -p /app/models /app/data/voicebanks && \
-    chown -R appuser:appuser /app
+    useradd --uid 1000 --gid appuser --create-home appuser && \
+    mkdir -p /app/models /app/data/voicebanks /home/appuser/.cache/uv && \
+    chown -R appuser:appuser /app /home/appuser
 
 USER appuser
 

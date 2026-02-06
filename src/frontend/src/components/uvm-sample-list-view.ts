@@ -148,7 +148,7 @@ export class UvmSampleListView extends LitElement {
         new CustomEvent('sample-select', {
           detail: { filename },
           bubbles: true,
-          composed: true,
+          composed: false,
         })
       );
     } else if (e.key === 'ArrowDown') {
