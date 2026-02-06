@@ -36,14 +36,9 @@ class MockAudioBuffer {
  * Minimal OfflineAudioContext mock that only supports createBuffer().
  */
 class MockOfflineAudioContext {
-  private _numberOfChannels: number;
-  private _length: number;
-  private _sampleRate: number;
-
-  constructor(numberOfChannels: number, length: number, sampleRate: number) {
-    this._numberOfChannels = numberOfChannels;
-    this._length = length;
-    this._sampleRate = sampleRate;
+  constructor(_numberOfChannels: number, _length: number, _sampleRate: number) {
+    // Args accepted to match OfflineAudioContext signature; not stored.
+    void _numberOfChannels; void _length; void _sampleRate;
   }
 
   createBuffer(channels: number, length: number, sampleRate: number): MockAudioBuffer {
