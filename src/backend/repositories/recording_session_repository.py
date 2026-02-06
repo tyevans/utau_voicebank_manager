@@ -1,7 +1,9 @@
 """Repository for recording session storage and retrieval."""
 
 import json
+import os
 import shutil
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -53,6 +55,47 @@ class RecordingSessionRepository(RecordingSessionRepositoryInterface):
     def _segments_dir(self, session_id: UUID) -> Path:
         """Get path to segments directory."""
         return self._session_dir(session_id) / "segments"
+
+    @staticmethod
+    def _atomic_write_bytes(target: Path, data: bytes) -> None:
+        """Write bytes to a file atomically using write-to-temp-then-rename.
+
+        Creates a temporary file in the same directory as the target, writes
+        the data, then atomically replaces the target (POSIX guarantee).
+
+        Args:
+            target: Final destination path
+            data: Bytes to write
+        """
+        fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp_path, target)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _atomic_write_text(target: Path, text: str, encoding: str = "utf-8") -> None:
+        """Write text to a file atomically using write-to-temp-then-rename.
+
+        Creates a temporary file in the same directory as the target, writes
+        the text, then atomically replaces the target (POSIX guarantee).
+
+        Args:
+            target: Final destination path
+            text: Text content to write
+            encoding: Text encoding (default utf-8)
+        """
+        fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding=encoding) as f:
+                f.write(text)
+            os.replace(tmp_path, target)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
 
     def _serialize_session(self, session: RecordingSession) -> dict:
         """Serialize session to JSON-compatible dict."""
@@ -134,9 +177,11 @@ class RecordingSessionRepository(RecordingSessionRepositoryInterface):
         session_dir.mkdir(parents=True)
         self._segments_dir(session.id).mkdir()
 
-        # Write session metadata
+        # Write session metadata atomically
         session_file = self._session_file(session.id)
-        session_file.write_text(json.dumps(self._serialize_session(session), indent=2))
+        self._atomic_write_text(
+            session_file, json.dumps(self._serialize_session(session), indent=2)
+        )
 
         return session
 
@@ -175,8 +220,10 @@ class RecordingSessionRepository(RecordingSessionRepositoryInterface):
         # Update timestamp
         session.updated_at = datetime.now(UTC)
 
-        # Write updated metadata
-        session_file.write_text(json.dumps(self._serialize_session(session), indent=2))
+        # Write updated metadata atomically
+        self._atomic_write_text(
+            session_file, json.dumps(self._serialize_session(session), indent=2)
+        )
 
         return session
 
@@ -259,7 +306,7 @@ class RecordingSessionRepository(RecordingSessionRepositoryInterface):
         if not audio_path.resolve().is_relative_to(segments_dir.resolve()):
             raise ValueError("Invalid filename")
 
-        audio_path.write_bytes(audio_data)
+        self._atomic_write_bytes(audio_path, audio_data)
         return audio_path
 
     async def get_segment_audio_path(

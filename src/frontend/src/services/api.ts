@@ -36,6 +36,10 @@ import type {
   VoicebankSummary,
 } from './types.js';
 
+import type { RetryOptions } from '../utils/fetch-retry.js';
+import { fetchWithRetry } from '../utils/fetch-retry.js';
+import { dispatchOtoEntriesChanged } from '../events/oto-events.js';
+
 /**
  * Custom error class for API errors.
  * Includes HTTP status code and server error message.
@@ -114,19 +118,24 @@ export class ApiClient {
 
   /**
    * Make an HTTP request and handle errors.
+   *
+   * Automatically retries on transient server errors (5xx) and rate limiting (429).
+   * Pass `retryOptions: { noRetry: true }` to disable retries for mutations
+   * that should not be repeated.
    */
   private async request<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    retryOptions?: RetryOptions,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       ...options,
       headers: {
         ...options.headers,
       },
-    });
+    }, retryOptions);
 
     if (!response.ok) {
       let message = `HTTP ${response.status}: ${response.statusText}`;
@@ -161,7 +170,8 @@ export class ApiClient {
   private async requestJson<T>(
     path: string,
     method: 'POST' | 'PUT' | 'PATCH',
-    body: unknown
+    body: unknown,
+    retryOptions?: RetryOptions,
   ): Promise<T> {
     return this.request<T>(path, {
       method,
@@ -169,7 +179,7 @@ export class ApiClient {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-    });
+    }, retryOptions);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -232,7 +242,7 @@ export class ApiClient {
     return this.request<Voicebank>('/voicebanks', {
       method: 'POST',
       body: formData,
-    });
+    }, { noRetry: true });
   }
 
   /**
@@ -246,7 +256,7 @@ export class ApiClient {
   async deleteVoicebank(id: string): Promise<void> {
     await this.request<void>(`/voicebanks/${encodeURIComponent(id)}`, {
       method: 'DELETE',
-    });
+    }, { noRetry: true });
   }
 
   /**
@@ -296,7 +306,7 @@ export class ApiClient {
     audioContext: AudioContext
   ): Promise<AudioBuffer> {
     const url = this.getSampleUrl(voicebankId, filename);
-    const response = await fetch(url);
+    const response = await fetchWithRetry(url);
 
     if (!response.ok) {
       throw new ApiError(
@@ -386,11 +396,14 @@ export class ApiClient {
     voicebankId: string,
     entry: OtoEntryCreate
   ): Promise<OtoEntry> {
-    return this.requestJson<OtoEntry>(
+    const result = await this.requestJson<OtoEntry>(
       `/voicebanks/${encodeURIComponent(voicebankId)}/oto`,
       'POST',
-      entry
+      entry,
+      { noRetry: true },
     );
+    dispatchOtoEntriesChanged(voicebankId, 'create');
+    return result;
   }
 
   /**
@@ -412,11 +425,13 @@ export class ApiClient {
     alias: string,
     update: OtoEntryUpdate
   ): Promise<OtoEntry> {
-    return this.requestJson<OtoEntry>(
+    const result = await this.requestJson<OtoEntry>(
       `/voicebanks/${encodeURIComponent(voicebankId)}/oto/${encodeURIComponent(filename)}/${encodeURIComponent(alias)}`,
       'PUT',
       update
     );
+    dispatchOtoEntriesChanged(voicebankId, 'update');
+    return result;
   }
 
   /**
@@ -436,8 +451,10 @@ export class ApiClient {
   ): Promise<void> {
     await this.request<void>(
       `/voicebanks/${encodeURIComponent(voicebankId)}/oto/${encodeURIComponent(filename)}/${encodeURIComponent(alias)}`,
-      { method: 'DELETE' }
+      { method: 'DELETE' },
+      { noRetry: true },
     );
+    dispatchOtoEntriesChanged(voicebankId, 'delete');
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -555,7 +572,9 @@ export class ApiClient {
     if (options?.methodOverride) {
       body.method_override = options.methodOverride;
     }
-    return this.requestJson<BatchOtoResult>('/ml/oto/batch-generate', 'POST', body);
+    const result = await this.requestJson<BatchOtoResult>('/ml/oto/batch-generate', 'POST', body);
+    dispatchOtoEntriesChanged(voicebankId, 'batch');
+    return result;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -632,7 +651,8 @@ export class ApiClient {
   async deleteIcon(voicebankId: string): Promise<void> {
     await this.request<{ success: boolean }>(
       `/voicebanks/${encodeURIComponent(voicebankId)}/icon`,
-      { method: 'DELETE' }
+      { method: 'DELETE' },
+      { noRetry: true },
     );
   }
 

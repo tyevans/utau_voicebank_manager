@@ -369,6 +369,7 @@ export class UvmFirstSing extends LitElement {
 
       if (!this._loader) {
         this._loader = new SampleLoader(this._audioContext, api);
+        this._loader.enableAutoInvalidation();
       }
 
       // Get oto entries (use provided or fetch from API)
@@ -516,6 +517,7 @@ export class UvmFirstSing extends LitElement {
     this._stop();
 
     if (this._loader) {
+      this._loader.disableAutoInvalidation();
       this._loader.clearCache();
     }
 

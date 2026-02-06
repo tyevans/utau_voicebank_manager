@@ -20,10 +20,11 @@ from src.backend.utils.espeak_config import configure_espeak  # noqa: E402
 
 configure_espeak()
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from src.backend.api.routers import api_router
+from src.backend.api.exception_handlers import register_exception_handlers  # noqa: E402
+from src.backend.api.routers import api_router  # noqa: E402
 
 
 @asynccontextmanager
@@ -76,6 +77,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Centralized exception handlers — maps domain exceptions to HTTP responses
+register_exception_handlers(app)
 
 # CORS middleware — configurable via UVM_CORS_ORIGINS env var (comma-separated)
 _default_origins = [

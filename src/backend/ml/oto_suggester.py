@@ -307,9 +307,10 @@ class OtoSuggester:
         params = self._get_params(recording_style)
 
         # Run phoneme detection
-        segments = []
+        segments: list[PhonemeSegment] = []
         audio_duration_ms = 0.0
-        detection_method = "none"
+        detection_method = "defaults"
+        fallback_reasons: list[str] = []
 
         # Determine which methods to try based on method_override
         method_override = self._alignment_config.method_override
@@ -338,14 +339,18 @@ class OtoSuggester:
                     f"{len(segments)} segments detected"
                 )
             except DictionaryValidationError as e:
-                # Phonemes not in SOFA dictionary - expected for some samples
-                # Log at info level and fall back to other methods
-                logger.info(
-                    f"SOFA dictionary validation failed for {filename}: "
-                    f"unrecognized phonemes {e.unrecognized_phonemes}. "
+                reason = (
+                    f"SOFA dictionary validation failed: "
+                    f"unrecognized phonemes {e.unrecognized_phonemes}"
+                )
+                fallback_reasons.append(reason)
+                logger.warning(
+                    f"{reason} for {filename}. "
                     "Falling back to MMS_FA forced alignment."
                 )
             except AlignmentError as e:
+                reason = f"SOFA alignment error: {e}"
+                fallback_reasons.append(reason)
                 logger.warning(
                     f"SOFA alignment failed for {filename}, "
                     f"falling back to MMS_FA forced alignment: {e}"
@@ -359,12 +364,14 @@ class OtoSuggester:
                 )
                 segments = detection_result.segments
                 audio_duration_ms = detection_result.audio_duration_ms
-                detection_method = "forced_alignment"
+                detection_method = "mms_fa"
                 logger.info(
                     f"MMS_FA forced alignment succeeded for {filename}: "
                     f"{len(segments)} segments detected"
                 )
             except (ForcedAlignmentError, TranscriptExtractionError) as e:
+                reason = f"MMS_FA forced alignment failed: {e}"
+                fallback_reasons.append(reason)
                 logger.warning(
                     f"MMS_FA forced alignment failed for {filename}, "
                     f"using defaults: {e}"
@@ -385,7 +392,10 @@ class OtoSuggester:
         classification = self._classify_phonemes(segments)
 
         # Calculate confidence based on detection quality
-        confidence = self._calculate_confidence(segments, audio_duration_ms)
+        expected_count = self._estimate_expected_phoneme_count(filename)
+        confidence = self._calculate_confidence(
+            segments, audio_duration_ms, expected_phoneme_count=expected_count
+        )
 
         # Estimate parameters using alignment params from config
         if segments and confidence >= params.min_confidence_threshold:
@@ -426,6 +436,8 @@ class OtoSuggester:
             confidence=round(confidence, 3),
             phonemes_detected=segments,
             audio_duration_ms=round(audio_duration_ms, 1),
+            method_used=detection_method,
+            fallback_reasons=fallback_reasons,
         )
 
     async def batch_suggest_oto(
@@ -479,10 +491,16 @@ class OtoSuggester:
         # Initialize suggestions list with None placeholders
         suggestions: list[OtoSuggestion | None] = [None] * len(audio_paths)
 
+        # Per-file fallback reasons tracking
+        file_fallback_reasons: dict[int, list[str]] = {
+            idx: [] for idx in range(len(audio_paths))
+        }
+
         # Build a set of paths still needing alignment (have valid transcripts)
         pending_indices: list[int] = list(range(len(audio_paths)))
 
         # Phase 1: Batch SOFA (if available)
+        sofa_batch_error: str | None = None
         if self.use_sofa and is_sofa_available():
             sofa_items = [
                 (audio_paths[idx], path_to_transcript[audio_paths[idx]])
@@ -500,6 +518,7 @@ class OtoSuggester:
                         f"{len(sofa_results)}/{len(sofa_items)} files"
                     )
                 except AlignmentError as e:
+                    sofa_batch_error = f"SOFA batch alignment error: {e}"
                     logger.warning(
                         f"SOFA batch alignment failed entirely: {e}. "
                         "Proceeding to MMS_FA batch."
@@ -522,8 +541,15 @@ class OtoSuggester:
                             segments=result.segments,
                             audio_duration_ms=result.audio_duration_ms,
                             detection_method="sofa",
+                            fallback_reasons=file_fallback_reasons[idx],
                         )
                         resolved_indices.append(idx)
+                    elif sofa_batch_error:
+                        file_fallback_reasons[idx].append(sofa_batch_error)
+                    else:
+                        file_fallback_reasons[idx].append(
+                            f"SOFA returned no result for {audio_path.name}"
+                        )
 
                 # Remove resolved indices from pending
                 pending_indices = [
@@ -551,6 +577,9 @@ class OtoSuggester:
                         f"{len(mms_results)}/{len(mms_items)} files"
                     )
                 except ForcedAlignmentError as e:
+                    mms_fa_batch_error = f"MMS_FA batch alignment error: {e}"
+                    for idx in pending_indices:
+                        file_fallback_reasons[idx].append(mms_fa_batch_error)
                     logger.warning(
                         f"MMS_FA batch alignment failed entirely: {e}. "
                         "Remaining files will be skipped."
@@ -572,7 +601,8 @@ class OtoSuggester:
                             alias=alias,
                             segments=result.segments,
                             audio_duration_ms=result.audio_duration_ms,
-                            detection_method="forced_alignment",
+                            detection_method="mms_fa",
+                            fallback_reasons=file_fallback_reasons[idx],
                         )
                         resolved_indices.append(idx)
 
@@ -599,6 +629,7 @@ class OtoSuggester:
         audio_duration_ms: float,
         detection_method: str,
         params: AlignmentParams | None = None,
+        fallback_reasons: list[str] | None = None,
     ) -> OtoSuggestion:
         """Build an OtoSuggestion from alignment results.
 
@@ -609,8 +640,11 @@ class OtoSuggester:
             alias: Phoneme alias
             segments: Detected phoneme segments
             audio_duration_ms: Total audio duration
-            detection_method: Detection method used (for logging)
+            detection_method: Detection method used (e.g., 'sofa', 'mms_fa')
             params: Optional alignment params. If not provided, uses default config.
+            fallback_reasons: Optional list of reasons higher-priority methods
+                were skipped. Included in the returned OtoSuggestion for
+                frontend display.
 
         Returns:
             OtoSuggestion with estimated parameters
@@ -625,7 +659,10 @@ class OtoSuggester:
         classification = self._classify_phonemes(segments)
 
         # Calculate confidence based on detection quality
-        confidence = self._calculate_confidence(segments, audio_duration_ms)
+        expected_count = self._estimate_expected_phoneme_count(filename)
+        confidence = self._calculate_confidence(
+            segments, audio_duration_ms, expected_phoneme_count=expected_count
+        )
 
         # Estimate parameters using alignment params from config
         if segments and confidence >= params.min_confidence_threshold:
@@ -666,6 +703,8 @@ class OtoSuggester:
             confidence=round(confidence, 3),
             phonemes_detected=segments,
             audio_duration_ms=round(audio_duration_ms, 1),
+            method_used=detection_method,
+            fallback_reasons=fallback_reasons or [],
         )
 
     def _generate_alias_from_filename(self, filename: str) -> str:
@@ -1163,18 +1202,66 @@ class OtoSuggester:
         # If sound extends very close to end, use small negative value
         return min(cutoff, -10)
 
+    @staticmethod
+    def _estimate_expected_phoneme_count(filename: str) -> int | None:
+        """Estimate the expected number of IPA-level phonemes from a filename.
+
+        Uses the transcript extracted from the UTAU filename to estimate how
+        many individual phoneme segments the aligner should produce. Each
+        romaji token is decomposed into its constituent phonemes:
+        - Pure vowels (a, i, u, e, o) -> 1 phoneme
+        - Moraic nasal (n/nn) -> 1 phoneme
+        - CV syllables (ka, shi, tsu, etc.) -> 2 phonemes (consonant + vowel)
+
+        Args:
+            filename: The audio filename (e.g., "_a_ka.wav")
+
+        Returns:
+            Estimated phoneme count, or None if transcript cannot be extracted.
+        """
+        try:
+            transcript = extract_transcript_from_filename(filename)
+        except TranscriptExtractionError:
+            return None
+
+        if not transcript.strip():
+            return None
+
+        tokens = transcript.strip().split()
+        # Japanese pure vowels (single phoneme each)
+        pure_vowels = {"a", "i", "u", "e", "o"}
+        # Moraic nasal (single phoneme)
+        moraic_nasal = {"n", "nn", "m"}
+
+        count = 0
+        for token in tokens:
+            token_lower = token.lower()
+            if token_lower in pure_vowels or token_lower in moraic_nasal:
+                count += 1
+            else:
+                # Consonant + vowel (or longer cluster) -> at least 2 phonemes
+                count += 2
+
+        return count if count > 0 else None
+
     def _calculate_confidence(
-        self, segments: list[PhonemeSegment], audio_duration_ms: float
+        self,
+        segments: list[PhonemeSegment],
+        audio_duration_ms: float,
+        expected_phoneme_count: int | None = None,
     ) -> float:
         """Calculate overall confidence in the suggestion.
 
-        For UTAU voicebank samples (sustained vowels), the key indicators are:
+        Combines four factors to assess alignment quality:
         - Coverage: How much of the audio is covered by detected segments
         - Segment consistency: Segments should be contiguous and ordered
-        - Raw detection confidence: Used as a minor factor
+        - Raw detection confidence: The aligner's own confidence scores
+        - Phoneme count match: Whether the detected count matches expected
 
-        The raw FA confidence is often low for sustained vowels (model expects
-        short phonemes), so we prioritize coverage as the main quality signal.
+        The phoneme count match factor penalizes missing phonemes. If the
+        transcript says "a ka" (expecting 3 phonemes: a, k, a) but only 1
+        segment was detected, confidence is reduced. Extra segments beyond
+        the expected count are not penalized (they may be valid splits).
 
         A low-confidence penalty is applied when the average raw FA confidence
         is below 0.1. This prevents genuinely bad alignments (where the aligner
@@ -1185,6 +1272,9 @@ class OtoSuggester:
         Args:
             segments: List of detected phoneme segments
             audio_duration_ms: Total audio duration
+            expected_phoneme_count: Expected number of phoneme segments from
+                transcript. If None, phoneme count match factor is omitted
+                and remaining weights are redistributed proportionally.
 
         Returns:
             Overall confidence score (0-1)
@@ -1192,7 +1282,7 @@ class OtoSuggester:
         if not segments:
             return 0.0
 
-        # Factor 1: Coverage of audio (most important for UTAU samples)
+        # Factor 1: Coverage of audio
         # Energy-extended segments should cover most of the sound
         total_segment_duration = sum(s.duration_ms for s in segments)
         coverage = (
@@ -1221,15 +1311,35 @@ class OtoSuggester:
 
         # Factor 3: Raw detection confidence (minor factor)
         # This is often low for sustained vowels, so we weight it less.
-        # Note: The normalization floors at 0.0 (raw_score is always >= 0),
-        # but very low raw confidence (< 0.1) triggers a separate penalty
-        # after the weighted combination to cap the final score.
         avg_raw_confidence = float(np.mean([s.confidence for s in segments]))
         # Normalize: FA confidence of 0.3+ is considered good
         raw_score = min(1.0, avg_raw_confidence / 0.3)
 
-        # Weighted combination: coverage is primary, raw confidence is secondary
-        confidence = coverage_score * 0.6 + consistency_score * 0.25 + raw_score * 0.15
+        # Factor 4: Phoneme count match
+        # Penalizes missing phonemes without penalizing extra segments.
+        # Formula: min(detected, expected) / expected
+        # - detected=1, expected=3 -> 0.33 (heavily penalized)
+        # - detected=3, expected=3 -> 1.0  (perfect)
+        # - detected=5, expected=3 -> 1.0  (no penalty for extras)
+        if expected_phoneme_count is not None and expected_phoneme_count > 0:
+            detected_count = len(segments)
+            count_match_score = min(detected_count, expected_phoneme_count) / (
+                expected_phoneme_count
+            )
+            # Weighted combination with phoneme count match:
+            # 30% coverage + 25% consistency + 15% raw detection + 30% count match
+            confidence = (
+                coverage_score * 0.30
+                + consistency_score * 0.25
+                + raw_score * 0.15
+                + count_match_score * 0.30
+            )
+        else:
+            # No expected count available: use original 3-factor weighting.
+            # Coverage remains primary since we can't assess phoneme completeness.
+            confidence = (
+                coverage_score * 0.60 + consistency_score * 0.25 + raw_score * 0.15
+            )
 
         # Low-confidence penalty: if the aligner itself is very uncertain
         # (avg_raw_confidence < 0.1), scale down the final score to prevent

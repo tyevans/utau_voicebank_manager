@@ -41,6 +41,20 @@ class Settings(BaseSettings):
     # Job settings
     job_ttl_seconds: int = 7 * 24 * 3600  # 7 days
 
+    # Worker retry settings
+    worker_max_retries: int = 3
+    worker_retry_base_delay: float = 5.0  # seconds, doubled each retry
+    worker_retry_max_delay: float = 120.0  # cap for exponential backoff
+
+    # SMTP email notification settings
+    smtp_host: str = "localhost"
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str = "noreply@example.com"
+    smtp_tls: bool = True
+    base_url: str = "http://localhost:5173"
+
     model_config = {"env_prefix": "UVM_"}
 
 

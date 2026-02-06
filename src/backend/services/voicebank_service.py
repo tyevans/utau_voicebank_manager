@@ -74,7 +74,11 @@ class VoicebankService:
             # Fall back to original filename if decoding fails
             return info.filename
 
-    def _extract_zip(self, zip_content: bytes) -> dict[str, bytes]:
+    def _extract_zip(
+        self,
+        zip_content: bytes,
+        max_decompressed_size: int | None = None,
+    ) -> dict[str, bytes]:
         """Extract files from a ZIP archive.
 
         Handles Japanese Shift-JIS encoded filenames commonly found in UTAU
@@ -82,15 +86,19 @@ class VoicebankService:
 
         Args:
             zip_content: Raw ZIP file bytes
+            max_decompressed_size: Maximum total bytes allowed after
+                decompression. None means no limit.
 
         Returns:
             Dictionary mapping filenames to contents
 
         Raises:
-            VoicebankValidationError: If ZIP is invalid or contains no valid files
+            VoicebankValidationError: If ZIP is invalid, contains no valid
+                files, or exceeds the decompressed size limit
         """
         try:
             files: dict[str, bytes] = {}
+            cumulative_size = 0
             with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
                 for info in zf.infolist():
                     # Skip directories
@@ -101,7 +109,33 @@ class VoicebankService:
                     # Skip hidden files and macOS metadata
                     if filename.startswith(".") or "__MACOSX" in filename:
                         continue
-                    files[filename] = zf.read(info)
+
+                    # Check declared size before reading (fast pre-check)
+                    if (
+                        max_decompressed_size is not None
+                        and cumulative_size + info.file_size > max_decompressed_size
+                    ):
+                        limit_mb = max_decompressed_size // (1024 * 1024)
+                        raise VoicebankValidationError(
+                            f"ZIP decompressed content exceeds {limit_mb}MB limit. "
+                            "Upload a smaller archive."
+                        )
+
+                    data = zf.read(info)
+                    cumulative_size += len(data)
+
+                    # Verify actual size after reading (handles dishonest headers)
+                    if (
+                        max_decompressed_size is not None
+                        and cumulative_size > max_decompressed_size
+                    ):
+                        limit_mb = max_decompressed_size // (1024 * 1024)
+                        raise VoicebankValidationError(
+                            f"ZIP decompressed content exceeds {limit_mb}MB limit. "
+                            "Upload a smaller archive."
+                        )
+
+                    files[filename] = data
             return files
         except zipfile.BadZipFile as e:
             raise VoicebankValidationError("Invalid ZIP file") from e
@@ -180,6 +214,7 @@ class VoicebankService:
         name: str,
         files: dict[str, bytes] | None = None,
         zip_content: bytes | None = None,
+        max_decompressed_size: int | None = None,
     ) -> Voicebank:
         """Create a new voicebank.
 
@@ -189,6 +224,8 @@ class VoicebankService:
             name: Display name for the voicebank
             files: Dictionary mapping filenames to contents
             zip_content: Raw ZIP file bytes (alternative to files)
+            max_decompressed_size: Maximum total decompressed bytes for ZIP.
+                None means no limit.
 
         Returns:
             Created Voicebank
@@ -210,7 +247,7 @@ class VoicebankService:
 
         # Extract files from ZIP if provided
         if zip_content is not None:
-            files = self._extract_zip(zip_content)
+            files = self._extract_zip(zip_content, max_decompressed_size)
             files = self._normalize_zip_paths(files)
         elif files is None:
             files = {}

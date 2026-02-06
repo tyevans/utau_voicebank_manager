@@ -185,10 +185,16 @@ export interface BatchOtoResult {
   skipped: number;
   /** Number of samples that failed ML processing */
   failed: number;
-  /** Generated oto entries */
+  /** Generated oto entries that met the confidence threshold and were saved */
   entries: OtoEntry[];
+  /** Entries below the confidence threshold, not saved to oto.ini. Display for manual review. */
+  pending_review_entries: OtoEntry[];
   /** Filenames of samples that failed processing */
   failed_files: string[];
+  /** Filenames of samples with confidence below the threshold */
+  low_confidence_files: string[];
   /** Average confidence score across all generated entries (0-1) */
   average_confidence: number;
+  /** Confidence threshold used for this batch run (0-1) */
+  confidence_threshold: number;
 }

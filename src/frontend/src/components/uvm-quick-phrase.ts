@@ -577,6 +577,7 @@ export class UvmQuickPhrase extends LitElement {
 
       if (!this._loader) {
         this._loader = new SampleLoader(this._audioContext, api);
+        this._loader.enableAutoInvalidation();
       }
 
       // Get oto entries if not provided
@@ -725,6 +726,7 @@ export class UvmQuickPhrase extends LitElement {
     this._stop();
 
     if (this._loader) {
+      this._loader.disableAutoInvalidation();
       this._loader.clearCache();
     }
 

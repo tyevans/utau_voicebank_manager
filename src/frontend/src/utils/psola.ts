@@ -151,6 +151,13 @@ const DEFAULT_PSOLA_OPTIONS: Required<PsolaOptions> = {
 };
 
 /**
+ * Small constant to guard against division by near-zero in overlap-add normalization.
+ * Chosen to be large enough to avoid floating-point noise amplification but small
+ * enough to normalize any region with meaningful window contribution.
+ */
+const NORMALIZATION_EPSILON = 1e-6;
+
+/**
  * Generate a Hann window of the specified length.
  *
  * The Hann window has the property that overlapping windows at 50% add to unity,
@@ -404,16 +411,27 @@ export function analyzePitchMarks(
       pitchMark = findNearestZeroCrossing(samples, currentSample, searchRadius);
     }
 
-    // Ensure pitch mark is within bounds
+    // Clamp pitch mark to valid buffer range
     pitchMark = Math.max(0, Math.min(numSamples - 1, pitchMark));
 
-    // Add pitch mark
+    // Add pitch mark only if it is within the buffer
     pitchMarks.push(pitchMark);
     pitchPeriods.push(period);
     voicedFlags.push(voiced);
 
-    // Move to next pitch mark
-    currentSample = pitchMark + period;
+    // Advance by at least 1 sample to guarantee forward progress.
+    // A period of 0 (e.g. from an unvoiced region with misconfigured
+    // unvoicedPeriod) would otherwise cause an infinite loop.
+    const advance = Math.max(1, period);
+    currentSample = pitchMark + advance;
+
+    // If the next position would be at or past the buffer end, stop.
+    // Without this check, the clamping above can pin pitchMark to
+    // numSamples-1 repeatedly when currentSample overflows the buffer,
+    // producing duplicate pitch marks at the final sample.
+    if (currentSample >= numSamples) {
+      break;
+    }
   }
 
   return {
@@ -566,10 +584,12 @@ export function psolaSynthesize(
     }
   }
 
-  // Normalize output by window sum to prevent amplitude variations
-  // Only normalize where windows overlap (windowSum > 0)
+  // Normalize output by window sum to prevent amplitude variations.
+  // Only normalize where windows have meaningful overlap; regions below
+  // NORMALIZATION_EPSILON are effectively silent and dividing would
+  // amplify floating-point noise.
   for (let i = 0; i < outputLength; i++) {
-    if (windowSum[i] > 0.01) {
+    if (windowSum[i] > NORMALIZATION_EPSILON) {
       outputSamples[i] /= windowSum[i];
     }
   }

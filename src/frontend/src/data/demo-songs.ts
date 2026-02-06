@@ -21,7 +21,7 @@ export interface DemoSong {
   /** Language of the lyrics */
   language: 'japanese' | 'english';
   /** Recording style the song is designed for */
-  recordingStyle: 'cv' | 'vcv' | 'arpasing';
+  recordingStyle: 'cv' | 'vcv' | 'cvvc' | 'arpasing';
   /** List of phoneme aliases required to play this song */
   requiredPhonemes: string[];
   /** The note sequence with phonemes and timing */
@@ -464,13 +464,200 @@ export const VIBRATO_TEST: DemoSong = {
 };
 
 // =============================================================================
+// Mary Had a Little Lamb (English - CVVC)
+// =============================================================================
+//
+// Traditional nursery rhyme, public domain (1830, Sarah Josepha Hale)
+//
+// Melody in C major:
+//   E D C D | E E E - | D D D - | E G G -
+//   "Ma-ry had a lit-tle lamb, lit-tle lamb, lit-tle lamb"
+//
+// CVVC phoneme mapping (CV onset + VC transition pairs):
+//   Mary    = [m eh] [eh r] [r iy]
+//   had     = [hh ae] [ae d]
+//   a       = [ax]
+//   little  = [l ih] [ih t] [t ax] [ax l]
+//   lamb    = [l ae] [ae m]
+//
+// Melody continues:
+//   E D C D | E E E E | D D E D | C - - -
+//   "Ma-ry had a lit-tle lamb, its fleece was white as snow"
+//
+//   its     = [ih t] [t s]
+//   fleece  = [f l iy] [iy s]
+//   was     = [w aa] [aa z]
+//   white   = [w ay] [ay t]
+//   as      = [ae z]
+//   snow    = [s n ow]
+
+const MARY_LAMB_BPM = 110;
+
+/**
+ * Mary Had a Little Lamb - English CVVC demo.
+ *
+ * Traditional nursery rhyme using CVVC (Consonant-Vowel + Vowel-Consonant)
+ * phoneme transitions. Each syllable is decomposed into a CV onset that
+ * carries the pitch, followed by a short VC transition connecting to the
+ * next syllable.
+ *
+ * Musical structure:
+ * - Time signature: 4/4
+ * - Key: C major
+ * - Tempo: 110 BPM
+ * - Two phrases of the song
+ *
+ * CVVC format explanation:
+ * - CV aliases carry the main note (e.g., "m eh", "l ih")
+ * - VC aliases are short transitions (e.g., "eh r", "ih t")
+ * - Together they produce smooth consonant-to-consonant connections
+ * - Pitch reference: 0 = C4, 4 = E4, 7 = G4, etc.
+ */
+export const MARY_LAMB: DemoSong = {
+  id: 'mary-lamb',
+  title: 'Mary Had a Little Lamb',
+  description: 'English nursery rhyme (CVVC style)',
+  language: 'english',
+  recordingStyle: 'cvvc',
+  bpm: MARY_LAMB_BPM,
+  requiredPhonemes: [
+    // CV onsets
+    'm eh', 'r iy', 'hh ae', 'l ih', 't ax', 'l ae',
+    'f l iy', 'w aa', 'w ay', 's n ow',
+    // VC transitions
+    'eh r', 'ae d', 'ih t', 'ax l', 'ae m', 'ae z',
+    'iy hh', 'iy z', 'aa z', 'ay t',
+    // Standalone vowels
+    'ax', 'ih',
+  ],
+  notes: createPhraseNotes([
+    // =========================================================================
+    // Phrase 1: "Mary had a little lamb"
+    // Melody: E D C D | E E E (rest)
+    // =========================================================================
+
+    // "Ma-" (E4)
+    ['m eh', 4, 0.75],           // CV onset: "m eh" on E
+    ['eh r', 4, 0.25],           // VC transition to "r"
+
+    // "-ry" (D4)
+    ['r iy', 2, 0.75],           // CV onset: "r iy" on D
+    ['iy hh', 2, 0.25],          // VC transition to "hh"
+
+    // "had" (C4)
+    ['hh ae', 0, 0.75],          // CV onset: "hh ae" on C
+    ['ae d', 0, 0.25],           // VC transition: "ae d"
+
+    // "a" (D4)
+    ['ax', 2, 0.75],             // Standalone reduced vowel on D
+    ['ax l', 2, 0.25],           // VC transition to "l"
+
+    // "lit-" (E4)
+    ['l ih', 4, 0.5],            // CV onset: "l ih" on E
+    ['ih t', 4, 0.25],           // VC transition: "ih t"
+
+    // "-tle" (E4)
+    ['t ax', 4, 0.5],            // CV onset: "t ax" on E
+    ['ax l', 4, 0.25],           // VC transition: "ax l"
+
+    // "lamb" (E4, held)
+    ['l ae', 4, 1.0],            // CV onset: "l ae" on E
+    ['ae m', 4, 0.5],            // VC transition: "ae m" (phrase ending)
+
+    // =========================================================================
+    // Phrase 2: "little lamb, little lamb"
+    // Melody: D D D (rest) | E G G (rest)
+    // =========================================================================
+
+    // "lit-" (D4)
+    ['l ih', 2, 0.5],            // CV onset on D
+    ['ih t', 2, 0.25],           // VC transition
+
+    // "-tle" (D4)
+    ['t ax', 2, 0.5],            // CV onset on D
+    ['ax l', 2, 0.25],           // VC transition
+
+    // "lamb," (D4, held)
+    ['l ae', 2, 1.0],            // CV onset on D
+    ['ae m', 2, 0.5],            // VC transition (phrase pause)
+
+    // "lit-" (E4)
+    ['l ih', 4, 0.5],            // CV onset on E
+    ['ih t', 4, 0.25],           // VC transition
+
+    // "-tle" (E4)
+    ['t ax', 4, 0.5],            // CV onset on E
+    ['ax l', 4, 0.25],           // VC transition
+
+    // "lamb" (E4, held longer for phrase ending)
+    ['l ae', 4, 1.0],            // CV onset on E
+    ['ae m', 4, 0.75],           // VC transition
+
+    // =========================================================================
+    // Phrase 3: "Mary had a little lamb, its fleece was white as snow"
+    // Melody: E D C D | E E E E | D D E D | C
+    // =========================================================================
+
+    // "Ma-" (E4)
+    ['m eh', 4, 0.75],
+    ['eh r', 4, 0.25],
+
+    // "-ry" (D4)
+    ['r iy', 2, 0.75],
+    ['iy hh', 2, 0.25],
+
+    // "had" (C4)
+    ['hh ae', 0, 0.75],
+    ['ae d', 0, 0.25],
+
+    // "a" (D4)
+    ['ax', 2, 0.75],
+    ['ax l', 2, 0.25],
+
+    // "lit-" (E4)
+    ['l ih', 4, 0.5],
+    ['ih t', 4, 0.25],
+
+    // "-tle" (E4)
+    ['t ax', 4, 0.5],
+    ['ax l', 4, 0.25],
+
+    // "lamb," (E4)
+    ['l ae', 4, 0.75],
+    ['ae m', 4, 0.25],
+
+    // "its" (E4)
+    ['ih', 4, 0.5],              // Vowel onset
+    ['ih t', 4, 0.25],           // VC: "ih t"
+
+    // "fleece" (D4)
+    ['f l iy', 2, 0.75],         // CV cluster onset on D
+    ['iy z', 2, 0.25],           // VC transition (voiced "s" -> z in speech)
+
+    // "was" (D4)
+    ['w aa', 2, 0.75],           // CV onset on D
+    ['aa z', 2, 0.25],           // VC transition
+
+    // "white" (E4)
+    ['w ay', 4, 0.75],           // CV onset on E
+    ['ay t', 4, 0.25],           // VC transition
+
+    // "as" (D4)
+    ['ae z', 2, 1.0],            // CV+VC combined (short word) on D
+
+    // "snow" (C4, held for final note)
+    ['s n ow', 0, 2.0, 1.0, { rate: 5, depth: 30, delay: 400 }],  // Final held note with gentle vibrato
+  ], MARY_LAMB_BPM),
+};
+
+// =============================================================================
 // Exports
 // =============================================================================
 
 /**
  * All available demo songs.
  */
-export const DEMO_SONGS: DemoSong[] = [TWINKLE_TWINKLE, FURUSATO, SAKURA_SAKURA, VELOCITY_TEST, VIBRATO_TEST];
+export const DEMO_SONGS: DemoSong[] = [TWINKLE_TWINKLE, FURUSATO, SAKURA_SAKURA, MARY_LAMB, VELOCITY_TEST, VIBRATO_TEST];
 
 /**
  * Get a demo song by its ID.
@@ -501,7 +688,7 @@ export function getDemoSongsByLanguage(
  * @returns Array of demo songs for that style
  */
 export function getDemoSongsByStyle(
-  style: 'cv' | 'vcv' | 'arpasing'
+  style: 'cv' | 'vcv' | 'cvvc' | 'arpasing'
 ): DemoSong[] {
   return DEMO_SONGS.filter((song) => song.recordingStyle === style);
 }

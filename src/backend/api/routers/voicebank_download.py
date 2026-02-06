@@ -14,8 +14,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
+from src.backend.api.dependencies import get_oto_repository, get_voicebank_service
 from src.backend.repositories.oto_repository import OtoRepository
-from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.services.voicebank_service import (
     VoicebankNotFoundError,
     VoicebankService,
@@ -25,31 +25,6 @@ from src.backend.utils.oto_parser import serialize_oto_entries
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/voicebanks", tags=["voicebanks"])
-
-# Storage path for voicebanks (same as voicebanks router)
-VOICEBANKS_BASE_PATH = Path("data/voicebanks")
-
-
-# Dependency injection
-
-
-def get_voicebank_repository() -> VoicebankRepository:
-    """Dependency provider for VoicebankRepository."""
-    return VoicebankRepository(VOICEBANKS_BASE_PATH)
-
-
-def get_voicebank_service(
-    repository: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> VoicebankService:
-    """Dependency provider for VoicebankService."""
-    return VoicebankService(repository)
-
-
-def get_oto_repository(
-    voicebank_repo: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> OtoRepository:
-    """Dependency provider for OtoRepository."""
-    return OtoRepository(voicebank_repo)
 
 
 async def create_voicebank_zip(
@@ -69,7 +44,9 @@ async def create_voicebank_zip(
         Chunks of ZIP file bytes
     """
     # Write ZIP to a temporary file instead of memory to avoid OOM on large voicebanks
-    tmp = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024)  # 10MB in-memory, then spill to disk
+    tmp = tempfile.SpooledTemporaryFile(
+        max_size=10 * 1024 * 1024
+    )  # 10MB in-memory, then spill to disk
 
     try:
         with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:

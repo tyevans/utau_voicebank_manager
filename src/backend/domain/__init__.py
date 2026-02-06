@@ -10,6 +10,7 @@ from src.backend.domain.generated_voicebank import (
 from src.backend.domain.job import (
     GenerateVoicebankParams,
     Job,
+    JobParams,
     JobProgress,
     JobResult,
     JobStatus,
@@ -48,7 +49,14 @@ from src.backend.domain.utau import (
     PrefixMapEntry,
     SampleQualityMetrics,
 )
-from src.backend.domain.voicebank import Voicebank, VoicebankCreate, VoicebankSummary
+from src.backend.domain.voicebank import (
+    Language,
+    RecordingStyle,
+    Voicebank,
+    VoicebankCreate,
+    VoicebankRelease,
+    VoicebankSummary,
+)
 
 __all__ = [
     "AlignmentConfig",
@@ -61,10 +69,12 @@ __all__ = [
     "GenerateVoicebankRequest",
     "GeneratedVoicebank",
     "Job",
+    "JobParams",
     "JobProgress",
     "JobResult",
     "JobStatus",
     "JobType",
+    "Language",
     "OtoEntry",
     "OtoSuggestion",
     "OtoSuggestionRequest",
@@ -81,6 +91,7 @@ __all__ = [
     "PrefixMapEntry",
     "PromptLibrary",
     "RecordingSegment",
+    "RecordingStyle",
     "RecordingSession",
     "RecordingSessionCreate",
     "RecordingSessionSummary",
@@ -92,6 +103,7 @@ __all__ = [
     "VCVCoverage",
     "Voicebank",
     "VoicebankCreate",
+    "VoicebankRelease",
     "VoicebankSummary",
     "Word",
 ]

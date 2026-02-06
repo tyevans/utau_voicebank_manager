@@ -10,6 +10,8 @@ import numpy as np
 import torch
 
 from src.backend.domain.phoneme import PhonemeDetectionResult, PhonemeSegment
+from src.backend.ml.gpu_fallback import run_inference_with_cpu_fallback
+from src.backend.ml.model_registry import get_model_config
 
 if TYPE_CHECKING:
     from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
@@ -20,8 +22,10 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Default model for phoneme detection with IPA output
-DEFAULT_MODEL_NAME = "facebook/wav2vec2-lv-60-espeak-cv-ft"
+# Model configuration from centralized registry (pinned revision)
+_WAV2VEC2_CONFIG = get_model_config("wav2vec2-phoneme")
+DEFAULT_MODEL_NAME = _WAV2VEC2_CONFIG.model_id
+DEFAULT_MODEL_REVISION = _WAV2VEC2_CONFIG.revision
 
 # Target sample rate for Wav2Vec2 models
 TARGET_SAMPLE_RATE = 16000
@@ -31,9 +35,8 @@ TARGET_SAMPLE_RATE = 16000
 # At 16kHz: 320 / 16000 = 0.02 seconds = 20ms per frame
 WAV2VEC2_FRAME_DURATION_MS = 20.0
 
-# Cache directory for downloaded models
-# Path: src/backend/ml/phoneme_detector.py -> project root
-MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models" / "wav2vec2"
+# Cache directory for downloaded models (from registry)
+MODELS_DIR = _WAV2VEC2_CONFIG.cache_dir
 
 
 class ModelNotLoadedError(Exception):
@@ -56,6 +59,8 @@ def get_wav2vec2_model(
 
     Uses LRU cache to ensure model is only loaded once per session.
     Models are downloaded to the models/ directory for reuse.
+    The model revision is pinned via the centralized model registry
+    to prevent silent behavior changes from upstream updates.
 
     Args:
         model_name: HuggingFace model identifier
@@ -68,7 +73,11 @@ def get_wav2vec2_model(
     """
     from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
-    logger.info(f"Loading Wav2Vec2 model: {model_name}")
+    revision = DEFAULT_MODEL_REVISION
+    logger.info(
+        f"Loading Wav2Vec2 model: {model_name} "
+        f"(revision: {revision[:12] if revision else 'latest'})"
+    )
 
     # Ensure cache directory exists
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -76,10 +85,12 @@ def get_wav2vec2_model(
     try:
         processor = Wav2Vec2Processor.from_pretrained(
             model_name,
+            revision=revision,
             cache_dir=str(MODELS_DIR),
         )
         model = Wav2Vec2ForCTC.from_pretrained(
             model_name,
+            revision=revision,
             cache_dir=str(MODELS_DIR),
         )
 
@@ -185,16 +196,34 @@ class PhonemeDetector:
         device = next(model.parameters()).device
         input_values = inputs.input_values.to(device)
 
-        # Run inference
-        try:
+        # Run inference with GPU OOM fallback to CPU
+        def _gpu_inference() -> tuple:
             with torch.no_grad():
                 outputs = model(input_values)
                 logits = outputs.logits
-
-            # Get predicted token IDs and probabilities
             predicted_ids = torch.argmax(logits, dim=-1)
             probs = torch.softmax(logits, dim=-1)
             max_probs = torch.max(probs, dim=-1).values
+            return predicted_ids, max_probs
+
+        def _cpu_inference(cpu_tensors: dict[str, torch.Tensor]) -> tuple:
+            cpu_input = cpu_tensors["input_values"]
+            with torch.no_grad():
+                outputs = model(cpu_input)
+                logits = outputs.logits
+            predicted_ids = torch.argmax(logits, dim=-1)
+            probs = torch.softmax(logits, dim=-1)
+            max_probs = torch.max(probs, dim=-1).values
+            return predicted_ids, max_probs
+
+        try:
+            predicted_ids, max_probs = run_inference_with_cpu_fallback(
+                model=model,
+                inference_fn=_gpu_inference,
+                tensors_to_move={"input_values": input_values},
+                cpu_inference_fn=_cpu_inference,
+                context="Wav2Vec2 phoneme detection",
+            )
 
             # Decode to phoneme segments with timestamps
             segments = self._decode_with_timestamps(

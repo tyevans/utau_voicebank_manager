@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from src.backend.domain.voicebank import RecordingStyle
+
 
 class PhonemePrompt(BaseModel):
     """A single recording prompt with phoneme metadata.
@@ -32,7 +34,7 @@ class PhonemePrompt(BaseModel):
         description="Ordered list of phonemes in the prompt",
         min_length=1,
     )
-    style: Literal["cv", "vcv", "cvvc", "vccv", "arpasing"] = Field(
+    style: RecordingStyle = Field(
         description="Recording style this prompt is designed for",
     )
     category: str = Field(

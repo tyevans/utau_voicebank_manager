@@ -59,14 +59,29 @@ class BatchOtoResult(BaseModel):
     )
     entries: list[OtoEntry] = Field(
         default_factory=list,
-        description="Generated oto entries",
+        description="Generated oto entries that met the confidence threshold and were saved",
+    )
+    pending_review_entries: list[OtoEntry] = Field(
+        default_factory=list,
+        description="Entries below the confidence threshold, not saved to oto.ini. "
+        "Frontend should display these for manual review and acceptance.",
     )
     failed_files: list[str] = Field(
         default_factory=list,
         description="Filenames of samples that failed processing",
     )
+    low_confidence_files: list[str] = Field(
+        default_factory=list,
+        description="Filenames of samples with confidence below the threshold",
+    )
     average_confidence: float = Field(
         ge=0.0,
         le=1.0,
         description="Average confidence score across all generated entries",
+    )
+    confidence_threshold: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.3,
+        description="Confidence threshold used for this batch run",
     )

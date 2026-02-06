@@ -17,11 +17,35 @@ export { UvmWaveformCanvas } from './uvm-waveform-canvas.js';
 // Sample browser for selecting voicebank samples
 export { UvmSampleBrowser } from './uvm-sample-browser.js';
 
+// Voicebank panel for voicebank selection and management
+export { UvmVoicebankPanel } from './uvm-voicebank-panel.js';
+
+// Virtual scrolling sample grid view
+export { UvmSampleGrid } from './uvm-sample-grid.js';
+
+// Compact sample list view
+export { UvmSampleListView } from './uvm-sample-list-view.js';
+
+// Batch ML auto-detection operations dialog
+export { UvmBatchOperations } from './uvm-batch-operations.js';
+
 // Sample card for mini-waveform grid display
 export { UvmSampleCard } from './uvm-sample-card.js';
 
 // Main editor view integrating all components
 export { UvmEditorView } from './uvm-editor-view.js';
+
+// Audio loading and AudioContext lifecycle management (headless)
+export { UvmAudioManager } from './uvm-audio-manager.js';
+export type { AudioLoadedDetail } from './uvm-audio-manager.js';
+
+// OtoEntry CRUD, undo/redo, and auto-detection management (headless)
+export { UvmOtoManager } from './uvm-oto-manager.js';
+export type { OtoEntriesLoadedDetail, OtoEntryChangedDetail, OtoEntrySavedDetail, OtoDetectedDetail } from './uvm-oto-manager.js';
+export { DEFAULT_OTO_VALUES } from './uvm-oto-manager.js';
+
+// Editor toolbar with keyboard shortcuts and status indicator
+export { UvmEditorToolbar } from './uvm-editor-toolbar.js';
 
 // Entry list panel for managing multiple oto entries per sample
 export { UvmEntryList } from './uvm-entry-list.js';
@@ -35,6 +59,17 @@ export { UvmToastManager } from './uvm-toast-manager.js';
 // Recording prompter for guided recording sessions
 export { UvmRecordingPrompter } from './uvm-recording-prompter.js';
 export type { PhonemePrompt } from './uvm-recording-prompter.js';
+
+// Recording engine sub-component (MediaRecorder management)
+export { UvmRecordEngine } from './uvm-record-engine.js';
+export type { RecordingState, RecordingDataDetail } from './uvm-record-engine.js';
+
+// Live waveform visualization sub-component
+export { UvmLiveWaveform } from './uvm-live-waveform.js';
+
+// Speech recognizer sub-component (Web Speech API)
+export { UvmSpeechRecognizer } from './uvm-speech-recognizer.js';
+export type { WordsUpdatedDetail } from './uvm-speech-recognizer.js';
 
 // Recording session for guided voicebank creation flow
 export { UvmRecordingSession } from './uvm-recording-session.js';
@@ -68,6 +103,13 @@ export { UvmSpectrogram } from './uvm-spectrogram.js';
 export { UvmMarkerHandle } from './uvm-marker-handle.js';
 export type { MarkerDragDetail } from './uvm-marker-handle.js';
 
+// Marker layer for oto.ini marker rendering, drag interaction, and region shading
+export { UvmMarkerLayer } from './uvm-marker-layer.js';
+export type { GhostMarker } from './uvm-marker-layer.js';
+
+// Playback controller for audio transport, marker preview, and melody preview
+export { UvmPlaybackController } from './uvm-playback-controller.js';
+
 // Keyboard shortcut overlay
 export { UvmShortcutOverlay } from './uvm-shortcut-overlay.js';
 
@@ -87,3 +129,9 @@ export type { AlignmentMethod, AlignmentChangeDetail } from './uvm-alignment-set
 
 // Voice completion flow for post-recording experience
 export { UvmVoiceComplete } from './uvm-voice-complete.js';
+
+// Ambient training status for voice training jobs
+export { UvmTrainingStatus } from './uvm-training-status.js';
+
+// Voice playground for "type to hear yourself" experience
+export { UvmVoicePlayground } from './uvm-voice-playground.js';

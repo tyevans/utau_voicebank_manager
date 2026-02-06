@@ -3,7 +3,6 @@
 import io
 import logging
 from enum import Enum
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import (
@@ -20,6 +19,10 @@ from fastapi.responses import FileResponse
 from PIL import Image
 from pydantic import BaseModel, Field
 
+from src.backend.api.dependencies import (
+    get_voicebank_repository,
+    get_voicebank_service,
+)
 from src.backend.domain.pagination import PaginatedResponse
 from src.backend.domain.voicebank import Voicebank, VoicebankSummary
 from src.backend.repositories.voicebank_repository import VoicebankRepository
@@ -29,6 +32,7 @@ from src.backend.services.voicebank_service import (
     VoicebankService,
     VoicebankValidationError,
 )
+from src.backend.utils.path_validation import validate_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +70,6 @@ class IconSuccessResponse(BaseModel):
 
 router = APIRouter(prefix="/voicebanks", tags=["voicebanks"])
 
-# Storage path for voicebanks
-VOICEBANKS_BASE_PATH = Path("data/voicebanks")
-
 # Maximum file sizes
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB per file
 MAX_ZIP_SIZE = 500 * 1024 * 1024  # 500MB for ZIP uploads
@@ -76,19 +77,26 @@ MAX_ICON_SIZE = 5 * 1024 * 1024  # 5MB for icon uploads
 
 # Icon settings
 ICON_SIZE = (100, 100)  # UTAU standard icon dimensions
-ICON_ACCEPTED_TYPES = {"image/png", "image/jpeg", "image/bmp", "image/x-ms-bmp"}
+ICON_ACCEPTED_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/x-ms-bmp",
+}
 
+# Accepted MIME types for WAV uploads
+WAV_ACCEPTED_TYPES = {"audio/wav", "audio/x-wav", "audio/wave"}
 
-def get_voicebank_repository() -> VoicebankRepository:
-    """Dependency provider for VoicebankRepository."""
-    return VoicebankRepository(VOICEBANKS_BASE_PATH)
+# Accepted MIME types for ZIP uploads
+ZIP_ACCEPTED_TYPES = {"application/zip", "application/x-zip-compressed"}
 
+# WAV magic bytes: files must start with "RIFF"
+WAV_MAGIC_BYTES = b"RIFF"
 
-def get_voicebank_service(
-    repository: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> VoicebankService:
-    """Dependency provider for VoicebankService."""
-    return VoicebankService(repository)
+# Maximum total decompressed size for ZIP uploads (500MB)
+MAX_ZIP_DECOMPRESSED_SIZE = 500 * 1024 * 1024
 
 
 @router.get("", response_model=PaginatedResponse[VoicebankSummary])
@@ -180,6 +188,17 @@ async def create_voicebank(
     try:
         # Handle ZIP upload
         if zip_file is not None and zip_file.filename:
+            # Validate ZIP content type
+            if (
+                not zip_file.content_type
+                or zip_file.content_type not in ZIP_ACCEPTED_TYPES
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid file type '{zip_file.content_type}'. "
+                    "Expected a ZIP archive (application/zip)",
+                )
+
             content = await zip_file.read()
             if len(content) > MAX_ZIP_SIZE:
                 raise HTTPException(
@@ -187,7 +206,11 @@ async def create_voicebank(
                     detail=f"ZIP file too large. Maximum size: {MAX_ZIP_SIZE // (1024*1024)}MB",
                 )
             logger.info(f"Creating voicebank '{name}' from ZIP upload")
-            return await service.create(name=name, zip_content=content)
+            return await service.create(
+                name=name,
+                zip_content=content,
+                max_decompressed_size=MAX_ZIP_DECOMPRESSED_SIZE,
+            )
 
         # Handle individual file uploads
         if files:
@@ -200,6 +223,25 @@ async def create_voicebank(
                             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                             detail=f"File '{upload_file.filename}' too large. Maximum: {MAX_FILE_SIZE // (1024*1024)}MB",
                         )
+
+                    # Validate WAV files: MIME type and magic bytes
+                    if upload_file.filename.lower().endswith(".wav"):
+                        if (
+                            upload_file.content_type
+                            and upload_file.content_type not in WAV_ACCEPTED_TYPES
+                        ):
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"File '{upload_file.filename}' has invalid content type "
+                                f"'{upload_file.content_type}'. Expected audio/wav",
+                            )
+                        if not content[:4] == WAV_MAGIC_BYTES:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"File '{upload_file.filename}' is not a valid WAV file "
+                                "(missing RIFF header)",
+                            )
+
                     file_dict[upload_file.filename] = content
 
             logger.info(f"Creating voicebank '{name}' with {len(file_dict)} files")
@@ -307,6 +349,9 @@ async def get_sample(
     Raises:
         HTTPException 404: If voicebank or sample not found
     """
+    validate_path_component(voicebank_id, label="voicebank_id")
+    validate_path_component(filename, label="filename")
+
     try:
         sample_path = await service.get_sample_path(voicebank_id, filename)
         return FileResponse(
@@ -451,11 +496,12 @@ async def upload_icon(
         HTTPException 404: If voicebank not found
         HTTPException 413: If file exceeds 5MB size limit
     """
-    # Validate content type
-    if file.content_type and file.content_type not in ICON_ACCEPTED_TYPES:
+    # Validate content type (reject None and unsupported types)
+    if not file.content_type or file.content_type not in ICON_ACCEPTED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type '{file.content_type}'. Accepted: PNG, JPEG, BMP",
+            detail=f"Invalid file type '{file.content_type}'. "
+            "Accepted: PNG, JPEG, GIF, WebP, BMP",
         )
 
     # Read and validate size

@@ -6,6 +6,8 @@
  */
 
 import type { PhonemePrompt } from '../components/uvm-recording-prompter.js';
+import type { RetryOptions } from '../utils/fetch-retry.js';
+import { fetchWithRetry } from '../utils/fetch-retry.js';
 import { ApiError, getDefaultApiUrl } from './api.js';
 
 /**
@@ -453,16 +455,19 @@ export class RecordingApiService {
 
   /**
    * Make an HTTP request and handle errors.
+   *
+   * Automatically retries on transient server errors (5xx) and rate limiting (429).
+   * Pass `retryOptions: { noRetry: true }` to disable retries for non-idempotent mutations.
    */
-  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, options: RequestInit = {}, retryOptions?: RetryOptions): Promise<T> {
     const url = `${this.baseUrl}${path}`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       ...options,
       headers: {
         ...options.headers,
       },
-    });
+    }, retryOptions);
 
     if (!response.ok) {
       let message = `HTTP ${response.status}: ${response.statusText}`;
@@ -574,7 +579,7 @@ export class RecordingApiService {
         language: config.language,
         prompts: promptTexts,
       }),
-    });
+    }, { noRetry: true });
 
     return {
       sessionId: session.id,
@@ -590,7 +595,7 @@ export class RecordingApiService {
   async startSession(sessionId: string): Promise<RecordingSession> {
     return this.request<RecordingSession>(`/sessions/${sessionId}/start`, {
       method: 'POST',
-    });
+    }, { noRetry: true });
   }
 
   /**
@@ -614,7 +619,7 @@ export class RecordingApiService {
     return this.request<RecordingSegment>(`/sessions/${sessionId}/segments`, {
       method: 'POST',
       body: formData,
-    });
+    }, { noRetry: true });
   }
 
   /**
@@ -639,7 +644,7 @@ export class RecordingApiService {
   async completeSession(sessionId: string): Promise<RecordingSession> {
     return this.request<RecordingSession>(`/sessions/${sessionId}/complete`, {
       method: 'POST',
-    });
+    }, { noRetry: true });
   }
 
   /**
@@ -661,7 +666,8 @@ export class RecordingApiService {
         body: JSON.stringify({
           voicebank_name: name,
         }),
-      }
+      },
+      { noRetry: true },
     );
   }
 
@@ -726,7 +732,7 @@ export class RecordingApiService {
   async downloadVoicebank(generatedPath: string): Promise<Blob> {
     // The backend would need a download endpoint
     // For now, we just return the path info
-    const response = await fetch(`${this.baseUrl}/voicebanks/${encodeURIComponent(generatedPath)}/download`);
+    const response = await fetchWithRetry(`${this.baseUrl}/voicebanks/${encodeURIComponent(generatedPath)}/download`);
 
     if (!response.ok) {
       throw new ApiError(response.status, 'Failed to download voicebank');
@@ -741,7 +747,7 @@ export class RecordingApiService {
   async cancelSession(sessionId: string): Promise<RecordingSession> {
     return this.request<RecordingSession>(`/sessions/${sessionId}/cancel`, {
       method: 'POST',
-    });
+    }, { noRetry: true });
   }
 
   /**
@@ -762,7 +768,8 @@ export class RecordingApiService {
       {
         method: 'POST',
         body: formData,
-      }
+      },
+      { noRetry: true },
     );
   }
 }

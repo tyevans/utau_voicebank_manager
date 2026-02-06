@@ -6,6 +6,7 @@ from src.backend.api.routers.jobs import router as jobs_router
 from src.backend.api.routers.ml import router as ml_router
 from src.backend.api.routers.oto import router as oto_router
 from src.backend.api.routers.paragraphs import router as paragraphs_router
+from src.backend.api.routers.reclists import router as reclists_router
 from src.backend.api.routers.recording_sessions import router as sessions_router
 from src.backend.api.routers.voicebank_download import (
     router as voicebank_download_router,
@@ -28,6 +29,9 @@ api_router.include_router(sessions_router)
 
 # Paragraph prompt library router
 api_router.include_router(paragraphs_router)
+
+# Custom recording list import router
+api_router.include_router(reclists_router)
 
 # Voicebank download router
 api_router.include_router(voicebank_download_router)

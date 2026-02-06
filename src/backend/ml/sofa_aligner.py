@@ -35,6 +35,8 @@ import soundfile as sf
 
 from src.backend.domain.phoneme import PhonemeSegment
 from src.backend.ml.forced_aligner import AlignmentError, AlignmentResult, ForcedAligner
+from src.backend.ml.gpu_fallback import run_inference_with_cpu_fallback
+from src.backend.ml.model_registry import get_sofa_cache_ttl
 
 if TYPE_CHECKING:
     import torch
@@ -49,8 +51,10 @@ SOFA_SUBMODULE_DIR = Path(__file__).parent.parent.parent.parent / "vendor" / "SO
 SOFA_CHECKPOINTS_DIR = SOFA_SUBMODULE_DIR / "ckpt"
 SOFA_DICTIONARY_DIR = SOFA_SUBMODULE_DIR / "dictionary"
 
-# Model cache TTL in seconds (5 minutes)
-MODEL_CACHE_TTL_SECONDS = 300
+# Model cache TTL in seconds.
+# Default is 60 minutes (configurable via SOFA_CACHE_TTL_SECONDS env var).
+# The previous 5-minute TTL caused unnecessary model reloads during batch jobs.
+MODEL_CACHE_TTL_SECONDS = get_sofa_cache_ttl()
 
 
 class DictionaryValidationError(AlignmentError):
@@ -99,6 +103,66 @@ def load_dictionary(dict_path: Path) -> set[str]:
     return words
 
 
+def decompose_unknown_word(word: str, dictionary: set[str]) -> list[str] | None:
+    """Try to decompose an unknown word into known dictionary entries.
+
+    Uses greedy longest-match from left to right. For example, if the
+    dictionary contains "a", "ka", and "shi", the word "akashi" would
+    decompose into ["a", "ka", "shi"].
+
+    This handles VCV transcript words that were concatenated or contain
+    phoneme sequences not entered as single dictionary entries. For example,
+    a transcript word "aka" is not in the dictionary, but "a" + "ka" are.
+
+    Args:
+        word: The unknown word to decompose
+        dictionary: Set of known dictionary words
+
+    Returns:
+        List of known dictionary words that compose the input, or None
+        if decomposition is not possible
+    """
+    if not word:
+        return None
+
+    # Sort dictionary entries by length (longest first) for greedy matching
+    # Filter to entries that could be substrings of the word
+    candidates = sorted(
+        (entry for entry in dictionary if len(entry) <= len(word)),
+        key=len,
+        reverse=True,
+    )
+
+    # Dynamic programming approach: find a valid decomposition
+    # memo[i] = list of words that decompose word[:i], or None
+    n = len(word)
+    memo: list[list[str] | None] = [None] * (n + 1)
+    memo[0] = []
+
+    for i in range(n):
+        if memo[i] is None:
+            continue
+        for entry in candidates:
+            entry_len = len(entry)
+            if i + entry_len <= n and word[i : i + entry_len] == entry:
+                new_decomp = memo[i] + [entry]
+                # Prefer decompositions with fewer parts (longer matches)
+                if memo[i + entry_len] is None or len(new_decomp) < len(
+                    memo[i + entry_len]
+                ):
+                    memo[i + entry_len] = new_decomp
+
+    result = memo[n]
+    if result and len(result) > 1:
+        # Only return if we actually decomposed into multiple parts
+        # (single-part means the word itself was found, which shouldn't happen
+        # since we only call this for unknown words)
+        logger.debug(f"Decomposed unknown word '{word}' into: {result}")
+        return result
+
+    return None
+
+
 def validate_transcript_against_dictionary(
     transcript: str,
     dict_path: Path,
@@ -107,6 +171,10 @@ def validate_transcript_against_dictionary(
 ) -> tuple[list[str], list[str]]:
     """Validate transcript phonemes against SOFA dictionary.
 
+    When a word is not directly in the dictionary, attempts to decompose it
+    into known dictionary entries (e.g., "aka" -> ["a", "ka"]). This allows
+    VCV transcripts containing concatenated phonemes to pass validation.
+
     Args:
         transcript: Space-separated phoneme/word sequence
         dict_path: Path to the dictionary file
@@ -114,7 +182,9 @@ def validate_transcript_against_dictionary(
                     If False, only raise if ALL phonemes are unrecognized.
 
     Returns:
-        Tuple of (recognized_words, unrecognized_words)
+        Tuple of (recognized_words, unrecognized_words).
+        recognized_words may contain more entries than the original transcript
+        if decomposition expanded unknown words into multiple known entries.
 
     Raises:
         DictionaryValidationError: If validation fails based on require_all setting
@@ -122,14 +192,23 @@ def validate_transcript_against_dictionary(
     dictionary = load_dictionary(dict_path)
     words = transcript.strip().split()
 
-    recognized = []
-    unrecognized = []
+    recognized: list[str] = []
+    unrecognized: list[str] = []
 
     for word in words:
         if word in dictionary:
             recognized.append(word)
         else:
-            unrecognized.append(word)
+            # Try decomposing the unknown word into known dictionary entries
+            decomposed = decompose_unknown_word(word, dictionary)
+            if decomposed:
+                logger.info(
+                    f"Decomposed unknown word '{word}' into dictionary entries: "
+                    f"{decomposed}"
+                )
+                recognized.extend(decomposed)
+            else:
+                unrecognized.append(word)
 
     # Check validation criteria
     if require_all and unrecognized:
@@ -174,8 +253,9 @@ class SOFAModelManager:
     """Thread-safe manager for cached SOFA models with TTL eviction.
 
     Caches loaded SOFA models per (checkpoint, dictionary) pair to avoid
-    repeated model loading on every inference call. Uses a 5-minute TTL
-    to automatically clean up unused models and free GPU memory.
+    repeated model loading on every inference call. Uses a configurable TTL
+    (default 60 minutes, set via SOFA_CACHE_TTL_SECONDS env var) to
+    automatically clean up unused models and free GPU memory.
     """
 
     _instance: SOFAModelManager | None = None
@@ -558,8 +638,10 @@ class SOFAForcedAligner(ForcedAligner):
 
         ckpt_path, dict_path = self._get_model_paths(language)
 
-        # Validate transcript against dictionary before loading model
-        # This prevents loading heavy models only to fail on unknown phonemes
+        # Validate transcript against dictionary before loading model.
+        # This prevents loading heavy models only to fail on unknown phonemes.
+        # The validation now also decomposes unknown words into known entries
+        # (e.g., "akasa" -> ["a", "ka", "sa"]).
         try:
             recognized, unrecognized = validate_transcript_against_dictionary(
                 transcript, dict_path
@@ -573,6 +655,16 @@ class SOFAForcedAligner(ForcedAligner):
             # Re-raise to let caller handle fallback
             raise
 
+        # Build a clean transcript from recognized words for G2P.
+        # This ensures we only pass dictionary-validated words to the model,
+        # which prevents G2P failures on unknown words.
+        effective_transcript = " ".join(recognized)
+        if effective_transcript != transcript:
+            logger.info(
+                f"Using cleaned transcript for G2P: '{effective_transcript}' "
+                f"(original: '{transcript}')"
+            )
+
         # Get cached model (this ensures SOFA is in sys.path)
         manager = get_model_manager()
         cached = manager.get_or_load(ckpt_path, dict_path)
@@ -584,51 +676,91 @@ class SOFAForcedAligner(ForcedAligner):
         g2p = cached.g2p
         device = cached.device
 
-        # Parse transcript using G2P
+        # Parse transcript using G2P with the cleaned (recognized-only) transcript
         try:
-            ph_seq, word_seq, ph_idx_to_word_idx = g2p(transcript)
+            ph_seq, word_seq, ph_idx_to_word_idx = g2p(effective_transcript)
         except Exception as e:
-            raise AlignmentError(f"G2P failed for transcript '{transcript}': {e}") from e
+            raise AlignmentError(
+                f"G2P failed for transcript '{effective_transcript}' "
+                f"(original: '{transcript}'): {e}"
+            ) from e
 
-        # After G2P processing, check if we have any valid phonemes
-        # word_seq contains recognized words, ph_seq contains phonemes
+        # After G2P processing, check if we have any valid phonemes.
+        # word_seq contains recognized words, ph_seq contains phonemes.
+        # Since we already validated that 'recognized' is non-empty, this
+        # should rarely trigger, but guards against G2P silently dropping words.
         if not word_seq:
             raise DictionaryValidationError(
-                f"No words recognized after G2P processing for transcript '{transcript}'",
+                f"No words recognized after G2P processing for transcript "
+                f"'{effective_transcript}' (original: '{transcript}')",
                 unrecognized_phonemes=set(transcript.split()),
                 transcript=transcript,
             )
 
         # Load and preprocess audio
-        waveform = load_wav(str(audio_path), device, model.melspec_config["sample_rate"])
+        waveform = load_wav(
+            str(audio_path), device, model.melspec_config["sample_rate"]
+        )
         wav_length = waveform.shape[0] / model.melspec_config["sample_rate"]
 
-        # Generate mel spectrogram
-        with torch.no_grad():
-            melspec = model.get_melspec(waveform).detach().unsqueeze(0)
-            melspec = (melspec - melspec.mean()) / melspec.std()
-            melspec = repeat(
-                melspec, "B C T -> B C (T N)", N=model.melspec_config["scale_factor"]
-            )
+        # Define inference as a callable for GPU OOM fallback
+        ph_idx_to_word_idx_arr = np.array(ph_idx_to_word_idx)
 
-            # Run inference
-            (
-                ph_seq_pred,
-                ph_intervals_pred,
-                word_seq_pred,
-                word_intervals_pred,
-                confidence,
-                _,  # ctc
-                _,  # fig
-            ) = model._infer_once(
-                melspec,
-                wav_length,
-                ph_seq,
-                word_seq,
-                np.array(ph_idx_to_word_idx),
-                return_ctc=False,
-                return_plot=False,
-            )
+        def _gpu_inference() -> tuple:
+            with torch.no_grad():
+                melspec = model.get_melspec(waveform).detach().unsqueeze(0)
+                melspec = (melspec - melspec.mean()) / melspec.std()
+                melspec = repeat(
+                    melspec,
+                    "B C T -> B C (T N)",
+                    N=model.melspec_config["scale_factor"],
+                )
+                return model._infer_once(
+                    melspec,
+                    wav_length,
+                    ph_seq,
+                    word_seq,
+                    ph_idx_to_word_idx_arr,
+                    return_ctc=False,
+                    return_plot=False,
+                )
+
+        def _cpu_inference(cpu_tensors: dict[str, torch.Tensor]) -> tuple:
+            cpu_waveform = cpu_tensors["waveform"]
+            with torch.no_grad():
+                melspec = model.get_melspec(cpu_waveform).detach().unsqueeze(0)
+                melspec = (melspec - melspec.mean()) / melspec.std()
+                melspec = repeat(
+                    melspec,
+                    "B C T -> B C (T N)",
+                    N=model.melspec_config["scale_factor"],
+                )
+                return model._infer_once(
+                    melspec,
+                    wav_length,
+                    ph_seq,
+                    word_seq,
+                    ph_idx_to_word_idx_arr,
+                    return_ctc=False,
+                    return_plot=False,
+                )
+
+        # Generate mel spectrogram and run inference with GPU OOM fallback
+        (
+            ph_seq_pred,
+            ph_intervals_pred,
+            word_seq_pred,
+            word_intervals_pred,
+            confidence,
+            _,  # ctc
+            _,  # fig
+        ) = run_inference_with_cpu_fallback(
+            model=model,
+            inference_fn=_gpu_inference,
+            tensors_to_move={"waveform": waveform},
+            cpu_inference_fn=_cpu_inference,
+            context="SOFA forced alignment",
+        )
 
         # Convert to PhonemeSegments
         segments: list[PhonemeSegment] = []

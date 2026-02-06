@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from src.backend.domain.recording_session import (
     RecordingSegment,
@@ -337,28 +338,28 @@ class TestRecordingSessionService:
         self, service: RecordingSessionService
     ) -> None:
         """Test creating a session with invalid recording style."""
-        request = RecordingSessionCreate(
-            voicebank_id="test_vb",
-            recording_style="invalid",
-            language="ja",
-            prompts=["ka"],
-        )
-        with pytest.raises(SessionValidationError):
-            await service.create(request)
+        # Pydantic validates enum values at model creation time
+        with pytest.raises(ValidationError, match="recording_style"):
+            request = RecordingSessionCreate(
+                voicebank_id="test_vb",
+                recording_style="invalid",
+                language="ja",
+                prompts=["ka"],
+            )
 
     @pytest.mark.asyncio
     async def test_create_session_invalid_language(
         self, service: RecordingSessionService
     ) -> None:
         """Test creating a session with invalid language."""
-        request = RecordingSessionCreate(
-            voicebank_id="test_vb",
-            recording_style="cv",
-            language="invalid",
-            prompts=["ka"],
-        )
-        with pytest.raises(SessionValidationError):
-            await service.create(request)
+        # Pydantic validates enum values at model creation time
+        with pytest.raises(ValidationError, match="language"):
+            request = RecordingSessionCreate(
+                voicebank_id="test_vb",
+                recording_style="cv",
+                language="invalid",
+                prompts=["ka"],
+            )
 
     @pytest.mark.asyncio
     async def test_get_session(

@@ -1,17 +1,15 @@
 """API router for oto.ini entry management."""
 
 import logging
-from pathlib import Path
 from typing import Annotated
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from src.backend.api.dependencies import get_oto_service
 from src.backend.domain.oto_entry import OtoEntry
 from src.backend.domain.pagination import PaginatedResponse
-from src.backend.repositories.oto_repository import OtoRepository
-from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.services.oto_service import (
     OtoEntryExistsError,
     OtoNotFoundError,
@@ -22,9 +20,6 @@ from src.backend.services.oto_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/voicebanks", tags=["oto"])
-
-# Storage path for voicebanks (same as voicebanks router)
-VOICEBANKS_BASE_PATH = Path("data/voicebanks")
 
 
 # Request/Response models
@@ -133,28 +128,6 @@ class OtoEntryResponse(BaseModel):
             preutterance=entry.preutterance,
             overlap=entry.overlap,
         )
-
-
-# Dependency injection
-
-
-def get_voicebank_repository() -> VoicebankRepository:
-    """Dependency provider for VoicebankRepository."""
-    return VoicebankRepository(VOICEBANKS_BASE_PATH)
-
-
-def get_oto_repository(
-    voicebank_repo: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> OtoRepository:
-    """Dependency provider for OtoRepository."""
-    return OtoRepository(voicebank_repo)
-
-
-def get_oto_service(
-    repository: Annotated[OtoRepository, Depends(get_oto_repository)],
-) -> OtoService:
-    """Dependency provider for OtoService."""
-    return OtoService(repository)
 
 
 # Route handlers

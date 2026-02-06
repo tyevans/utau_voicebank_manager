@@ -8,13 +8,16 @@ echo "==> Linting Python..."
 uv run ruff check src/backend
 
 echo "==> Type checking Python..."
-uv run mypy src/backend --ignore-missing-imports || true
+uv run mypy src/backend --ignore-missing-imports
 
-echo "==> Running backend tests..."
-uv run pytest
+echo "==> Running backend tests with coverage..."
+uv run pytest --cov=src/backend --cov-report=term --cov-fail-under=50
 
 echo "==> Linting frontend..."
 cd src/frontend && npm run lint
+
+echo "==> Running frontend tests..."
+npm run test
 
 echo "==> Building frontend..."
 npm run build

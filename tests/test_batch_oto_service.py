@@ -353,14 +353,14 @@ class TestBatchOtoServiceGenerateOto:
         assert len(paths_arg) == 2
 
     @pytest.mark.asyncio
-    async def test_generate_oto_tracks_low_confidence(
+    async def test_generate_oto_gates_low_confidence(
         self,
         batch_service: BatchOtoService,
         mock_voicebank_service: MagicMock,
         mock_oto_suggester: MagicMock,
         mock_oto_repository: MagicMock,
     ) -> None:
-        """Low confidence files are tracked but not marked as failed."""
+        """Low confidence entries are not saved but returned for review."""
         voicebank_id = "test-vb"
         samples = ["_ka.wav", "_sa.wav"]
 
@@ -391,7 +391,7 @@ class TestBatchOtoServiceGenerateOto:
                 cutoff=-30.0,
                 preutterance=60.0,
                 overlap=25.0,
-                confidence=0.1,  # LOW confidence
+                confidence=0.1,  # LOW confidence (below 0.3 threshold)
                 phonemes_detected=[],
                 audio_duration_ms=260.0,
             ),
@@ -403,9 +403,147 @@ class TestBatchOtoServiceGenerateOto:
         assert result.processed == 2
         assert result.failed == 0
 
-        # Average confidence reflects the low value
+        # Only the high-confidence entry is in entries (saved)
+        assert len(result.entries) == 1
+        assert result.entries[0].filename == "_ka.wav"
+
+        # The low-confidence entry is in pending_review_entries (not saved)
+        assert len(result.pending_review_entries) == 1
+        assert result.pending_review_entries[0].filename == "_sa.wav"
+
+        # Low confidence files are tracked
+        assert result.low_confidence_files == ["_sa.wav"]
+
+        # Confidence threshold is reported
+        assert result.confidence_threshold == 0.3
+
+        # Average confidence reflects both entries
         expected_avg = (0.85 + 0.1) / 2
         assert result.average_confidence == pytest.approx(expected_avg, rel=0.01)
+
+        # Verify only the high-confidence entry was saved to repository
+        mock_oto_repository.save_entries.assert_called_once()
+        save_call_args = mock_oto_repository.save_entries.call_args
+        saved_entries = save_call_args[0][1]
+        assert len(saved_entries) == 1
+        assert saved_entries[0].filename == "_ka.wav"
+
+    @pytest.mark.asyncio
+    async def test_generate_oto_all_low_confidence_saves_nothing(
+        self,
+        batch_service: BatchOtoService,
+        mock_voicebank_service: MagicMock,
+        mock_oto_suggester: MagicMock,
+        mock_oto_repository: MagicMock,
+    ) -> None:
+        """When all entries are low confidence, nothing is saved to oto.ini."""
+        voicebank_id = "test-vb"
+        samples = ["_ka.wav", "_sa.wav"]
+
+        mock_voicebank_service.get.return_value = {"id": voicebank_id}
+        mock_voicebank_service.list_samples.return_value = samples
+        mock_voicebank_service.get_sample_path.side_effect = [
+            Path(f"/voicebanks/{voicebank_id}/{s}") for s in samples
+        ]
+
+        mock_oto_suggester.batch_suggest_oto.return_value = [
+            OtoSuggestion(
+                filename="_ka.wav",
+                alias="- ka",
+                offset=20.0,
+                consonant=100.0,
+                cutoff=-30.0,
+                preutterance=60.0,
+                overlap=25.0,
+                confidence=0.15,  # LOW
+                phonemes_detected=[],
+                audio_duration_ms=250.0,
+            ),
+            OtoSuggestion(
+                filename="_sa.wav",
+                alias="- sa",
+                offset=20.0,
+                consonant=100.0,
+                cutoff=-30.0,
+                preutterance=60.0,
+                overlap=25.0,
+                confidence=0.2,  # LOW
+                phonemes_detected=[],
+                audio_duration_ms=260.0,
+            ),
+        ]
+
+        result = await batch_service.generate_oto_for_voicebank(voicebank_id)
+
+        # Both processed but none saved
+        assert result.processed == 2
+        assert result.entries == []
+        assert len(result.pending_review_entries) == 2
+        assert result.low_confidence_files == ["_ka.wav", "_sa.wav"]
+
+        # Repository save_entries should NOT have been called
+        mock_oto_repository.save_entries.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generate_oto_custom_confidence_threshold(
+        self,
+        batch_service: BatchOtoService,
+        mock_voicebank_service: MagicMock,
+        mock_oto_suggester: MagicMock,
+        mock_oto_repository: MagicMock,
+    ) -> None:
+        """Custom confidence threshold is respected."""
+        voicebank_id = "test-vb"
+        samples = ["_ka.wav", "_sa.wav"]
+
+        mock_voicebank_service.get.return_value = {"id": voicebank_id}
+        mock_voicebank_service.list_samples.return_value = samples
+        mock_voicebank_service.get_sample_path.side_effect = [
+            Path(f"/voicebanks/{voicebank_id}/{s}") for s in samples
+        ]
+
+        mock_oto_suggester.batch_suggest_oto.return_value = [
+            OtoSuggestion(
+                filename="_ka.wav",
+                alias="- ka",
+                offset=20.0,
+                consonant=100.0,
+                cutoff=-30.0,
+                preutterance=60.0,
+                overlap=25.0,
+                confidence=0.5,  # Would pass default 0.3 but not 0.6
+                phonemes_detected=[],
+                audio_duration_ms=250.0,
+            ),
+            OtoSuggestion(
+                filename="_sa.wav",
+                alias="- sa",
+                offset=20.0,
+                consonant=100.0,
+                cutoff=-30.0,
+                preutterance=60.0,
+                overlap=25.0,
+                confidence=0.7,  # Passes 0.6 threshold
+                phonemes_detected=[],
+                audio_duration_ms=260.0,
+            ),
+        ]
+
+        # Use a higher threshold (0.6)
+        result = await batch_service.generate_oto_for_voicebank(
+            voicebank_id, confidence_threshold=0.6
+        )
+
+        # Only the 0.7 entry should be saved
+        assert len(result.entries) == 1
+        assert result.entries[0].filename == "_sa.wav"
+
+        # The 0.5 entry should be pending review
+        assert len(result.pending_review_entries) == 1
+        assert result.pending_review_entries[0].filename == "_ka.wav"
+
+        # Threshold is reported in result
+        assert result.confidence_threshold == 0.6
 
     @pytest.mark.asyncio
     async def test_generate_oto_empty_voicebank(
@@ -481,6 +619,15 @@ class TestBatchOtoResult:
 
     def test_batch_oto_result_valid(self) -> None:
         """Test creating a valid BatchOtoResult."""
+        pending_entry = OtoEntry(
+            filename="_low.wav",
+            alias="- low",
+            offset=10.0,
+            consonant=80.0,
+            cutoff=-20.0,
+            preutterance=50.0,
+            overlap=20.0,
+        )
         result = BatchOtoResult(
             voicebank_id="test-vb",
             total_samples=10,
@@ -498,8 +645,11 @@ class TestBatchOtoResult:
                     overlap=25.0,
                 )
             ],
+            pending_review_entries=[pending_entry],
             failed_files=["_error.wav"],
+            low_confidence_files=["_low.wav"],
             average_confidence=0.85,
+            confidence_threshold=0.3,
         )
 
         assert result.voicebank_id == "test-vb"
@@ -508,8 +658,12 @@ class TestBatchOtoResult:
         assert result.skipped == 1
         assert result.failed == 1
         assert len(result.entries) == 1
+        assert len(result.pending_review_entries) == 1
+        assert result.pending_review_entries[0].filename == "_low.wav"
         assert result.failed_files == ["_error.wav"]
+        assert result.low_confidence_files == ["_low.wav"]
         assert result.average_confidence == 0.85
+        assert result.confidence_threshold == 0.3
 
     def test_batch_oto_result_defaults(self) -> None:
         """Test BatchOtoResult with default values."""
@@ -523,4 +677,7 @@ class TestBatchOtoResult:
         )
 
         assert result.entries == []
+        assert result.pending_review_entries == []
         assert result.failed_files == []
+        assert result.low_confidence_files == []
+        assert result.confidence_threshold == 0.3

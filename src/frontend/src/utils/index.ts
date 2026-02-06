@@ -87,6 +87,16 @@ export type {
   CepstralOptions,
 } from './cepstral-envelope.js';
 
+// Formant frequency tracking for spectral visualization
+export {
+  analyzeFormants,
+} from './formant-tracker.js';
+export type {
+  FormantFrame,
+  FormantAnalysis,
+  FormantTrackingOptions,
+} from './formant-tracker.js';
+
 // Spectral smoothing at concatenation joins
 export {
   applySpectralSmoothing,
@@ -104,3 +114,7 @@ export {
   findMatchingAlias,
   hasMatchingAlias,
 } from './alias-matching.js';
+
+// Fetch with retry (exponential backoff)
+export { fetchWithRetry } from './fetch-retry.js';
+export type { RetryOptions } from './fetch-retry.js';

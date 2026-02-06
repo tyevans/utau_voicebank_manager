@@ -10,7 +10,9 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from src.backend.domain.voicebank import Language, RecordingStyle
 
 
 def _utc_now() -> datetime:
@@ -60,13 +62,13 @@ class RecordingSessionCreate(BaseModel):
     voicebank_id: str = Field(
         description="Target voicebank to add recordings to",
     )
-    recording_style: str = Field(
-        default="cv",
+    recording_style: RecordingStyle = Field(
+        default=RecordingStyle.CV,
         description="Recording style: cv, vcv, cvvc, vccv, arpasing",
     )
-    language: str = Field(
-        default="ja",
-        description="Language code (ja, en, etc.)",
+    language: Language = Field(
+        default=Language.JA,
+        description="Language code (ja, en, zh, ko)",
     )
     recording_mode: Literal["individual", "paragraph"] = Field(
         default="individual",
@@ -107,8 +109,8 @@ class RecordingSession(BaseModel):
 
     id: UUID = Field(default_factory=uuid4, description="Unique session identifier")
     voicebank_id: str = Field(description="Target voicebank for recordings")
-    recording_style: str = Field(description="Recording style (cv, vcv, etc.)")
-    language: str = Field(description="Language code")
+    recording_style: RecordingStyle = Field(description="Recording style (cv, vcv, etc.)")
+    language: Language = Field(description="Language code")
     recording_mode: Literal["individual", "paragraph"] = Field(
         default="individual",
         description="Recording mode: individual phoneme prompts or paragraph sentences",
@@ -128,6 +130,7 @@ class RecordingSession(BaseModel):
     )
     current_prompt_index: int = Field(
         default=0,
+        ge=0,
         description="Index of next prompt to record",
     )
     created_at: datetime = Field(
@@ -140,6 +143,23 @@ class RecordingSession(BaseModel):
     )
 
     model_config = {"from_attributes": True}
+
+    @field_validator("current_prompt_index")
+    @classmethod
+    def validate_prompt_index(cls, v: int, info) -> int:
+        """Validate current_prompt_index is within bounds when prompts exist.
+
+        current_prompt_index points to the next prompt to record.
+        When all prompts are recorded, it equals len(prompts).
+        Therefore: 0 <= current_prompt_index <= len(prompts)
+        """
+        # Access prompts from the data being validated
+        prompts = info.data.get("prompts", [])
+        if prompts and v > len(prompts):
+            raise ValueError(
+                f"current_prompt_index ({v}) must be <= len(prompts) ({len(prompts)})"
+            )
+        return v
 
     def to_summary(self) -> RecordingSessionSummary:
         """Convert to lightweight summary."""

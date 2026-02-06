@@ -18,6 +18,7 @@ from src.backend.domain.recording_session import (
     SessionProgress,
     SessionStatus,
 )
+from src.backend.domain.voicebank import Language, RecordingStyle
 from src.backend.repositories.interfaces import (
     RecordingSessionRepositoryInterface,
     VoicebankRepositoryInterface,
@@ -27,6 +28,7 @@ from src.backend.utils.audio_converter import (
     convert_to_wav,
     is_wav,
 )
+from src.backend.utils.lock_map import BoundedLockMap
 
 if TYPE_CHECKING:
     from src.backend.services.paragraph_segmentation_service import (
@@ -63,11 +65,11 @@ class RecordingSessionService:
     Supports both individual phoneme prompts and paragraph-based recording modes.
     """
 
-    # Supported recording styles
-    SUPPORTED_STYLES = {"cv", "vcv", "cvvc", "vccv", "arpasing"}
+    # Supported recording styles (from RecordingStyle enum)
+    SUPPORTED_STYLES = {style.value for style in RecordingStyle}
 
-    # Supported languages
-    SUPPORTED_LANGUAGES = {"ja", "en", "zh", "ko"}
+    # Supported languages (from Language enum)
+    SUPPORTED_LANGUAGES = {lang.value for lang in Language}
 
     # Supported recording modes
     SUPPORTED_MODES = {"individual", "paragraph"}
@@ -89,7 +91,7 @@ class RecordingSessionService:
         """
         self._session_repo = session_repository
         self._voicebank_repo = voicebank_repository
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks = BoundedLockMap(max_size=1024)
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         """Get or create an asyncio lock for a specific session.
@@ -97,15 +99,16 @@ class RecordingSessionService:
         Serializes mutating operations on the same session to prevent
         read-modify-write races (e.g., concurrent upload_segment calls).
 
+        Uses a bounded lock map with LRU eviction to prevent unbounded
+        memory growth from accumulating locks for deleted sessions.
+
         Args:
             session_id: Session identifier (stringified UUID)
 
         Returns:
             asyncio.Lock for the given session_id
         """
-        if session_id not in self._locks:
-            self._locks[session_id] = asyncio.Lock()
-        return self._locks[session_id]
+        return self._locks.get(session_id)
 
     def _validate_create_request(self, request: RecordingSessionCreate) -> None:
         """Validate session creation request.
@@ -126,15 +129,17 @@ class RecordingSessionService:
                 f"Supported: {', '.join(self.SUPPORTED_MODES)}"
             )
 
-        if request.recording_style.lower() not in self.SUPPORTED_STYLES:
+        # Enum validation happens at Pydantic level, but we keep these checks
+        # for explicit error messages if somehow an invalid enum value slips through
+        if request.recording_style.value not in self.SUPPORTED_STYLES:
             raise SessionValidationError(
-                f"Unsupported recording style: {request.recording_style}. "
+                f"Unsupported recording style: {request.recording_style.value}. "
                 f"Supported: {', '.join(self.SUPPORTED_STYLES)}"
             )
 
-        if request.language.lower() not in self.SUPPORTED_LANGUAGES:
+        if request.language.value not in self.SUPPORTED_LANGUAGES:
             raise SessionValidationError(
-                f"Unsupported language: {request.language}. "
+                f"Unsupported language: {request.language.value}. "
                 f"Supported: {', '.join(self.SUPPORTED_LANGUAGES)}"
             )
 
@@ -210,8 +215,8 @@ class RecordingSessionService:
         # Create session with mode-specific fields
         session = RecordingSession(
             voicebank_id=request.voicebank_id,
-            recording_style=request.recording_style.lower(),
-            language=request.language.lower(),
+            recording_style=request.recording_style,
+            language=request.language,
             recording_mode=request.recording_mode,
             prompts=request.prompts,
             paragraph_ids=request.paragraph_ids,
@@ -224,8 +229,8 @@ class RecordingSessionService:
         self,
         voicebank_id: str,
         paragraph_library: ParagraphLibrary,
-        recording_style: str | None = None,
-        language: str | None = None,
+        recording_style: RecordingStyle | str | None = None,
+        language: Language | str | None = None,
         use_minimal_set: bool = False,
     ) -> RecordingSession:
         """Create a session using paragraph prompts from a library.
@@ -236,8 +241,10 @@ class RecordingSessionService:
         Args:
             voicebank_id: Target voicebank name
             paragraph_library: Library containing paragraph prompts
-            recording_style: Override style (defaults to library style)
-            language: Override language (defaults to library language)
+            recording_style: Override style (defaults to library style).
+                            Accepts RecordingStyle enum or string.
+            language: Override language (defaults to library language).
+                     Accepts Language enum or string.
             use_minimal_set: If True, use only the minimal paragraphs
                             needed for full phoneme coverage
 
@@ -677,11 +684,15 @@ class RecordingSessionService:
         Raises:
             SessionNotFoundError: If session not found
         """
-        async with self._get_lock(str(session_id)):
+        session_key = str(session_id)
+        async with self._get_lock(session_key):
             if not await self._session_repo.exists(session_id):
                 raise SessionNotFoundError(f"Session '{session_id}' not found")
 
             await self._session_repo.delete(session_id)
+
+        # Clean up lock after release -- session no longer exists
+        self._locks.discard(session_key)
 
     async def get_segment_audio_path(
         self,

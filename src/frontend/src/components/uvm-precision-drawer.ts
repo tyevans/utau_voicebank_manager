@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
 
 // Import Shoelace components
@@ -186,6 +186,20 @@ export class UvmPrecisionDrawer extends LitElement {
       margin-top: 2px;
     }
 
+    .input-group.has-warning .input-wrapper sl-input::part(base) {
+      border-color: #d97706;
+      box-shadow: 0 0 0 1px rgba(217, 119, 6, 0.2);
+    }
+
+    .warning-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #d97706;
+      flex-shrink: 0;
+    }
+
     /* Responsive: stack on narrow screens */
     @media (max-width: 639px) {
       :host([open]) {
@@ -247,6 +261,13 @@ export class UvmPrecisionDrawer extends LitElement {
    */
   @property({ type: Number })
   overlap = 0;
+
+  /**
+   * Set of parameter names that currently have validation warnings.
+   * Inputs for these parameters will show a warning indicator.
+   */
+  @property({ attribute: false })
+  warningParameters: Set<string> = new Set();
 
   /**
    * Reference to the first input for focus management.
@@ -360,11 +381,13 @@ export class UvmPrecisionDrawer extends LitElement {
    */
   private _renderInputGroup(marker: MarkerConfig) {
     const value = this._getMarkerValue(marker.name);
+    const hasWarning = this.warningParameters.has(marker.name);
     return html`
-      <div class="input-group">
+      <div class="input-group ${hasWarning ? 'has-warning' : ''}">
         <label class="input-label" for="input-${marker.name}">
           <span class="color-dot ${marker.name}"></span>
           ${marker.label}
+          ${hasWarning ? html`<span class="warning-dot" title="Parameter out of range" aria-label="Warning"></span>` : nothing}
         </label>
         <div class="input-wrapper">
           <sl-input

@@ -51,15 +51,21 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    """arq WorkerSettings for the GPU worker."""
+    """arq WorkerSettings for the GPU worker.
+
+    Retry logic is handled internally by the generate_voicebank task
+    (exponential backoff + dead-letter queue), not by arq's built-in
+    retry mechanism. arq's max_tries is set to 1 so arq does not
+    double-retry on top of our custom logic.
+    """
 
     # Task functions
     functions = [generate_voicebank]
 
     # Worker config
     max_jobs = 1  # GPU-bound, one task at a time
-    job_timeout = 3600  # 1 hour max per job
-    max_tries = 1  # Don't auto-retry GPU tasks
+    job_timeout = 7200  # 2 hours — allows time for retries with backoff
+    max_tries = 1  # Retries handled inside the task, not by arq
 
     # Lifecycle hooks
     on_startup = startup

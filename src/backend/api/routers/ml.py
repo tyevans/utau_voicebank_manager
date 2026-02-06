@@ -9,6 +9,11 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
+from src.backend.api.dependencies import (
+    get_oto_repository,
+    get_voicebank_service,
+    get_voicebanks_path,
+)
 from src.backend.domain.alignment_config import AlignmentConfig
 from src.backend.domain.batch_oto import BatchOtoRequest, BatchOtoResult
 from src.backend.domain.oto_suggestion import OtoSuggestion
@@ -22,11 +27,16 @@ from src.backend.ml.phoneme_detector import (
 from src.backend.ml.sofa_aligner import get_sofa_aligner, is_sofa_available
 from src.backend.repositories.oto_repository import OtoRepository
 from src.backend.repositories.voicebank_repository import VoicebankRepository
+from src.backend.services.alignment_config_store import (
+    load_alignment_config,
+    save_alignment_config,
+)
 from src.backend.services.batch_oto_service import BatchOtoService
 from src.backend.services.voicebank_service import (
     VoicebankNotFoundError,
     VoicebankService,
 )
+from src.backend.utils.path_validation import validate_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -103,39 +113,11 @@ class AlignmentMethodsResponse(BaseModel):
     recommended: str = Field(description="Recommended method for best results")
 
 
-# -----------------------------------------------------------------------------
-# Module-level Alignment Config Storage
-# -----------------------------------------------------------------------------
-
-_alignment_config: AlignmentConfig = AlignmentConfig()
-
 # Maximum file size (50MB)
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
-# Storage path for voicebanks (same as other routers)
-VOICEBANKS_BASE_PATH = Path("data/voicebanks")
 
-
-# Dependency providers for batch oto generation
-
-
-def get_voicebank_repository() -> VoicebankRepository:
-    """Dependency provider for VoicebankRepository."""
-    return VoicebankRepository(VOICEBANKS_BASE_PATH)
-
-
-def get_oto_repository(
-    voicebank_repo: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> OtoRepository:
-    """Dependency provider for OtoRepository."""
-    return OtoRepository(voicebank_repo)
-
-
-def get_voicebank_service(
-    repository: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> VoicebankService:
-    """Dependency provider for VoicebankService."""
-    return VoicebankService(repository)
+# Dependency provider for batch oto generation (ML-specific)
 
 
 def get_batch_oto_service(
@@ -144,13 +126,15 @@ def get_batch_oto_service(
 ) -> BatchOtoService:
     """Dependency provider for BatchOtoService.
 
-    Uses the current module-level alignment config for method selection.
+    Reads alignment config from disk so all workers share the same state.
     """
+    alignment_config = load_alignment_config()
+
     # Determine alignment method from config
-    if _alignment_config.method_override == "fa":
+    if alignment_config.method_override == "fa":
         use_forced_alignment = True
         use_sofa = False
-    elif _alignment_config.method_override == "sofa":
+    elif alignment_config.method_override == "sofa":
         use_forced_alignment = True
         use_sofa = True
     else:
@@ -296,6 +280,7 @@ async def ml_status() -> dict[str, str | bool | list[str] | None]:
 
 @router.post("/oto/suggest", response_model=OtoSuggestion)
 async def suggest_oto(
+    voicebanks_path: Annotated[Path, Depends(get_voicebanks_path)],
     voicebank_id: str = Query(..., description="ID of the voicebank"),
     filename: str = Query(..., description="Filename of the sample"),
     alias: str | None = Query(None, description="Optional alias override"),
@@ -325,6 +310,7 @@ async def suggest_oto(
     and overlap values.
 
     Args:
+        voicebanks_path: Injected base path for voicebank storage
         voicebank_id: ID of the voicebank containing the sample
         filename: Filename of the sample within the voicebank
         alias: Optional alias override (auto-generated from filename if not provided)
@@ -337,35 +323,26 @@ async def suggest_oto(
     Raises:
         HTTPException: If file not found or processing fails
     """
-    # TODO: Integrate with voicebank repository to resolve actual file path
-    # For now, construct a reasonable path (this will need proper integration)
-    # Typical voicebank structure: voicebanks/{id}/samples/{filename}
-    voicebank_base = Path("voicebanks") / voicebank_id / "samples"
-    audio_path = voicebank_base / filename
+    validate_path_component(voicebank_id, label="voicebank_id")
+    validate_path_component(filename, label="filename")
+
+    # Resolve audio file path using the injected voicebanks base path
+    audio_path = voicebanks_path / voicebank_id / filename
 
     if not audio_path.exists():
-        # Try alternative paths
-        alt_paths = [
-            Path("voicebanks") / voicebank_id / filename,
-            Path("data") / "voicebanks" / voicebank_id / filename,
-        ]
-        for alt_path in alt_paths:
-            if alt_path.exists():
-                audio_path = alt_path
-                break
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Sample file not found: {filename} in voicebank {voicebank_id}",
-            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample file not found: {filename} in voicebank {voicebank_id}",
+        )
 
     try:
         # Determine which method to use:
         # 1. Explicit method_override param takes precedence
-        # 2. Then global _alignment_config.method_override
+        # 2. Then persisted alignment config method_override
         # 3. Then prefer_sofa param (legacy)
         # 4. Then auto-detect
-        effective_method = method_override or _alignment_config.method_override
+        alignment_config = load_alignment_config()
+        effective_method = method_override or alignment_config.method_override
         if effective_method == "sofa" and is_sofa_available():
             suggester = OtoSuggester(use_forced_alignment=True, use_sofa=True)
             suggestion = await suggester.suggest_oto(
@@ -488,6 +465,8 @@ async def suggest_oto_from_upload(
             confidence=suggestion.confidence,
             phonemes_detected=suggestion.phonemes_detected,
             audio_duration_ms=suggestion.audio_duration_ms,
+            method_used=suggestion.method_used,
+            fallback_reasons=suggestion.fallback_reasons,
         )
 
         logger.info(
@@ -530,6 +509,7 @@ async def suggest_oto_from_upload(
 async def batch_generate_oto(
     request: BatchOtoRequest,
     service: Annotated[BatchOtoService, Depends(get_batch_oto_service)],
+    voicebanks_path: Annotated[Path, Depends(get_voicebanks_path)],
 ) -> BatchOtoResult:
     """Generate oto entries for all samples in a voicebank.
 
@@ -553,7 +533,10 @@ async def batch_generate_oto(
     try:
         # If request includes alignment overrides, create a custom service
         if request.tightness is not None or request.method_override is not None:
-            effective_method = request.method_override or _alignment_config.method_override
+            alignment_config = load_alignment_config()
+            effective_method = (
+                request.method_override or alignment_config.method_override
+            )
             if effective_method == "fa":
                 use_forced_alignment = True
                 use_sofa = False
@@ -568,7 +551,7 @@ async def batch_generate_oto(
                 use_forced_alignment=use_forced_alignment, use_sofa=use_sofa
             )
             # Create a new service with the custom suggester
-            voicebank_repo = VoicebankRepository(VOICEBANKS_BASE_PATH)
+            voicebank_repo = VoicebankRepository(voicebanks_path)
             oto_repo = OtoRepository(voicebank_repo)
             vb_service = VoicebankService(voicebank_repo)
             custom_service = BatchOtoService(vb_service, custom_suggester, oto_repo)
@@ -641,10 +624,11 @@ async def get_alignment_config() -> AlignmentConfigResponse:
     Returns:
         AlignmentConfigResponse with current config and computed params
     """
-    params = _alignment_config.get_params()
+    config = load_alignment_config()
+    params = config.get_params()
     return AlignmentConfigResponse(
-        tightness=_alignment_config.tightness,
-        method_override=_alignment_config.method_override,
+        tightness=config.tightness,
+        method_override=config.method_override,
         computed_params=_params_to_dict(params),
     )
 
@@ -653,8 +637,8 @@ async def get_alignment_config() -> AlignmentConfigResponse:
 async def update_alignment_config(config: AlignmentConfig) -> AlignmentConfigResponse:
     """Update the default alignment configuration.
 
-    Sets the alignment tightness and optional method override that will be
-    used for subsequent alignment operations.
+    Persists the alignment tightness and optional method override to disk
+    so that all workers share the same configuration state.
 
     Args:
         config: New alignment configuration with tightness and optional method override
@@ -662,18 +646,17 @@ async def update_alignment_config(config: AlignmentConfig) -> AlignmentConfigRes
     Returns:
         AlignmentConfigResponse with updated config and computed params
     """
-    global _alignment_config
-    _alignment_config = config
+    save_alignment_config(config)
 
     logger.info(
         f"Updated alignment config: tightness={config.tightness}, "
         f"method_override={config.method_override}"
     )
 
-    params = _alignment_config.get_params()
+    params = config.get_params()
     return AlignmentConfigResponse(
-        tightness=_alignment_config.tightness,
-        method_override=_alignment_config.method_override,
+        tightness=config.tightness,
+        method_override=config.method_override,
         computed_params=_params_to_dict(params),
     )
 

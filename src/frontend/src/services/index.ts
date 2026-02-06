@@ -60,3 +60,16 @@ export type {
   Voicebank,
   VoicebankSummary,
 } from './types.js';
+
+// Oto cache invalidation events
+export {
+  OTO_ENTRIES_CHANGED_EVENT,
+  dispatchOtoEntriesChanged,
+  onOtoEntriesChanged,
+  offOtoEntriesChanged,
+} from '../events/oto-events.js';
+export type {
+  OtoEntriesChangedDetail,
+  OtoEntriesChangedEvent,
+  OtoEntriesChangedCallback,
+} from '../events/oto-events.js';

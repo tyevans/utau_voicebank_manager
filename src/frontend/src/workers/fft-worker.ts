@@ -61,8 +61,8 @@ function computeSpectrogram(
     Math.floor((maxFreq / nyquist) * (fftSize / 2))
   );
 
-  // Number of time frames
-  const numFrames = Math.floor((channelData.length - fftSize) / hopSize) + 1;
+  // Number of time frames (include partial final frames; they get zero-padded)
+  const numFrames = Math.max(0, Math.ceil(channelData.length / hopSize));
 
   if (numFrames <= 0) {
     return null;
@@ -80,14 +80,15 @@ function computeSpectrogram(
   for (let frame = 0; frame < numFrames; frame++) {
     const startSample = frame * hopSize;
 
-    // Extract and window the frame
+    // Extract and window the frame (zero-pad if frame extends past buffer)
     const real = new Float32Array(fftSize);
     const imag = new Float32Array(fftSize);
+    const frameSamples = Math.min(fftSize, channelData.length - startSample);
 
-    for (let i = 0; i < fftSize; i++) {
+    for (let i = 0; i < frameSamples; i++) {
       real[i] = channelData[startSample + i] * window[i];
-      imag[i] = 0;
     }
+    // Remaining samples (frameSamples..fftSize) are already zero from Float32Array init
 
     // In-place FFT
     fft(real, imag);

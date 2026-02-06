@@ -562,6 +562,11 @@ class TestSOFANativeMode:
 class TestSOFAModelCacheTTL:
     """Tests for model cache TTL behavior."""
 
-    def test_model_cache_ttl_is_5_minutes(self) -> None:
-        """MODEL_CACHE_TTL_SECONDS is set to 5 minutes (300 seconds)."""
-        assert MODEL_CACHE_TTL_SECONDS == 300
+    def test_model_cache_ttl_is_60_minutes(self) -> None:
+        """MODEL_CACHE_TTL_SECONDS defaults to 60 minutes (3600 seconds).
+
+        The TTL was increased from 5 minutes to 60 minutes to prevent
+        unnecessary model reloads during batch processing jobs.
+        Configurable via SOFA_CACHE_TTL_SECONDS environment variable.
+        """
+        assert MODEL_CACHE_TTL_SECONDS == 3600

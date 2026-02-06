@@ -36,7 +36,7 @@ const STORAGE_KEY_HAS_VOICEBANKS = 'uvm_has_voicebanks';
 /**
  * Recording session phase.
  */
-type SessionPhase = 'setup' | 'recording' | 'processing' | 'complete' | 'error';
+type SessionPhase = 'setup' | 'recording' | 'recordings-complete' | 'processing' | 'complete' | 'error';
 
 /**
  * Recording complete event detail from the prompter.
@@ -420,10 +420,146 @@ export class UvmRecordingSession extends LitElement {
       gap: 0.75rem;
     }
 
+    /* Recordings Complete Phase */
+    .recordings-complete-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 3rem 2rem 2.5rem;
+      background-color: white;
+      border-radius: 16px;
+      text-align: center;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    .complete-icon {
+      font-size: 2.5rem;
+      color: var(--sl-color-neutral-900, #0f172a);
+      margin-bottom: 1rem;
+    }
+
+    .recordings-complete-container h2 {
+      margin: 0 0 0.375rem;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--sl-color-neutral-900, #0f172a);
+      letter-spacing: -0.02em;
+    }
+
+    .recordings-complete-subtitle {
+      margin: 0 0 2rem;
+      font-size: 0.9375rem;
+      color: var(--sl-color-neutral-500, #64748b);
+      font-weight: 400;
+    }
+
+    .recording-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2rem;
+      justify-content: center;
+      padding: 1rem 0;
+      margin-bottom: 1.5rem;
+    }
+
+    .recording-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .recording-stat-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--sl-color-neutral-800, #1e293b);
+    }
+
+    .recording-stat-label {
+      font-size: 0.6875rem;
+      color: var(--sl-color-neutral-400, #94a3b8);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .next-step-section {
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+
+    .next-step-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      padding: 1.5rem;
+      background-color: var(--sl-color-neutral-50, #f8fafc);
+      border-radius: 12px;
+    }
+
+    .next-step-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .next-step-header sl-icon {
+      font-size: 1.25rem;
+      color: var(--sl-color-neutral-600, #475569);
+    }
+
+    .next-step-title {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--sl-color-neutral-700, #334155);
+    }
+
+    .next-step-desc {
+      font-size: 0.8125rem;
+      color: var(--sl-color-neutral-500, #64748b);
+      line-height: 1.6;
+      max-width: 360px;
+      margin: 0;
+    }
+
+    .batch-error-message {
+      width: 100%;
+      margin-bottom: 1rem;
+    }
+
+    .completion-secondary-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .completion-secondary-actions sl-button::part(base) {
+      font-size: 0.875rem;
+    }
+
     /* Responsive */
     @media (max-width: 640px) {
       .setup-card {
         padding: 1.5rem;
+      }
+
+      .recordings-complete-container {
+        padding: 2rem 1.25rem 2rem;
+      }
+
+      .recordings-complete-container h2 {
+        font-size: 1.25rem;
+      }
+
+      .recording-stats {
+        gap: 1.25rem;
+      }
+
+      .recording-stat-value {
+        font-size: 1.25rem;
       }
 
       .error-actions {
@@ -432,6 +568,15 @@ export class UvmRecordingSession extends LitElement {
       }
 
       .error-actions sl-button {
+        width: 100%;
+      }
+
+      .completion-secondary-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+
+      .completion-secondary-actions sl-button {
         width: 100%;
       }
     }
@@ -514,6 +659,19 @@ export class UvmRecordingSession extends LitElement {
    */
   @state()
   private _segmentIdsByPromptIndex: Map<number, string> = new Map();
+
+  /**
+   * Whether the batch oto generation is currently in progress
+   * (used in the recordings-complete phase).
+   */
+  @state()
+  private _isBatchOtoProcessing = false;
+
+  /**
+   * Error message from batch oto generation, if any.
+   */
+  @state()
+  private _batchOtoError: string | null = null;
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
@@ -694,15 +852,34 @@ export class UvmRecordingSession extends LitElement {
   }
 
   /**
-   * Finish recording and start processing.
+   * Finish recording and show the guided completion screen.
    */
-  private async _finishRecording(): Promise<void> {
+  private _finishRecording(): void {
+    this._phase = 'recordings-complete';
+    this._batchOtoError = null;
+    this._isBatchOtoProcessing = false;
+  }
+
+  /**
+   * Go back to recording from the completion screen.
+   * Returns to the last prompt so the user can re-record or continue.
+   */
+  private _onBackToRecording(): void {
+    // Go back to the last prompt index (which was the final one)
+    this._currentPromptIndex = Math.max(0, this._prompts.length - 1);
+    this._phase = 'recording';
+  }
+
+  /**
+   * Launch the batch oto generation from the completion screen.
+   */
+  private async _onGenerateOto(): Promise<void> {
     if (!this._sessionId) return;
 
-    this._phase = 'processing';
-    this._progress = 0;
+    this._isBatchOtoProcessing = true;
+    this._batchOtoError = null;
 
-    // Initialize processing steps
+    // Initialize processing steps for the processing phase
     this._processingSteps = [
       { id: 'save', label: 'Saving recordings', description: 'Storing your audio files securely', status: 'completed' },
       { id: 'analyze', label: 'Analyzing phonemes', description: 'AI is finding where each sound starts and ends', status: 'pending' },
@@ -714,6 +891,8 @@ export class UvmRecordingSession extends LitElement {
       // Mark session as complete
       await recordingApi.completeSession(this._sessionId);
 
+      // Transition to the processing phase for the detailed progress view
+      this._phase = 'processing';
       this._progress = 10;
       this._updateProcessingSteps(this._progress);
 
@@ -765,6 +944,8 @@ export class UvmRecordingSession extends LitElement {
       } else {
         this._errorMessage = 'Failed to generate voicebank. Please try again.';
       }
+    } finally {
+      this._isBatchOtoProcessing = false;
     }
   }
 
@@ -834,6 +1015,8 @@ export class UvmRecordingSession extends LitElement {
     this._skippedPrompts = new Set();
     this._processingSteps = [];
     this._segmentIdsByPromptIndex = new Map();
+    this._isBatchOtoProcessing = false;
+    this._batchOtoError = null;
   }
 
   /**
@@ -860,9 +1043,11 @@ export class UvmRecordingSession extends LitElement {
    */
   private _onRetry(): void {
     if (this._phase === 'error') {
-      // Go back to recording to try again
-      this._phase = 'recording';
+      // Go back to recordings-complete to try generation again
+      this._phase = 'recordings-complete';
       this._errorMessage = '';
+      this._batchOtoError = null;
+      this._isBatchOtoProcessing = false;
     }
   }
 
@@ -1068,6 +1253,109 @@ export class UvmRecordingSession extends LitElement {
   }
 
   /**
+   * Render recordings-complete phase.
+   *
+   * Shows a guided workflow screen after all samples have been recorded,
+   * with recording stats, a primary CTA for batch oto generation, and
+   * a secondary option to go back and re-record.
+   */
+  private _renderRecordingsComplete() {
+    const totalPrompts = this._prompts.length;
+    const skippedCount = this._skippedPrompts.size;
+    const recordedCount = totalPrompts - skippedCount;
+    const recordedPercent = totalPrompts > 0
+      ? Math.round((recordedCount / totalPrompts) * 100)
+      : 0;
+
+    return html`
+      <div class="recordings-complete-container">
+        <sl-icon name="mic-fill" class="complete-icon"></sl-icon>
+        <h2>Recording Complete</h2>
+        <p class="recordings-complete-subtitle">
+          All samples for "${this._voicebankName}" have been recorded
+        </p>
+
+        <!-- Recording stats -->
+        <div class="recording-stats">
+          <div class="recording-stat">
+            <span class="recording-stat-value">${recordedCount}</span>
+            <span class="recording-stat-label">Recorded</span>
+          </div>
+          <div class="recording-stat">
+            <span class="recording-stat-value">${skippedCount}</span>
+            <span class="recording-stat-label">Skipped</span>
+          </div>
+          <div class="recording-stat">
+            <span class="recording-stat-value">${recordedPercent}%</span>
+            <span class="recording-stat-label">Coverage</span>
+          </div>
+        </div>
+
+        ${skippedCount > 0 ? html`
+          <sl-alert variant="warning" open style="width: 100%; margin-bottom: 1rem;">
+            <sl-icon slot="icon" name="exclamation-triangle"></sl-icon>
+            ${skippedCount} sample${skippedCount !== 1 ? 's were' : ' was'} skipped.
+            You can go back to record them, or continue with what you have.
+          </sl-alert>
+        ` : null}
+
+        ${this._batchOtoError ? html`
+          <div class="batch-error-message">
+            <sl-alert variant="danger" open>
+              <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
+              ${this._batchOtoError}
+            </sl-alert>
+          </div>
+        ` : null}
+
+        <!-- Next step: Generate oto parameters -->
+        <div class="next-step-section">
+          <div class="next-step-card">
+            <div class="next-step-header">
+              <sl-icon name="cpu"></sl-icon>
+              <span class="next-step-title">Next: Generate Timing Parameters</span>
+            </div>
+            <p class="next-step-desc">
+              AI will analyze each recording to detect phoneme boundaries
+              and generate oto.ini configuration. You can review and
+              fine-tune the results in the editor afterward.
+            </p>
+            <sl-button
+              variant="primary"
+              size="large"
+              ?loading=${this._isBatchOtoProcessing}
+              @click=${this._onGenerateOto}
+            >
+              <sl-icon slot="prefix" name="play-fill"></sl-icon>
+              ${this._isBatchOtoProcessing ? 'Processing...' : 'Generate Oto Parameters'}
+            </sl-button>
+          </div>
+        </div>
+
+        <!-- Secondary actions -->
+        <div class="completion-secondary-actions">
+          <sl-button
+            variant="text"
+            @click=${this._onBackToRecording}
+            ?disabled=${this._isBatchOtoProcessing}
+          >
+            <sl-icon slot="prefix" name="arrow-left"></sl-icon>
+            Re-record Samples
+          </sl-button>
+          <sl-button
+            variant="text"
+            @click=${this._onCancelSession}
+            ?disabled=${this._isBatchOtoProcessing}
+          >
+            <sl-icon slot="prefix" name="x-lg"></sl-icon>
+            Cancel Session
+          </sl-button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
    * Render a single processing step.
    */
   private _renderProcessingStep(step: ProcessingStep) {
@@ -1161,6 +1449,8 @@ export class UvmRecordingSession extends LitElement {
         return this._renderSetup();
       case 'recording':
         return this._renderRecording();
+      case 'recordings-complete':
+        return this._renderRecordingsComplete();
       case 'processing':
         return this._renderProcessing();
       case 'complete':

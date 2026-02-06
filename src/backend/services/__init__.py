@@ -9,6 +9,7 @@ from src.backend.services.alignment_service import (
 )
 from src.backend.services.batch_oto_service import BatchOtoService
 from src.backend.services.job_service import JobNotFoundError, JobService
+from src.backend.services.notification_service import NotificationService
 from src.backend.services.oto_service import (
     OtoEntryExistsError,
     OtoNotFoundError,
@@ -40,6 +41,8 @@ __all__ = [
     # Job service
     "JobNotFoundError",
     "JobService",
+    # Notification service
+    "NotificationService",
     # Oto service
     "OtoEntryExistsError",
     "OtoNotFoundError",

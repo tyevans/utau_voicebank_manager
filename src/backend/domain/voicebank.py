@@ -1,9 +1,52 @@
 """Pydantic models for voicebank management."""
 
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from src.backend.domain.utau import CharacterMetadata
+
+
+class Language(str, Enum):
+    """Supported voicebank languages."""
+
+    JA = "ja"
+    EN = "en"
+    ZH = "zh"
+    KO = "ko"
+
+
+class RecordingStyle(str, Enum):
+    """UTAU voicebank recording styles."""
+
+    CV = "cv"
+    VCV = "vcv"
+    CVVC = "cvvc"
+    VCCV = "vccv"
+    ARPASING = "arpasing"
+
+
+class VoicebankRelease(BaseModel):
+    """Single release entry in voicebank version history.
+
+    Tracks changes across voicebank versions for distribution and changelog purposes.
+    """
+
+    version: str = Field(description="Semantic version string (e.g., '1.0.0')")
+    release_date: datetime | None = Field(
+        default=None,
+        description="When this version was released",
+    )
+    changelog: str | None = Field(
+        default=None,
+        description="Human-readable description of changes in this release",
+    )
+    distribution_format: str = Field(
+        default="zip",
+        description="Package format for distribution (zip, rar, 7z)",
+    )
 
 
 class VoicebankSummary(BaseModel):
@@ -31,6 +74,34 @@ class Voicebank(BaseModel):
     sample_count: int = Field(ge=0, description="Number of WAV sample files")
     has_oto: bool = Field(description="Whether oto.ini configuration exists")
     created_at: datetime = Field(description="When the voicebank was created")
+    language: Language | None = Field(
+        default=None,
+        description="Primary language of the voicebank (ja, en, zh, ko)",
+    )
+    recording_style: RecordingStyle | None = Field(
+        default=None,
+        description="Recording style (cv, vcv, cvvc, vccv, arpasing)",
+    )
+    encoding: str = Field(
+        default="utf-8",
+        description="Encoding for oto.ini file (utf-8 or cp932 for legacy UTAU)",
+    )
+    readme_content: str | None = Field(
+        default=None,
+        description="Content of the voicebank readme file",
+    )
+    character: CharacterMetadata | None = Field(
+        default=None,
+        description="Character metadata from character.txt",
+    )
+    version: str = Field(
+        default="1.0.0",
+        description="Current semantic version of the voicebank",
+    )
+    releases: list[VoicebankRelease] = Field(
+        default_factory=list,
+        description="Version history and release changelog",
+    )
 
     model_config = {"from_attributes": True}
 

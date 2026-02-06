@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
+import librosa
 import numpy as np
 from scipy.io import wavfile
 
@@ -418,6 +419,46 @@ class VoicebankGenerator:
 
         return samples, entries, total_confidence
 
+    @staticmethod
+    def _is_vowel_phoneme(phoneme: str) -> bool:
+        """Check if a phoneme is a vowel.
+
+        Handles IPA symbols, romaji, and length-marked variants. The check
+        strips trailing length markers (IPA 'long' diacritic and colon) so
+        that long vowels like 'a:' or 'aː' are still recognized.
+
+        Args:
+            phoneme: Phoneme string from the aligner output
+
+        Returns:
+            True if the phoneme represents a vowel sound
+        """
+        cleaned = phoneme.lower().strip().rstrip("\u02d0:")
+        # Basic Latin vowels (covers romaji and many IPA notations)
+        if cleaned in {"a", "e", "i", "o", "u"}:
+            return True
+        # Japanese long-vowel romaji variants
+        if cleaned in {"aa", "ii", "uu", "ee", "oo"}:
+            return True
+        # Common IPA vowel symbols
+        _ipa_vowels = frozenset(
+            [
+                "\u0259",  # schwa
+                "\u025a",  # r-colored schwa
+                "\u0251",  # open back unrounded (ah)
+                "\u00e6",  # ash (ae)
+                "\u0254",  # open-mid back rounded (aw)
+                "\u026a",  # near-close near-front unrounded (short i)
+                "\u028a",  # near-close near-back rounded (short u)
+                "\u028c",  # open-mid back unrounded (uh)
+                "\u025b",  # open-mid front unrounded (eh)
+                "\u0268",  # close central unrounded
+                "\u0289",  # close central rounded
+                "\u026f",  # close back unrounded
+            ]
+        )
+        return cleaned in _ipa_vowels
+
     async def _slice_vcv_style(
         self,
         audio_data: np.ndarray,
@@ -429,13 +470,21 @@ class VoicebankGenerator:
     ) -> tuple[list[SlicedSample], list[OtoEntry], float]:
         """Slice audio for VCV (vowel-consonant-vowel) style samples.
 
-        For VCV, segments contain vowel transitions (e.g., 'a ka sa').
-        We slice at each vowel to capture 'a ka', 'a sa', etc.
+        VCV samples capture vowel transitions through intervening consonants,
+        e.g. "a ka", "i ki". This method scans the phoneme list for every
+        V - C+ - V pattern (a vowel, one or more consonants, then another
+        vowel) and extracts the audio spanning from the first vowel through
+        to the second vowel.
+
+        Real MFA output can contain:
+        - Consonant clusters (e.g. [s, t, r] between two vowels)
+        - Adjacent vowels with no consonants (diphthongs) -- skipped
+        - Only one or zero vowels -- falls back to whole-segment slicing
 
         Args:
             audio_data: Normalized audio array
             sample_rate: Audio sample rate
-            phonemes: Detected phoneme segments
+            phonemes: Detected phoneme segments from MFA
             prompt_text: Original prompt text
             segment_id: Source segment UUID
             output_path: Output directory
@@ -448,45 +497,74 @@ class VoicebankGenerator:
         total_confidence = 0.0
 
         if not phonemes:
-            # Fall back to whole segment
+            logger.warning(
+                "VCV slicing: no phonemes detected for '%s', falling back to whole segment",
+                prompt_text,
+            )
             return await self._slice_whole_segment(
                 audio_data, sample_rate, phonemes, prompt_text, segment_id, output_path
             )
 
-        # Identify vowel positions
-        vowels = "aeiouAEIOU"
-        vowel_indices = []
-        for i, ph in enumerate(phonemes):
-            if any(v in ph.phoneme for v in vowels):
-                vowel_indices.append(i)
+        # Classify each phoneme as vowel (True) or consonant (False)
+        is_vowel = [self._is_vowel_phoneme(ph.phoneme) for ph in phonemes]
 
-        if len(vowel_indices) < 2:
-            # Not enough vowels for VCV, treat as single sample
+        # Find V-C+-V triplets by scanning through the sequence.
+        # For each vowel, look ahead for one-or-more consonants followed
+        # by another vowel.  This correctly handles consonant clusters and
+        # skips adjacent vowels (no consonant between them).
+        vcv_triplets: list[tuple[int, int, int]] = []
+        i = 0
+        while i < len(phonemes):
+            if not is_vowel[i]:
+                i += 1
+                continue
+
+            # Found a vowel at index i.  Scan ahead for consonant(s).
+            j = i + 1
+            while j < len(phonemes) and not is_vowel[j]:
+                j += 1
+
+            # j now points to the next vowel (or past the end).
+            # We need at least one consonant between i and j.
+            if j < len(phonemes) and j > i + 1:
+                vcv_triplets.append((i, j - 1, j))
+                # Advance to the second vowel so it can start the next triplet
+                i = j
+            else:
+                # Either adjacent vowels (j == i+1) or no following vowel.
+                # Move to next phoneme.
+                i += 1
+
+        if not vcv_triplets:
+            logger.warning(
+                "VCV slicing: no V-C-V patterns found in %d phonemes for '%s' "
+                "(phonemes: %s), falling back to whole segment",
+                len(phonemes),
+                prompt_text,
+                ", ".join(ph.phoneme for ph in phonemes),
+            )
             return await self._slice_whole_segment(
                 audio_data, sample_rate, phonemes, prompt_text, segment_id, output_path
             )
 
-        # Create VCV samples between vowels
-        for i in range(len(vowel_indices) - 1):
-            start_idx = vowel_indices[i]
-            end_idx = vowel_indices[i + 1]
-
-            # Build alias from phonemes (prev_vowel + consonant(s) + next_vowel)
-            prev_vowel = phonemes[start_idx].phoneme.lower()
-            next_vowel = phonemes[end_idx].phoneme
-            middle_phones = [ph.phoneme for ph in phonemes[start_idx + 1 : end_idx]]
-            middle_str = "".join(middle_phones) if middle_phones else ""
+        for vowel1_idx, last_consonant_idx, vowel2_idx in vcv_triplets:
+            # Build alias from phonemes: prev_vowel + consonant(s) + next_vowel
+            prev_vowel = phonemes[vowel1_idx].phoneme.lower()
+            next_vowel = phonemes[vowel2_idx].phoneme
+            consonants = [
+                ph.phoneme for ph in phonemes[vowel1_idx + 1 : last_consonant_idx + 1]
+            ]
+            consonant_str = "".join(consonants)
 
             # Build the syllable (consonants + next vowel) for hiragana conversion
-            syllable = f"{middle_str}{next_vowel}"
-            # Format alias with hiragana: "a ka" -> "a か"
+            syllable = f"{consonant_str}{next_vowel}"
             alias = format_vcv_alias(prev_vowel, syllable)
             safe_alias = self._sanitize_name(f"{prev_vowel}_{syllable}")
             filename = f"_{safe_alias}.wav"
 
-            # Calculate slice boundaries
-            start_ms = max(0, phonemes[start_idx].start_ms - 30)
-            end_ms = phonemes[end_idx].end_ms + 20
+            # Calculate slice boundaries with padding
+            start_ms = max(0, phonemes[vowel1_idx].start_ms - 30)
+            end_ms = phonemes[vowel2_idx].end_ms + 20
 
             # Slice audio
             sliced_audio = self._slice_audio(audio_data, sample_rate, start_ms, end_ms)
@@ -494,6 +572,11 @@ class VoicebankGenerator:
             if sliced_audio is None or len(sliced_audio) < int(
                 MIN_SAMPLE_DURATION_MS * sample_rate / 1000
             ):
+                logger.debug(
+                    "VCV sample '%s' too short (%.1f ms), skipping",
+                    alias,
+                    (end_ms - start_ms),
+                )
                 continue
 
             # Apply fade
@@ -638,7 +721,7 @@ class VoicebankGenerator:
         return audio_float
 
     def _resample(self, audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-        """Simple linear resampling.
+        """Resample audio using librosa (anti-aliased polyphase filtering).
 
         Args:
             audio: Input audio array
@@ -651,10 +734,9 @@ class VoicebankGenerator:
         if orig_sr == target_sr:
             return audio
 
-        ratio = target_sr / orig_sr
-        new_length = int(len(audio) * ratio)
-        indices = np.linspace(0, len(audio) - 1, new_length)
-        return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+        return librosa.resample(audio, orig_sr=orig_sr, target_sr=target_sr).astype(
+            np.float32
+        )
 
     def _slice_audio(
         self,
@@ -785,53 +867,36 @@ generated_by=UTAU Voicebank Manager
         char_path.write_text(content, encoding="utf-8")
 
 
-# Module-level singleton
-_voicebank_generator: VoicebankGenerator | None = None
-
-
 def get_voicebank_generator(
-    session_service: RecordingSessionService | None = None,
-    alignment_service: AlignmentService | None = None,
-    oto_suggester: OtoSuggester | None = None,
+    session_service: RecordingSessionService,
+    alignment_service: AlignmentService,
+    oto_suggester: OtoSuggester,
     output_base_path: Path | None = None,
 ) -> VoicebankGenerator:
-    """Get the voicebank generator singleton.
+    """Create a voicebank generator instance.
+
+    Creates a new instance each call so that injected dependencies are
+    always respected.  The service object itself is cheap to construct --
+    expensive ML model loading is handled by the model registries/caches,
+    not by this service.
 
     Args:
-        session_service: Recording session service (required on first call)
-        alignment_service: Alignment service (required on first call)
-        oto_suggester: Oto suggester (required on first call)
-        output_base_path: Base path for output (required on first call)
+        session_service: Recording session service
+        alignment_service: Alignment service
+        oto_suggester: Oto suggester
+        output_base_path: Base path for output (defaults to ``data/generated``)
 
     Returns:
         VoicebankGenerator instance
-
-    Raises:
-        ValueError: If required services not provided on first call
     """
-    global _voicebank_generator
+    if output_base_path is None:
+        from src.backend.config import get_settings
 
-    if _voicebank_generator is None:
-        if session_service is None:
-            raise ValueError(
-                "session_service required on first call to get_voicebank_generator"
-            )
-        if alignment_service is None:
-            raise ValueError(
-                "alignment_service required on first call to get_voicebank_generator"
-            )
-        if oto_suggester is None:
-            raise ValueError(
-                "oto_suggester required on first call to get_voicebank_generator"
-            )
-        if output_base_path is None:
-            output_base_path = Path("data/generated")
+        output_base_path = get_settings().generated_path
 
-        _voicebank_generator = VoicebankGenerator(
-            session_service=session_service,
-            alignment_service=alignment_service,
-            oto_suggester=oto_suggester,
-            output_base_path=output_base_path,
-        )
-
-    return _voicebank_generator
+    return VoicebankGenerator(
+        session_service=session_service,
+        alignment_service=alignment_service,
+        oto_suggester=oto_suggester,
+        output_base_path=output_base_path,
+    )

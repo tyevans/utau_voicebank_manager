@@ -1239,14 +1239,45 @@ export class MelodyPlayer {
           console.log(`[PSOLA] Processing ${batchRequests.length} unique pitch-shifted/time-stretched buffers in worker`);
           const workerResults = await this._processorClient.processBatch(batchRequests);
 
-          // Store results in both the local map and the persistent cache
-          for (const [cacheKey, buffer] of workerResults) {
-            processedBuffers.set(cacheKey, buffer);
-            this._bufferCache.set(cacheKey, buffer);
+          // Check for partial failures: if any requested buffer was not returned,
+          // fall back to playback-rate for the ENTIRE phrase to avoid timbral
+          // inconsistency (some notes PSOLA, others playback-rate).
+          const missingKeys = batchRequests
+            .filter((r) => !workerResults.has(r.cacheKey))
+            .map((r) => r.cacheKey);
+
+          if (missingKeys.length > 0) {
+            console.warn(
+              `[PSOLA] Worker returned partial results (${missingKeys.length}/${batchRequests.length} failed). ` +
+              `Falling back to playback-rate for entire phrase to maintain timbral consistency.`
+            );
+            processedBuffers.clear();
+            window.dispatchEvent(new CustomEvent('playback-psola-fallback', {
+              detail: {
+                reason: 'partial_failure',
+                failedCount: missingKeys.length,
+                totalCount: batchRequests.length,
+                failedKeys: missingKeys,
+              },
+            }));
+          } else {
+            // All succeeded -- store results in both the local map and the persistent cache
+            for (const [cacheKey, buffer] of workerResults) {
+              processedBuffers.set(cacheKey, buffer);
+              this._bufferCache.set(cacheKey, buffer);
+            }
           }
         } catch (err) {
-          console.warn('[PSOLA] Worker batch processing failed, falling back to playback-rate:', err);
-          // processedBuffers will be incomplete; scheduling loop handles fallback
+          console.warn('[PSOLA] Worker batch processing failed, falling back to playback-rate for entire phrase:', err);
+          // Clear ALL processed buffers (including cached ones collected earlier)
+          // to ensure the entire phrase uses playback-rate shifting consistently.
+          processedBuffers.clear();
+          window.dispatchEvent(new CustomEvent('playback-psola-fallback', {
+            detail: {
+              reason: 'worker_error',
+              error: err instanceof Error ? err.message : String(err),
+            },
+          }));
         }
       }
     }
@@ -1912,7 +1943,7 @@ export class MelodyPlayer {
       const crossfadeEnvelope: ADSREnvelope = {
         ...envelope,
         attack: Math.min(fadeInTime * 1000, envelope.attack),   // preserve fast attacks for consonants
-        release: Math.max(fadeTime * 1000, envelope.release),    // use overlap duration for crossfade release
+        release: Math.min(fadeTime * 1000, envelope.release),    // cap release to crossfade window
       };
       this._applyADSREnvelope(gainNode, {
         startTime: whenToStart,

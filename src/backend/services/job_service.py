@@ -8,18 +8,21 @@ without deserializing the full job record.
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from redis.asyncio import Redis
 
 from src.backend.domain.job import (
     Job,
+    JobParams,
     JobProgress,
     JobResult,
     JobStatus,
     JobType,
 )
+
+# Redis key prefix for the dead-letter queue (a Redis list)
+_DEAD_LETTER_KEY = "uvm:dead_letter_queue"
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +59,18 @@ class JobService:
     async def submit(
         self,
         job_type: JobType,
-        params: dict[str, Any] | None = None,
+        params: JobParams,
     ) -> Job:
         """Create and store a new job in QUEUED status.
 
         Args:
             job_type: The kind of work this job performs
-            params: Job input parameters
+            params: Typed job input parameters
 
         Returns:
             The created Job with its generated ID
         """
-        job = Job(type=job_type, params=params or {})
+        job = Job(type=job_type, params=params)
         key = _JOB_KEY.format(id=job.id)
         await self._redis.set(key, job.model_dump_json(), ex=self._ttl)
         logger.info("Submitted job %s type=%s", job.id, job.type.value)
@@ -191,4 +194,154 @@ class JobService:
 
         status_str = "completed" if result.success else "failed"
         logger.info("Job %s %s", job_id, status_str)
+        return job
+
+    async def update_params(self, job_id: UUID, params: JobParams) -> Job:
+        """Update a job's parameters.
+
+        Used to modify job parameters after creation, e.g., adding
+        a notification email to an already-queued job.
+
+        Args:
+            job_id: Unique job identifier
+            params: New typed parameters to store
+
+        Returns:
+            Updated Job record
+
+        Raises:
+            JobNotFoundError: If the job doesn't exist in Redis
+        """
+        key = _JOB_KEY.format(id=job_id)
+        data = await self._redis.get(key)
+        if data is None:
+            raise JobNotFoundError(f"Job {job_id} not found")
+
+        job = Job.model_validate_json(data)
+        job.params = params
+        job.updated_at = datetime.now(UTC)
+        await self._redis.set(key, job.model_dump_json(), ex=self._ttl)
+
+        logger.info("Job %s params updated", job_id)
+        return job
+
+    async def record_retry(self, job_id: UUID, error: str) -> Job:
+        """Increment retry count and set status to RETRYING.
+
+        Records the error from the failed attempt and prepares the job
+        for another try. The caller is responsible for checking whether
+        max_retries has been exceeded before calling this.
+
+        Args:
+            job_id: Unique job identifier
+            error: Error message from the failed attempt
+
+        Returns:
+            Updated Job record with incremented retry_count
+
+        Raises:
+            JobNotFoundError: If the job doesn't exist in Redis
+        """
+        key = _JOB_KEY.format(id=job_id)
+        data = await self._redis.get(key)
+        if data is None:
+            raise JobNotFoundError(f"Job {job_id} not found")
+
+        job = Job.model_validate_json(data)
+        job.retry_count += 1
+        job.last_error = error
+        job.status = JobStatus.RETRYING
+        job.updated_at = datetime.now(UTC)
+        await self._redis.set(key, job.model_dump_json(), ex=self._ttl)
+
+        logger.info(
+            "Job %s retry %d/%d: %s",
+            job_id,
+            job.retry_count,
+            job.max_retries,
+            error,
+        )
+        return job
+
+    async def send_to_dead_letter(self, job_id: UUID, error: str) -> Job:
+        """Move a permanently failed job to the dead-letter queue.
+
+        Sets the job status to DEAD_LETTER, stores the final error,
+        and pushes the job ID onto a Redis list for later inspection
+        or manual retry.
+
+        Args:
+            job_id: Unique job identifier
+            error: Final error message
+
+        Returns:
+            Updated Job record with DEAD_LETTER status
+
+        Raises:
+            JobNotFoundError: If the job doesn't exist in Redis
+        """
+        key = _JOB_KEY.format(id=job_id)
+        data = await self._redis.get(key)
+        if data is None:
+            raise JobNotFoundError(f"Job {job_id} not found")
+
+        job = Job.model_validate_json(data)
+        job.status = JobStatus.DEAD_LETTER
+        job.last_error = error
+        job.result = JobResult(success=False, error=error)
+        job.updated_at = datetime.now(UTC)
+        await self._redis.set(key, job.model_dump_json(), ex=self._ttl)
+
+        # Push job ID onto the dead-letter list
+        await self._redis.lpush(_DEAD_LETTER_KEY, str(job_id))
+
+        # Clean up any leftover progress key
+        progress_key = _PROGRESS_KEY.format(id=job_id)
+        await self._redis.delete(progress_key)
+
+        logger.warning("Job %s sent to dead-letter queue: %s", job_id, error)
+        return job
+
+    async def list_dead_letter(self, limit: int = 50) -> list[str]:
+        """List job IDs in the dead-letter queue.
+
+        Args:
+            limit: Maximum number of IDs to return (default 50)
+
+        Returns:
+            List of job ID strings, newest first
+        """
+        return await self._redis.lrange(_DEAD_LETTER_KEY, 0, limit - 1)
+
+    async def requeue_from_dead_letter(self, job_id: UUID) -> Job:
+        """Move a dead-lettered job back to QUEUED status for retry.
+
+        Resets retry count and removes the job from the dead-letter list.
+
+        Args:
+            job_id: Unique job identifier
+
+        Returns:
+            Updated Job record with QUEUED status
+
+        Raises:
+            JobNotFoundError: If the job doesn't exist in Redis
+        """
+        key = _JOB_KEY.format(id=job_id)
+        data = await self._redis.get(key)
+        if data is None:
+            raise JobNotFoundError(f"Job {job_id} not found")
+
+        job = Job.model_validate_json(data)
+        job.status = JobStatus.QUEUED
+        job.retry_count = 0
+        job.last_error = None
+        job.result = None
+        job.updated_at = datetime.now(UTC)
+        await self._redis.set(key, job.model_dump_json(), ex=self._ttl)
+
+        # Remove from dead-letter list
+        await self._redis.lrem(_DEAD_LETTER_KEY, 1, str(job_id))
+
+        logger.info("Job %s requeued from dead-letter", job_id)
         return job

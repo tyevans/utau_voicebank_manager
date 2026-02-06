@@ -20,6 +20,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, StreamingResponse
 
+from src.backend.api.dependencies import get_generated_path, get_session_service
 from src.backend.domain.generated_voicebank import (
     GenerateVoicebankRequest,
 )
@@ -34,10 +35,6 @@ from src.backend.domain.recording_session import (
     SegmentUpload,
     SessionProgress,
 )
-from src.backend.repositories.recording_session_repository import (
-    RecordingSessionRepository,
-)
-from src.backend.repositories.voicebank_repository import VoicebankRepository
 from src.backend.services.paragraph_library_service import (
     ParagraphLibraryNotFoundError,
     ParagraphLibraryService,
@@ -56,38 +53,20 @@ from src.backend.services.recording_session_service import (
     SessionValidationError,
     VoicebankNotGeneratedError,
 )
+from src.backend.utils.path_validation import sanitize_filename, validate_path_component
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions", tags=["recording-sessions"])
 
-# Storage paths
-VOICEBANKS_BASE_PATH = Path("data/voicebanks")
-SESSIONS_BASE_PATH = Path("data/sessions")
-GENERATED_BASE_PATH = Path("data/generated")
-
 # Maximum segment audio size (10MB)
 MAX_SEGMENT_SIZE = 10 * 1024 * 1024
 
+# Accepted MIME types for WAV uploads
+WAV_ACCEPTED_TYPES = {"audio/wav", "audio/x-wav", "audio/wave"}
 
-def get_voicebank_repository() -> VoicebankRepository:
-    """Dependency provider for VoicebankRepository."""
-    return VoicebankRepository(VOICEBANKS_BASE_PATH)
-
-
-def get_session_repository() -> RecordingSessionRepository:
-    """Dependency provider for RecordingSessionRepository."""
-    return RecordingSessionRepository(SESSIONS_BASE_PATH)
-
-
-def get_session_service(
-    session_repo: Annotated[
-        RecordingSessionRepository, Depends(get_session_repository)
-    ],
-    voicebank_repo: Annotated[VoicebankRepository, Depends(get_voicebank_repository)],
-) -> RecordingSessionService:
-    """Dependency provider for RecordingSessionService."""
-    return RecordingSessionService(session_repo, voicebank_repo)
+# WAV magic bytes: files must start with "RIFF"
+WAV_MAGIC_BYTES = b"RIFF"
 
 
 def get_library_service() -> ParagraphLibraryService:
@@ -297,6 +276,14 @@ async def upload_segment(
         HTTPException 413: If audio file too large
     """
     try:
+        # Validate WAV content type
+        if audio.content_type and audio.content_type not in WAV_ACCEPTED_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid audio content type '{audio.content_type}'. "
+                "Expected audio/wav, audio/x-wav, or audio/wave",
+            )
+
         # Read audio data
         audio_data = await audio.read()
 
@@ -304,6 +291,13 @@ async def upload_segment(
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"Audio file too large. Maximum: {MAX_SEGMENT_SIZE // (1024*1024)}MB",
+            )
+
+        # Validate WAV magic bytes (RIFF header)
+        if not audio_data[:4] == WAV_MAGIC_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded file is not a valid WAV file (missing RIFF header)",
             )
 
         segment_info = SegmentUpload(
@@ -354,6 +348,8 @@ async def get_segment_audio(
     Raises:
         HTTPException 404: If session or audio not found
     """
+    validate_path_component(filename, label="filename")
+
     try:
         audio_path = await service.get_segment_audio_path(session_id, filename)
         return FileResponse(
@@ -554,7 +550,7 @@ async def generate_voicebank_from_session(
 
     job = await job_service.submit(
         job_type=JobType.GENERATE_VOICEBANK,
-        params=params.model_dump(mode="json"),
+        params=params,
     )
 
     await arq_pool.enqueue_job(
@@ -575,6 +571,7 @@ async def generate_voicebank_from_session(
 async def download_voicebank(
     session_id: UUID,
     service: Annotated[RecordingSessionService, Depends(get_session_service)],
+    generated_path: Annotated[Path, Depends(get_generated_path)],
 ) -> StreamingResponse:
     """Download the generated voicebank as a ZIP file.
 
@@ -598,7 +595,7 @@ async def download_voicebank(
     try:
         # Get voicebank path and name
         voicebank_path, voicebank_name = await service.get_generated_voicebank_path(
-            session_id, GENERATED_BASE_PATH
+            session_id, generated_path
         )
 
         # Create ZIP file in memory
@@ -626,8 +623,7 @@ async def download_voicebank(
         zip_buffer.seek(0)
 
         # Generate safe filename for download
-        safe_filename = voicebank_name.replace('"', "'").replace("\n", " ")
-        filename = f"{safe_filename}.zip"
+        filename = f"{sanitize_filename(voicebank_name)}.zip"
 
         logger.info(
             f"Downloading voicebank '{voicebank_name}' for session {session_id}"
@@ -812,6 +808,7 @@ async def process_paragraph_recordings(
     segmentation_service: Annotated[
         ParagraphSegmentationService, Depends(get_segmentation_service)
     ],
+    generated_path: Annotated[Path, Depends(get_generated_path)],
     library_id: Annotated[
         str,
         Form(description="Paragraph library ID for phoneme extraction"),
@@ -843,7 +840,7 @@ async def process_paragraph_recordings(
         library = library_service.get_library(library_id)
 
         # Create output directory for extracted samples
-        output_dir = GENERATED_BASE_PATH / "segments" / str(session_id)
+        output_dir = generated_path / "segments" / str(session_id)
 
         # Process paragraph recordings
         results = await service.process_paragraph_recordings(

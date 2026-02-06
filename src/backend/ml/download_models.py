@@ -12,17 +12,25 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from src.backend.ml.model_registry import (
+    get_model_config,
+    log_registry_status,
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Models to download
+# Models to download -- sourced from the centralized model registry
+_wav2vec2_config = get_model_config("wav2vec2-phoneme")
+
 MODELS = [
     {
-        "name": "facebook/wav2vec2-lv-60-espeak-cv-ft",
-        "description": "Wav2Vec2 with eSpeak phoneme output (IPA)",
+        "name": _wav2vec2_config.model_id,
+        "revision": _wav2vec2_config.revision,
+        "description": _wav2vec2_config.description,
         "cache_subdir": "wav2vec2",
     },
 ]
@@ -119,12 +127,18 @@ SOFA_DICTIONARIES: dict[str, dict[str, str]] = {
 def download_wav2vec2_model(
     model_name: str,
     cache_dir: Path,
+    revision: str | None = None,
 ) -> bool:
     """Download a Wav2Vec2 model and processor.
+
+    Downloads a specific pinned revision to ensure reproducible behavior.
+    The revision (commit hash) is sourced from the centralized model registry.
 
     Args:
         model_name: HuggingFace model identifier
         cache_dir: Directory to cache the model
+        revision: Git commit hash to pin the model version.
+                 If None, downloads the latest (not recommended).
 
     Returns:
         True if successful, False otherwise
@@ -132,17 +146,20 @@ def download_wav2vec2_model(
     try:
         from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
-        logger.info(f"Downloading processor for {model_name}...")
+        rev_display = revision[:12] if revision else "latest"
+        logger.info(f"Downloading processor for {model_name} (revision: {rev_display})...")
         Wav2Vec2Processor.from_pretrained(
             model_name,
+            revision=revision,
             cache_dir=str(cache_dir),
         )
         logger.info("Processor downloaded successfully")
 
-        logger.info(f"Downloading model for {model_name}...")
+        logger.info(f"Downloading model for {model_name} (revision: {rev_display})...")
         logger.info("This may take a few minutes (~2GB download)...")
         Wav2Vec2ForCTC.from_pretrained(
             model_name,
+            revision=revision,
             cache_dir=str(cache_dir),
         )
         logger.info("Model downloaded successfully")
@@ -538,17 +555,20 @@ def main() -> int:
     # Download HuggingFace models (Wav2Vec2)
     for model_info in MODELS:
         model_name = model_info["name"]
+        revision = model_info.get("revision")
         description = model_info["description"]
         cache_subdir = model_info["cache_subdir"]
 
         logger.info("")
         logger.info(f"Model: {model_name}")
         logger.info(f"Description: {description}")
+        if revision:
+            logger.info(f"Pinned revision: {revision}")
 
         cache_dir = MODELS_BASE_DIR / cache_subdir
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        if download_wav2vec2_model(model_name, cache_dir):
+        if download_wav2vec2_model(model_name, cache_dir, revision=revision):
             success_count += 1
         else:
             failure_count += 1
@@ -567,6 +587,10 @@ def main() -> int:
     logger.info("")
     logger.info("=" * 50)
     logger.info(f"Total downloads: {success_count} succeeded, {failure_count} failed")
+
+    # Log model registry status for verification
+    logger.info("")
+    log_registry_status()
 
     if failure_count > 0:
         logger.warning(

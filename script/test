@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# script/test: Run test suite
+# script/test: Run test suite with coverage
 
 set -e
 cd "$(dirname "$0")/.."
 
-echo "==> Running backend tests..."
-uv run pytest "$@"
+echo "==> Running backend tests with coverage..."
+uv run pytest --cov=src/backend --cov-report=term --cov-report=html "$@"
 
 echo "==> Running frontend lint..."
 cd src/frontend && npm run lint
 
+echo "==> Running frontend tests..."
+npm run test
+
+cd ../..
 echo "==> All tests passed!"

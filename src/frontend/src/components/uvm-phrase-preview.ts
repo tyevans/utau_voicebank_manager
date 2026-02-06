@@ -365,6 +365,7 @@ export class UvmPhrasePreview extends LitElement {
 
       if (!this._loader) {
         this._loader = new SampleLoader(this._audioContext, api);
+        this._loader.enableAutoInvalidation();
       }
 
       // Calculate total duration from notes
@@ -458,6 +459,7 @@ export class UvmPhrasePreview extends LitElement {
     this._stop();
 
     if (this._loader) {
+      this._loader.disableAutoInvalidation();
       this._loader.clearCache();
     }
 
@@ -488,6 +490,8 @@ export class UvmPhrasePreview extends LitElement {
         return 'primary';
       case 'vcv':
         return 'success';
+      case 'cvvc':
+        return 'danger';
       case 'arpasing':
         return 'warning';
       default:

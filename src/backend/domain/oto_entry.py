@@ -2,6 +2,12 @@
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.backend.domain.oto_validation import (
+    OtoParams,
+    check_oto_warnings,
+    validate_oto_strict,
+)
+
 
 class OtoEntry(BaseModel):
     """Single entry in an oto.ini file.
@@ -56,16 +62,7 @@ class OtoEntry(BaseModel):
         point before playback starts. UTAU power users may have unusual
         but valid configs, so we keep this conservative.
         """
-        if self.consonant < self.offset:
-            raise ValueError(
-                f"consonant ({self.consonant}) must be >= offset ({self.offset}): "
-                f"the fixed region end cannot be before the playback start"
-            )
-        if self.preutterance < self.offset:
-            raise ValueError(
-                f"preutterance ({self.preutterance}) must be >= offset ({self.offset}): "
-                f"the note alignment point cannot be before the playback start"
-            )
+        validate_oto_strict(self._to_params())
         return self
 
     def check_relationships(self) -> list[str]:
@@ -74,21 +71,17 @@ class OtoEntry(BaseModel):
         These are soft checks the API or UI can surface to the user
         without rejecting the entry. An empty list means no warnings.
         """
-        warnings: list[str] = []
+        return check_oto_warnings(self._to_params())
 
-        if self.cutoff >= 0:
-            warnings.append(
-                f"cutoff is non-negative ({self.cutoff}): typically negative "
-                f"to mark playback end relative to audio end"
-            )
-
-        if self.overlap > self.preutterance:
-            warnings.append(
-                f"overlap ({self.overlap}) exceeds preutterance ({self.preutterance}): "
-                f"overlap longer than preutterance may cause synthesis artifacts"
-            )
-
-        return warnings
+    def _to_params(self) -> OtoParams:
+        """Extract numeric parameters for shared validation."""
+        return OtoParams(
+            offset=self.offset,
+            consonant=self.consonant,
+            cutoff=self.cutoff,
+            preutterance=self.preutterance,
+            overlap=self.overlap,
+        )
 
     def to_oto_line(self) -> str:
         """Serialize this entry back to oto.ini line format.

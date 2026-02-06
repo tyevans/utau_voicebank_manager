@@ -30,6 +30,11 @@ import {
   type NormalizationOptions,
 } from "../utils/loudness-analysis.js";
 import { findOtoEntry } from "../utils/alias-matching.js";
+import {
+  onOtoEntriesChanged,
+  offOtoEntriesChanged,
+  type OtoEntriesChangedDetail,
+} from "../events/oto-events.js";
 
 /**
  * Calculate the sample end time from oto cutoff parameter.
@@ -79,11 +84,99 @@ export interface LoadSamplesResult {
 }
 
 /**
- * Cached audio buffer entry with timestamp for potential TTL eviction.
+ * Cached audio buffer entry.
  */
 interface CachedAudioBuffer {
   buffer: AudioBuffer;
-  cachedAt: number;
+}
+
+/** Default maximum number of AudioBuffer entries held in the LRU cache. */
+const DEFAULT_MAX_CACHE_SIZE = 100;
+
+/**
+ * LRU (Least Recently Used) cache for AudioBuffers.
+ *
+ * Exploits the fact that JavaScript Maps iterate in insertion order.
+ * On every access (get or set), the entry is deleted and re-inserted,
+ * moving it to the "most recently used" end.  When the cache exceeds
+ * maxSize, the *first* entry (least recently used) is evicted.
+ */
+class LruAudioBufferCache {
+  private readonly _map = new Map<string, CachedAudioBuffer>();
+  private readonly _maxSize: number;
+
+  constructor(maxSize: number) {
+    this._maxSize = maxSize;
+  }
+
+  /** Number of entries currently in the cache. */
+  get size(): number {
+    return this._map.size;
+  }
+
+  /** Maximum number of entries before eviction begins. */
+  get maxSize(): number {
+    return this._maxSize;
+  }
+
+  /**
+   * Retrieve a cached buffer, promoting it to most-recently-used.
+   * Returns undefined on cache miss.
+   */
+  get(key: string): CachedAudioBuffer | undefined {
+    const entry = this._map.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    // Move to most-recently-used position
+    this._map.delete(key);
+    this._map.set(key, entry);
+    return entry;
+  }
+
+  /**
+   * Insert or update a cache entry.
+   * If the cache exceeds maxSize after insertion, the least-recently-used
+   * entry is evicted.
+   */
+  set(key: string, entry: CachedAudioBuffer): void {
+    // If the key already exists, delete first so re-insert moves it to the end
+    if (this._map.has(key)) {
+      this._map.delete(key);
+    }
+    this._map.set(key, entry);
+    this._evictIfNeeded();
+  }
+
+  /** Check whether a key exists without promoting it. */
+  has(key: string): boolean {
+    return this._map.has(key);
+  }
+
+  /** Delete a specific entry. Returns true if the entry existed. */
+  delete(key: string): boolean {
+    return this._map.delete(key);
+  }
+
+  /** Iterate over all keys (in LRU order, least-recent first). */
+  keys(): IterableIterator<string> {
+    return this._map.keys();
+  }
+
+  /** Remove all entries. */
+  clear(): void {
+    this._map.clear();
+  }
+
+  /** Evict least-recently-used entries until size <= maxSize. */
+  private _evictIfNeeded(): void {
+    while (this._map.size > this._maxSize) {
+      // Map.keys().next() gives the first (oldest) key
+      const oldest = this._map.keys().next();
+      if (oldest.done) break;
+      this._map.delete(oldest.value);
+    }
+  }
 }
 
 /**
@@ -111,21 +204,34 @@ export class SampleLoader {
   private readonly _otoCache: Map<string, Map<string, OtoEntry>> = new Map();
 
   /**
-   * Cache of decoded AudioBuffers.
-   * Maps "voicebankId:filename" -> CachedAudioBuffer
+   * LRU cache of decoded AudioBuffers.
+   * Maps "voicebankId:filename" -> CachedAudioBuffer.
+   * Evicts least-recently-used entries when the cache exceeds maxSize.
    */
-  private readonly _audioBufferCache: Map<string, CachedAudioBuffer> =
-    new Map();
+  private readonly _audioBufferCache: LruAudioBufferCache;
+
+  /**
+   * Event listener for automatic cache invalidation.
+   * Set when {@link enableAutoInvalidation} is called, null when not active.
+   */
+  private _invalidationListener: EventListener | null = null;
 
   /**
    * Create a new SampleLoader.
    *
    * @param audioContext - Web Audio AudioContext for decoding audio
    * @param api - ApiClient instance for fetching data from backend
+   * @param maxCacheSize - Maximum number of AudioBuffers to keep cached
+   *   before evicting least-recently-used entries. Defaults to 100.
    */
-  constructor(audioContext: AudioContext, api: ApiClient) {
+  constructor(
+    audioContext: AudioContext,
+    api: ApiClient,
+    maxCacheSize: number = DEFAULT_MAX_CACHE_SIZE,
+  ) {
     this._audioContext = audioContext;
     this._api = api;
+    this._audioBufferCache = new LruAudioBufferCache(maxCacheSize);
   }
 
   /**
@@ -308,12 +414,17 @@ export class SampleLoader {
     // Clear oto cache
     this._otoCache.delete(voicebankId);
 
-    // Clear audio buffer cache entries for this voicebank
+    // Clear audio buffer cache entries for this voicebank.
+    // Collect keys first to avoid mutating the map during iteration.
     const prefix = `${voicebankId}:`;
+    const keysToDelete: string[] = [];
     for (const key of this._audioBufferCache.keys()) {
       if (key.startsWith(prefix)) {
-        this._audioBufferCache.delete(key);
+        keysToDelete.push(key);
       }
+    }
+    for (const key of keysToDelete) {
+      this._audioBufferCache.delete(key);
     }
   }
 
@@ -323,6 +434,7 @@ export class SampleLoader {
   getCacheStats(): {
     otoEntriesCached: number;
     audioBuffersCached: number;
+    audioBufferCacheMaxSize: number;
     voicebanksCached: string[];
   } {
     return {
@@ -331,8 +443,51 @@ export class SampleLoader {
         0,
       ),
       audioBuffersCached: this._audioBufferCache.size,
+      audioBufferCacheMaxSize: this._audioBufferCache.maxSize,
       voicebanksCached: Array.from(this._otoCache.keys()),
     };
+  }
+
+  /**
+   * Enable automatic cache invalidation when oto entries change.
+   *
+   * Subscribes to the global `oto-entries-changed` event dispatched by
+   * ApiClient after any oto mutation. When an event fires, the oto entry
+   * cache for the affected voicebank is cleared so that the next
+   * `loadSamplesForPhrase` call fetches fresh data.
+   *
+   * Audio buffer cache entries are intentionally preserved because oto
+   * edits change timing parameters, not the underlying WAV audio data.
+   *
+   * Call {@link disableAutoInvalidation} to unsubscribe (e.g., during
+   * component teardown).
+   */
+  enableAutoInvalidation(): void {
+    if (this._invalidationListener) {
+      // Already listening
+      return;
+    }
+
+    this._invalidationListener = onOtoEntriesChanged(
+      (voicebankId: string, _action: OtoEntriesChangedDetail['action']) => {
+        // Only clear the oto entry cache; AudioBuffers remain valid since
+        // the WAV files themselves have not changed -- only timing params.
+        this._otoCache.delete(voicebankId);
+      },
+    );
+  }
+
+  /**
+   * Disable automatic cache invalidation.
+   *
+   * Removes the event listener registered by {@link enableAutoInvalidation}.
+   * Safe to call even if auto-invalidation was never enabled.
+   */
+  disableAutoInvalidation(): void {
+    if (this._invalidationListener) {
+      offOtoEntriesChanged(this._invalidationListener);
+      this._invalidationListener = null;
+    }
   }
 
   /**
@@ -399,12 +554,9 @@ export class SampleLoader {
             this._audioContext,
           );
 
-          // Cache the result
+          // Cache the result (LRU eviction happens automatically)
           const cacheKey = this._getAudioCacheKey(voicebankId, filename);
-          this._audioBufferCache.set(cacheKey, {
-            buffer,
-            cachedAt: Date.now(),
-          });
+          this._audioBufferCache.set(cacheKey, { buffer });
 
           return { filename, buffer, success: true as const };
         } catch (error) {

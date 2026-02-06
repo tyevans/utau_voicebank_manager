@@ -541,6 +541,11 @@ class ParagraphSegmentationService:
         Uses word boundaries and phoneme timing to match aligned phonemes
         with expected phonemes from the paragraph prompt.
 
+        Handles the case where MFA splits Japanese CV morae into separate
+        C + V phonemes (e.g., 'sakura' -> ['s','a','k','u','r','a'] instead
+        of ['sa','ku','ra']). The sequential fallback merges consecutive
+        consonant + vowel segments when the combined phoneme matches.
+
         Args:
             phoneme_segments: Phoneme segments from alignment
             word_segments: Word segments from alignment
@@ -551,61 +556,42 @@ class ParagraphSegmentationService:
         """
         mappings: list[dict] = []
 
-        # Create a lookup of word boundaries
+        # Create a lookup of word boundaries, guarding against None values
         word_boundaries: list[tuple[str, float, float]] = []
         for ws in word_segments:
+            w_start = ws.get("start_ms", 0)
+            w_end = ws.get("end_ms", 0)
             word_boundaries.append(
                 (
                     ws.get("word", ""),
-                    ws.get("start_ms", 0),
-                    ws.get("end_ms", 0),
+                    w_start if w_start is not None else 0.0,
+                    w_end if w_end is not None else 0.0,
                 )
             )
 
-        # Track which expected phonemes we've mapped
+        # Track which aligned phoneme segments we've consumed
         phoneme_index = 0
 
         for word in words:
             # Find matching word boundary
-            word_start_ms = 0.0
-            word_end_ms = 0.0
-            word_found = False
+            word_start_ms: float | None = None
+            word_end_ms: float | None = None
 
             for w_text, w_start, w_end in word_boundaries:
                 if self._words_match(w_text, word.romaji):
                     word_start_ms = w_start
                     word_end_ms = w_end
-                    word_found = True
                     break
-
-            if not word_found:
-                # Use phoneme timing to estimate word boundaries
-                word_start_ms = None
-                word_end_ms = None
 
             # Map phonemes for this word
             for expected_phoneme in word.phonemes:
                 # Find phoneme segment that matches
-                best_match = None
-                best_confidence = 0.0
-
-                for segment in phoneme_segments:
-                    if phoneme_index < len(phoneme_segments):
-                        # Check if this segment falls within word boundaries
-                        in_word = True
-                        if word_start_ms is not None and word_end_ms is not None:
-                            in_word = (
-                                segment.start_ms >= word_start_ms - self._padding_ms
-                                and segment.end_ms <= word_end_ms + self._padding_ms
-                            )
-
-                        if (
-                            in_word
-                            and fuzzy_phoneme_match(segment.phoneme, expected_phoneme)
-                            and segment.confidence > best_confidence
-                        ):
-                            best_match = segment
-                            best_confidence = segment.confidence
+                best_match = self._find_best_phoneme_match(
+                    expected_phoneme,
+                    phoneme_segments,
+                    word_start_ms,
+                    word_end_ms,
+                )
 
                 if best_match:
                     mappings.append(
@@ -619,33 +605,178 @@ class ParagraphSegmentationService:
                         }
                     )
                     phoneme_index += 1
+                    continue
+
+                # Sequential fallback: try to match the current segment,
+                # and also try merging consecutive C+V segments into a
+                # single CV mora when MFA has split them.
+                if phoneme_index >= len(phoneme_segments):
+                    logger.warning(
+                        f"Unmapped phoneme '{expected_phoneme}' in word "
+                        f"'{word.romaji}': no more aligned segments"
+                    )
+                    continue
+
+                segment = phoneme_segments[phoneme_index]
+
+                # Try merging consecutive C+V into a CV mora.
+                # MFA often splits Japanese morae: 'sa' -> ['s', 'a'].
+                # If the current segment is a consonant and the next is a
+                # vowel, check whether concatenating them matches the
+                # expected CV phoneme.
+                merged = self._try_merge_cv_segments(
+                    phoneme_index, phoneme_segments, expected_phoneme
+                )
+                if merged is not None:
+                    merged_phoneme, merged_start, merged_end, merged_conf, consumed = (
+                        merged
+                    )
+                    mappings.append(
+                        {
+                            "expected_phoneme": expected_phoneme,
+                            "detected_phoneme": merged_phoneme,
+                            "source_word": word.romaji,
+                            "start_ms": merged_start,
+                            "end_ms": merged_end,
+                            "confidence": merged_conf,
+                        }
+                    )
+                    phoneme_index += consumed
+                    continue
+
+                # Plain sequential fallback (no merge): use the segment
+                # as-is with reduced confidence.
+                fallback_confidence = segment.confidence * 0.5
+                if fallback_confidence >= MIN_FALLBACK_CONFIDENCE:
+                    mappings.append(
+                        {
+                            "expected_phoneme": expected_phoneme,
+                            "detected_phoneme": segment.phoneme,
+                            "source_word": word.romaji,
+                            "start_ms": segment.start_ms,
+                            "end_ms": segment.end_ms,
+                            "confidence": fallback_confidence,
+                        }
+                    )
+                    phoneme_index += 1
                 else:
-                    # Try sequential matching as fallback, but only if
-                    # the segment has sufficient confidence
-                    if phoneme_index < len(phoneme_segments):
-                        segment = phoneme_segments[phoneme_index]
-                        fallback_confidence = segment.confidence * 0.5
-                        if fallback_confidence >= MIN_FALLBACK_CONFIDENCE:
-                            mappings.append(
-                                {
-                                    "expected_phoneme": expected_phoneme,
-                                    "detected_phoneme": segment.phoneme,
-                                    "source_word": word.romaji,
-                                    "start_ms": segment.start_ms,
-                                    "end_ms": segment.end_ms,
-                                    "confidence": fallback_confidence,
-                                }
-                            )
-                            phoneme_index += 1
-                        else:
-                            logger.warning(
-                                f"Unmapped phoneme '{expected_phoneme}' in word "
-                                f"'{word.romaji}': fallback confidence "
-                                f"{fallback_confidence:.2f} below threshold "
-                                f"{MIN_FALLBACK_CONFIDENCE}"
-                            )
+                    logger.warning(
+                        f"Unmapped phoneme '{expected_phoneme}' in word "
+                        f"'{word.romaji}': fallback confidence "
+                        f"{fallback_confidence:.2f} below threshold "
+                        f"{MIN_FALLBACK_CONFIDENCE}"
+                    )
 
         return mappings
+
+    def _find_best_phoneme_match(
+        self,
+        expected_phoneme: str,
+        phoneme_segments: list[PhonemeSegment],
+        word_start_ms: float | None,
+        word_end_ms: float | None,
+    ) -> PhonemeSegment | None:
+        """Find the best-matching aligned segment for an expected phoneme.
+
+        Searches all aligned phoneme segments for one that fuzzy-matches
+        the expected phoneme and falls within the word's time boundaries
+        (if known).
+
+        Args:
+            expected_phoneme: The phoneme we're looking for (e.g., 'ka')
+            phoneme_segments: All aligned phoneme segments
+            word_start_ms: Word start boundary (None if unknown)
+            word_end_ms: Word end boundary (None if unknown)
+
+        Returns:
+            Best matching PhonemeSegment, or None if no match found
+        """
+        best_match: PhonemeSegment | None = None
+        best_confidence = 0.0
+
+        has_word_bounds = word_start_ms is not None and word_end_ms is not None
+
+        for segment in phoneme_segments:
+            # Check if this segment falls within word boundaries
+            if has_word_bounds:
+                assert word_start_ms is not None  # narrowing for type checker
+                assert word_end_ms is not None
+                if segment.start_ms < word_start_ms - self._padding_ms:
+                    continue
+                if segment.end_ms > word_end_ms + self._padding_ms:
+                    continue
+
+            if (
+                fuzzy_phoneme_match(segment.phoneme, expected_phoneme)
+                and segment.confidence > best_confidence
+            ):
+                best_match = segment
+                best_confidence = segment.confidence
+
+        return best_match
+
+    def _try_merge_cv_segments(
+        self,
+        start_index: int,
+        phoneme_segments: list[PhonemeSegment],
+        expected_phoneme: str,
+    ) -> tuple[str, float, float, float, int] | None:
+        """Try to merge consecutive aligned segments into a CV mora.
+
+        When MFA splits a Japanese mora like 'sa' into ['s', 'a'], this
+        method detects that pattern and merges the segments. It also handles
+        two-character consonant clusters (e.g., 'sh' + 'a' -> 'sha').
+
+        Args:
+            start_index: Index of the first segment to consider
+            phoneme_segments: All aligned phoneme segments
+            expected_phoneme: The expected CV phoneme (e.g., 'sa', 'sha')
+
+        Returns:
+            Tuple of (merged_phoneme, start_ms, end_ms, confidence, segments_consumed)
+            or None if no valid merge is possible
+        """
+        vowels = {"a", "i", "u", "e", "o"}
+
+        # Try merging 2 segments: C + V -> CV (e.g., 's' + 'a' -> 'sa')
+        if start_index + 1 < len(phoneme_segments):
+            seg_c = phoneme_segments[start_index]
+            seg_v = phoneme_segments[start_index + 1]
+
+            romaji_c = ipa_to_romaji(seg_c.phoneme)
+            romaji_v = ipa_to_romaji(seg_v.phoneme)
+
+            if romaji_v in vowels and romaji_c not in vowels:
+                merged = romaji_c + romaji_v
+                if fuzzy_phoneme_match(merged, expected_phoneme, threshold=1):
+                    confidence = min(seg_c.confidence, seg_v.confidence) * 0.8
+                    return (merged, seg_c.start_ms, seg_v.end_ms, confidence, 2)
+
+        # Try merging 3 segments: CC + V -> CCV
+        # (e.g., 's' + 'h' + 'a' -> 'sha', 't' + 's' + 'u' -> 'tsu')
+        if start_index + 2 < len(phoneme_segments):
+            seg_c1 = phoneme_segments[start_index]
+            seg_c2 = phoneme_segments[start_index + 1]
+            seg_v = phoneme_segments[start_index + 2]
+
+            romaji_c1 = ipa_to_romaji(seg_c1.phoneme)
+            romaji_c2 = ipa_to_romaji(seg_c2.phoneme)
+            romaji_v = ipa_to_romaji(seg_v.phoneme)
+
+            if (
+                romaji_v in vowels
+                and romaji_c1 not in vowels
+                and romaji_c2 not in vowels
+            ):
+                merged = romaji_c1 + romaji_c2 + romaji_v
+                if fuzzy_phoneme_match(merged, expected_phoneme, threshold=1):
+                    confidence = (
+                        min(seg_c1.confidence, seg_c2.confidence, seg_v.confidence)
+                        * 0.7
+                    )
+                    return (merged, seg_c1.start_ms, seg_v.end_ms, confidence, 3)
+
+        return None
 
     def _words_match(self, detected: str, expected: str) -> bool:
         """Check if detected word matches expected word.
@@ -872,15 +1003,16 @@ class ParagraphSegmentationService:
         return phonemes
 
 
-# Module-level singleton
-_segmentation_service: ParagraphSegmentationService | None = None
-
-
 def get_paragraph_segmentation_service(
     session_service: RecordingSessionService | None = None,
     prefer_mfa: bool = True,
 ) -> ParagraphSegmentationService:
-    """Get the paragraph segmentation service singleton.
+    """Create a paragraph segmentation service instance.
+
+    Creates a new instance each call so that ``prefer_mfa`` and other
+    parameters are always respected.  The service object itself is cheap
+    to construct -- expensive ML model loading is handled by the model
+    registries/caches, not by this service.
 
     Args:
         session_service: Recording session service (optional)
@@ -889,12 +1021,7 @@ def get_paragraph_segmentation_service(
     Returns:
         ParagraphSegmentationService instance
     """
-    global _segmentation_service
-
-    if _segmentation_service is None:
-        _segmentation_service = ParagraphSegmentationService(
-            session_service=session_service,
-            prefer_mfa=prefer_mfa,
-        )
-
-    return _segmentation_service
+    return ParagraphSegmentationService(
+        session_service=session_service,
+        prefer_mfa=prefer_mfa,
+    )

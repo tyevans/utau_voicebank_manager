@@ -554,6 +554,12 @@ export class UvmBatchReview extends LitElement {
   private _loadingAudio = false;
 
   /**
+   * Error message for audio loading failures.
+   */
+  @state()
+  private _audioError: string | null = null;
+
+  /**
    * Duration of current audio in milliseconds.
    */
   @state()
@@ -674,6 +680,7 @@ export class UvmBatchReview extends LitElement {
 
     this._loadingAudio = true;
     this._audioBuffer = null;
+    this._audioError = null;
 
     try {
       if (!this._audioContext) {
@@ -693,6 +700,9 @@ export class UvmBatchReview extends LitElement {
       this._audioDurationMs = this._audioBuffer.duration * 1000;
     } catch (error) {
       console.error('Failed to load audio:', error);
+      this._audioError = error instanceof Error
+        ? error.message
+        : 'Failed to load audio for this sample';
     } finally {
       this._loadingAudio = false;
     }
@@ -1073,6 +1083,17 @@ export class UvmBatchReview extends LitElement {
                   <span class="loading-text">Loading audio...</span>
                 </div>
               `
+            : this._audioError
+              ? html`
+                  <div class="loading-state">
+                    <sl-icon name="exclamation-triangle" style="font-size: 2rem; color: var(--sl-color-danger-500, #ef4444);"></sl-icon>
+                    <span class="loading-text">${this._audioError}</span>
+                    <sl-button size="small" variant="default" style="margin-top: 0.5rem;" @click=${this._loadCurrentSample}>
+                      <sl-icon slot="prefix" name="arrow-counterclockwise"></sl-icon>
+                      Retry
+                    </sl-button>
+                  </div>
+                `
             : html`
                 <div class="waveform-preview">
                   <uvm-waveform-canvas

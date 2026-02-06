@@ -9,11 +9,13 @@ Uses torchaudio.pipelines.MMS_FA which is trained on 1100+ languages.
 
 For UTAU voicebank samples (sustained vowels), this module uses a hybrid approach:
 - Forced alignment: Detects phoneme onset positions with high precision
-- Energy analysis: Extends the final segment to capture sustained sounds
+- Energy analysis: Extends vowel segments to capture sustained sounds
 
 This hybrid approach addresses the limitation that CTC-based models only detect
 short phoneme boundaries (typical of speech), while UTAU samples contain
-sustained vowels lasting 1-3 seconds.
+sustained vowels lasting 1-3 seconds. Energy-based extension applies to ALL
+vowel segments (not just the final one), which is critical for VCV samples
+with repeated vowels like [a, k, a] where each vowel may be sustained.
 """
 
 import logging
@@ -30,6 +32,7 @@ import torchaudio.functional as F
 
 from src.backend.domain.alignment_config import AlignmentParams
 from src.backend.domain.phoneme import PhonemeDetectionResult, PhonemeSegment
+from src.backend.ml.gpu_fallback import run_inference_with_cpu_fallback
 from src.backend.utils.kana_romaji import contains_kana, kana_to_romaji
 
 logger = logging.getLogger(__name__)
@@ -605,6 +608,134 @@ def _merge_adjacent_regions(
     return merged
 
 
+# Vowel characters for energy-based segment extension.
+# These correspond to the single-character romaji vowels that appear in transcripts
+# after spaces are stripped. Vowels are the phonemes most likely to be sustained
+# in UTAU samples, so they benefit from energy-based boundary extension.
+VOWEL_CHARACTERS = frozenset("aeiou")
+
+
+@dataclass
+class EnergyProfile:
+    """Frame-level energy profile for per-segment boundary analysis.
+
+    Stores RMS energy values and their corresponding timestamps so that
+    individual segment boundaries can be refined based on where energy
+    actually drops below threshold.
+    """
+
+    rms: np.ndarray  # RMS energy per frame
+    times_ms: np.ndarray  # Timestamp in ms per frame
+    release_threshold: float  # Energy level below which sound is considered ended
+
+
+def compute_energy_profile(
+    audio: np.ndarray,
+    sample_rate: int,
+    hop_length: int = ENERGY_HOP_LENGTH,
+    alignment_params: AlignmentParams | None = None,
+) -> EnergyProfile:
+    """Compute a frame-level energy profile for per-segment boundary analysis.
+
+    This is used by _spans_to_segments to extend individual vowel segments
+    based on where energy actually drops, rather than relying solely on
+    the FA model's short CTC-style boundaries.
+
+    Args:
+        audio: Raw audio samples (numpy array, not normalized)
+        sample_rate: Audio sample rate
+        hop_length: Hop length for RMS calculation
+        alignment_params: Optional alignment parameters for threshold tuning
+
+    Returns:
+        EnergyProfile with per-frame RMS, timestamps, and release threshold
+    """
+    rms = librosa.feature.rms(y=audio, hop_length=hop_length)[0]
+    times_ms = (
+        librosa.frames_to_time(
+            np.arange(len(rms)), sr=sample_rate, hop_length=hop_length
+        )
+        * 1000
+    )
+
+    if len(rms) == 0:
+        return EnergyProfile(
+            rms=rms,
+            times_ms=times_ms,
+            release_threshold=0.0,
+        )
+
+    # Determine threshold using noise floor estimation (same logic as detect_energy_boundaries)
+    noise_rms = np.percentile(rms, 10)
+    signal_rms = np.percentile(rms, 90)
+
+    if alignment_params is not None:
+        release_ratio = alignment_params.energy_threshold_ratio
+    else:
+        release_ratio = ENERGY_RELEASE_THRESHOLD_RATIO
+
+    release_threshold = noise_rms + (signal_rms - noise_rms) * release_ratio
+
+    return EnergyProfile(
+        rms=rms,
+        times_ms=times_ms,
+        release_threshold=release_threshold,
+    )
+
+
+def find_energy_end_in_region(
+    energy_profile: EnergyProfile,
+    region_start_ms: float,
+    region_end_ms: float,
+) -> float | None:
+    """Find where energy drops below threshold within a time region.
+
+    Scans the energy profile from region_start_ms forward and returns the
+    timestamp where energy drops below the release threshold. If energy
+    stays above threshold throughout the region, returns region_end_ms
+    (the full available extent). If energy is already below threshold at
+    region_start_ms, returns None (no extension warranted).
+
+    Args:
+        energy_profile: Pre-computed energy profile
+        region_start_ms: Start of the region to scan (ms)
+        region_end_ms: Maximum extent of the region (ms), typically
+                      the start of the next segment
+
+    Returns:
+        The ms timestamp where energy drops below threshold, or
+        region_end_ms if energy persists, or None if no energy found
+    """
+    rms = energy_profile.rms
+    times = energy_profile.times_ms
+    threshold = energy_profile.release_threshold
+
+    if len(rms) == 0:
+        return None
+
+    # Find frames within the region
+    region_mask = (times >= region_start_ms) & (times <= region_end_ms)
+    region_indices = np.where(region_mask)[0]
+
+    if len(region_indices) == 0:
+        return None
+
+    # Check if energy is above threshold at the start of the region
+    first_idx = region_indices[0]
+    if rms[first_idx] < threshold:
+        # Energy already below threshold -- no extension warranted
+        return None
+
+    # Scan forward to find where energy drops below threshold
+    for idx in region_indices:
+        if rms[idx] < threshold:
+            # Energy dropped -- return this timestamp plus small padding
+            return float(times[idx]) + ENERGY_END_PADDING_MS
+
+    # Energy stayed above threshold through the entire region
+    return float(region_end_ms)
+
+
 def tokenize_transcript(
     transcript: str,
     dictionary: dict[str, int],
@@ -717,7 +848,12 @@ class ForcedAlignmentDetector:
 
         Uses a hybrid approach for UTAU samples:
         1. Forced alignment detects phoneme onset positions
-        2. Energy analysis extends the final segment to capture sustained sounds
+        2. Energy analysis extends ALL vowel segments to capture sustained sounds
+
+        The energy extension applies to every vowel segment, not just the final
+        one. This is critical for VCV samples with repeated vowels like [a, k, a]
+        where each vowel may be sustained. Each vowel is extended up to where
+        energy drops below threshold, capped at the next segment's start.
 
         Args:
             audio_path: Path to the audio file (WAV recommended)
@@ -741,39 +877,58 @@ class ForcedAlignmentDetector:
         )
         waveform = waveform.to(device)
 
-        # Detect energy-based sound boundaries for extending segments
+        # Detect energy-based sound boundaries for global start/end
         energy_start_ms, energy_end_ms = detect_energy_boundaries(
+            raw_audio, sample_rate, alignment_params=alignment_params
+        )
+
+        # Compute per-frame energy profile for per-segment extension
+        energy_profile = compute_energy_profile(
             raw_audio, sample_rate, alignment_params=alignment_params
         )
 
         # Tokenize transcript
         tokens = tokenize_transcript(transcript, dictionary)
 
-        try:
-            # Generate emission probabilities from model
+        def _gpu_inference() -> tuple[torch.Tensor, torch.Tensor, list]:
             with torch.inference_mode():
                 emission, _ = model(waveform)
-
-            # Prepare targets tensor [1, num_tokens]
             targets = torch.tensor([tokens], dtype=torch.int32, device=device)
-
-            # Perform forced alignment
-            # blank=0 is the CTC blank token
             alignments, scores = F.forced_align(emission, targets, blank=0)
-
-            # Merge consecutive identical tokens to get spans
-            # scores are log probabilities, exp() converts to probabilities
             token_spans = F.merge_tokens(alignments[0], scores[0].exp())
+            return emission, waveform, token_spans
+
+        def _cpu_inference(
+            cpu_tensors: dict[str, torch.Tensor],
+        ) -> tuple[torch.Tensor, torch.Tensor, list]:
+            cpu_waveform = cpu_tensors["waveform"]
+            cpu_device = torch.device("cpu")
+            with torch.inference_mode():
+                emission, _ = model(cpu_waveform)
+            targets = torch.tensor([tokens], dtype=torch.int32, device=cpu_device)
+            alignments, scores = F.forced_align(emission, targets, blank=0)
+            token_spans = F.merge_tokens(alignments[0], scores[0].exp())
+            return emission, cpu_waveform, token_spans
+
+        try:
+            emission, used_waveform, token_spans = run_inference_with_cpu_fallback(
+                model=model,
+                inference_fn=_gpu_inference,
+                tensors_to_move={"waveform": waveform},
+                cpu_inference_fn=_cpu_inference,
+                context="MMS_FA forced alignment",
+            )
 
             # Convert to PhonemeSegments with energy-corrected boundaries
             segments = self._spans_to_segments(
                 token_spans,
                 transcript,
-                waveform.size(1),
+                used_waveform.size(1),
                 emission.size(1),
                 sample_rate,
                 energy_start_ms=energy_start_ms,
                 energy_end_ms=energy_end_ms,
+                energy_profile=energy_profile,
             )
 
             return PhonemeDetectionResult(
@@ -857,12 +1012,22 @@ class ForcedAlignmentDetector:
         sample_rate: int,
         energy_start_ms: float | None = None,
         energy_end_ms: float | None = None,
+        energy_profile: EnergyProfile | None = None,
     ) -> list[PhonemeSegment]:
         """Convert token spans to PhonemeSegment objects.
 
         For UTAU samples with sustained vowels:
         - First segment start is adjusted if FA detected it too late
-        - Final segment is extended to energy-detected sound end
+        - ALL vowel segments are extended based on energy analysis
+
+        Energy-based extension works as follows:
+        - For non-final vowel segments: extend up to where energy drops below
+          threshold, capped at the next segment's start time
+        - For the final vowel segment: extend to the global energy_end_ms
+        - Consonant segments are never extended (they have fixed durations)
+
+        This is critical for VCV samples like [a, k, a] where the first 'a'
+        may be sustained but the FA model only detects a short CTC boundary.
 
         Args:
             token_spans: List of TokenSpan objects from merge_tokens
@@ -874,12 +1039,12 @@ class ForcedAlignmentDetector:
                             the first segment (when FA misdetects onset)
             energy_end_ms: Optional energy-detected sound end for extending
                           the final segment (for sustained vowels)
+            energy_profile: Optional per-frame energy profile for extending
+                           non-final vowel segments based on actual energy
 
         Returns:
             List of PhonemeSegment objects with timing in milliseconds
         """
-        segments: list[PhonemeSegment] = []
-
         # Calculate frame duration
         # ratio = num_samples / num_frames gives samples per frame
         # samples_per_frame / sample_rate = seconds_per_frame
@@ -890,17 +1055,25 @@ class ForcedAlignmentDetector:
         # This ensures we have the right character for each span
         valid_chars = [c for c in transcript if c != " "]
 
+        # First pass: compute raw FA timings for all spans so we know
+        # each segment's start time (needed to cap extensions for earlier segments)
+        raw_timings: list[tuple[str, float, float, float]] = []
         for i, span in enumerate(token_spans):
-            # Get the character for this span (fallback to "?" if index out of range)
             phoneme = valid_chars[i] if i < len(valid_chars) else "?"
-
-            # Convert frame indices to milliseconds
             start_ms = span.start * seconds_per_frame * 1000
             end_ms = span.end * seconds_per_frame * 1000
+            confidence = float(span.score)
+            raw_timings.append((phoneme, start_ms, end_ms, confidence))
+
+        # Second pass: apply corrections with knowledge of all segment positions
+        segments: list[PhonemeSegment] = []
+
+        for i, (phoneme, start_ms, end_ms, confidence) in enumerate(raw_timings):
+            is_first_segment = i == 0
+            is_last_segment = i == len(raw_timings) - 1
 
             # For the first segment, check if FA detected it too late
             # This happens when the model struggles with certain vowels
-            is_first_segment = i == 0
             if is_first_segment and energy_start_ms is not None:
                 offset = start_ms - energy_start_ms
                 if offset > MAX_FA_ENERGY_OFFSET_MS:
@@ -913,7 +1086,6 @@ class ForcedAlignmentDetector:
                     start_ms = energy_start_ms
 
             # For non-first segments, check for unreasonable gaps
-            # This happens when FA detects a vowel at the end instead of after consonant
             if not is_first_segment and len(segments) > 0:
                 prev_segment = segments[-1]
                 gap = start_ms - prev_segment.end_ms
@@ -928,16 +1100,41 @@ class ForcedAlignmentDetector:
                     )
                     start_ms = adjusted_start
 
-            # For the final segment, extend to energy-detected end if available
-            # This captures sustained vowels that CTC models miss
-            is_last_segment = i == len(token_spans) - 1
+            # Energy-based vowel extension
+            is_vowel = phoneme.lower() in VOWEL_CHARACTERS
+
             if is_last_segment and energy_end_ms is not None:
-                # Extend to energy-detected sound end
+                # Final segment: extend to global energy-detected sound end
+                # (applies to any final phoneme, vowel or not, preserving
+                # original behavior)
                 end_ms = max(end_ms, energy_end_ms)
 
-            # Score is already a probability (0-1) from exp()
-            confidence = float(span.score)
+            elif is_vowel and not is_last_segment and energy_profile is not None:
+                # Non-final vowel: use energy profile to find actual sustain end
+                # Cap extension at the next segment's raw FA start time so we
+                # don't encroach into the next phoneme's territory
+                next_start_ms = raw_timings[i + 1][1]
+                # Also respect any gap-adjusted start that might apply to the
+                # next segment. Use the raw FA start as the hard cap since gap
+                # adjustment only moves starts earlier, not later.
+                cap_ms = next_start_ms
 
+                energy_end = find_energy_end_in_region(
+                    energy_profile,
+                    region_start_ms=end_ms,
+                    region_end_ms=cap_ms,
+                )
+
+                if energy_end is not None and energy_end > end_ms:
+                    logger.debug(
+                        f"Extending vowel '{phoneme}' (segment {i}) end from "
+                        f"{end_ms:.1f}ms to {energy_end:.1f}ms "
+                        f"(capped at next segment start {cap_ms:.1f}ms)"
+                    )
+                    # Ensure we don't exceed the cap even with padding
+                    end_ms = min(energy_end, cap_ms)
+
+            # Score is already a probability (0-1) from exp()
             segments.append(
                 PhonemeSegment(
                     phoneme=phoneme,

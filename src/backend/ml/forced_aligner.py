@@ -413,58 +413,418 @@ class MFAForcedAligner(ForcedAligner):
 
 
 class Wav2Vec2ForcedAligner(ForcedAligner):
-    """Wav2Vec2-based alignment fallback.
+    """Wav2Vec2-based forced alignment using CTC constrained decoding.
 
-    Uses CTC output with transcript to estimate phoneme boundaries.
-    Less accurate than MFA but works without external dependencies.
+    When a transcript is provided, converts it to the expected IPA phoneme
+    sequence via espeak G2P, then uses torchaudio.functional.forced_align
+    to perform transcript-constrained CTC alignment. This produces monotonic
+    phoneme boundaries that respect the expected phoneme order, which is
+    critical for VCV/CVVC samples where phoneme sequence matters.
+
+    Falls back to blind CTC argmax detection when no transcript is provided.
     """
+
+    # Mapping from UTAU language codes to espeak language codes
+    _LANG_MAP = {
+        "ja": "ja",
+        "en": "en-us",
+        "zh": "cmn",
+        "ko": "ko",
+    }
 
     def __init__(self) -> None:
         """Initialize Wav2Vec2 aligner."""
-        from src.backend.ml.phoneme_detector import PhonemeDetector
+        self._model = None
+        self._processor = None
 
-        self._detector = PhonemeDetector()
+    def _ensure_model_loaded(self):
+        """Lazily load and cache the Wav2Vec2 model and processor."""
+        if self._model is None or self._processor is None:
+            from src.backend.ml.phoneme_detector import get_wav2vec2_model
+
+            self._model, self._processor = get_wav2vec2_model()
+        return self._model, self._processor
 
     def is_available(self) -> bool:
-        """Wav2Vec2 is always available if transformers is installed."""
+        """Wav2Vec2 is always available if transformers and torchaudio are installed."""
         try:
+            import torchaudio.functional  # noqa: F401
             import transformers  # noqa: F401
 
             return True
         except ImportError:
             return False
 
+    def _transcript_to_ipa_tokens(
+        self,
+        transcript: str,
+        language: str,
+        vocab: dict[str, int],
+    ) -> list[int] | None:
+        """Convert a transcript to IPA token IDs using espeak G2P.
+
+        Uses the phonemizer library (espeak backend) to convert the transcript
+        into IPA phonemes, then maps each phoneme to the Wav2Vec2 vocabulary.
+
+        Args:
+            transcript: Text transcript (romaji, kana, or natural language)
+            language: Language code (ja, en, etc.)
+            vocab: Wav2Vec2 tokenizer vocabulary mapping tokens to IDs
+
+        Returns:
+            List of token IDs for forced alignment, or None if G2P fails
+        """
+        try:
+            from phonemizer import phonemize
+            from phonemizer.separator import Separator
+        except ImportError:
+            logger.warning(
+                "phonemizer not installed, cannot do G2P for forced alignment"
+            )
+            return None
+
+        espeak_lang = self._LANG_MAP.get(language, language)
+
+        # For Japanese, convert romaji to kana first for better espeak results.
+        # Espeak handles kana input well but interprets romaji as English.
+        if espeak_lang == "ja":
+            from src.backend.utils.kana_romaji import contains_kana, romaji_to_hiragana
+
+            if not contains_kana(transcript):
+                # Convert romaji words to hiragana for espeak
+                # Handle space-separated syllables (e.g. "a ka" -> "あか")
+                parts = transcript.strip().split()
+                kana_parts = [romaji_to_hiragana(p) for p in parts]
+                transcript = "".join(kana_parts)
+
+        try:
+            # Use pipe separator for phones since space is used for words
+            sep = Separator(phone="|", word=" ", syllable="")
+            ipa_str = phonemize(
+                transcript,
+                language=espeak_lang,
+                backend="espeak",
+                separator=sep,
+                strip=True,
+            )
+        except Exception as e:
+            logger.warning(f"espeak G2P failed for '{transcript}' ({espeak_lang}): {e}")
+            return None
+
+        if not ipa_str:
+            logger.warning(f"espeak G2P returned empty result for '{transcript}'")
+            return None
+
+        # Parse IPA output into individual phoneme tokens
+        # phonemizer output format: "p|h|o|n" with | between phones, space between words
+        ipa_phones = []
+        for word_chunk in ipa_str.split():
+            for phone in word_chunk.split("|"):
+                phone = phone.strip()
+                if phone:
+                    ipa_phones.append(phone)
+
+        if not ipa_phones:
+            logger.warning(f"No IPA phones extracted from '{ipa_str}'")
+            return None
+
+        # Map IPA phones to vocabulary token IDs
+        token_ids = []
+        unmapped = []
+        for phone in ipa_phones:
+            if phone in vocab:
+                token_ids.append(vocab[phone])
+            else:
+                unmapped.append(phone)
+
+        if unmapped:
+            logger.warning(
+                f"IPA phones not in Wav2Vec2 vocab (skipped): {unmapped} "
+                f"from transcript '{transcript}'"
+            )
+
+        if not token_ids:
+            logger.warning(
+                f"No valid token IDs from G2P for '{transcript}' "
+                f"(IPA: {ipa_phones})"
+            )
+            return None
+
+        logger.debug(
+            f"G2P: '{transcript}' -> IPA {ipa_phones} -> " f"token_ids {token_ids}"
+        )
+        return token_ids
+
     async def align(
         self,
         audio_path: Path,
-        transcript: str,  # noqa: ARG002 - kept for API compatibility
-        language: str = "ja",  # noqa: ARG002 - kept for future G2P integration
+        transcript: str,
+        language: str = "ja",
     ) -> AlignmentResult:
-        """Align using Wav2Vec2 phoneme detection.
+        """Align transcript to audio using Wav2Vec2 CTC forced alignment.
 
-        This is a simplified alignment that uses detected phonemes
-        and attempts to match them to the expected transcript.
+        When a transcript is provided, performs true forced alignment:
+        1. Converts transcript to IPA phoneme sequence via espeak G2P
+        2. Runs Wav2Vec2 to get CTC log-probabilities
+        3. Uses torchaudio.functional.forced_align for constrained decoding
+        4. Returns monotonic phoneme boundaries matching the transcript
+
+        Falls back to blind CTC argmax detection if:
+        - transcript is empty
+        - G2P conversion fails
+        - forced alignment fails (e.g. audio too short for transcript)
 
         Args:
             audio_path: Path to audio file
-            transcript: Text transcript (reserved for future G2P matching)
-            language: Language code (reserved for future G2P integration)
+            transcript: Text transcript for constrained alignment
+            language: Language code (ja, en, zh, ko)
 
         Returns:
-            AlignmentResult with detected phoneme timestamps
+            AlignmentResult with phoneme timestamps
         """
+        import torch
+
+        from src.backend.ml.phoneme_detector import preprocess_audio
+
+        model, processor = self._ensure_model_loaded()
+        vocab = processor.tokenizer.get_vocab()
+        id_to_token = {v: k for k, v in vocab.items()}
+        blank_id = processor.tokenizer.pad_token_id
+
+        # Load and preprocess audio
+        audio, sample_rate, duration_ms = preprocess_audio(audio_path)
+
+        # Prepare input for model
+        inputs = processor(
+            audio,
+            sampling_rate=sample_rate,
+            return_tensors="pt",
+            padding=True,
+        )
+
+        device = next(model.parameters()).device
+        input_values = inputs.input_values.to(device)
+
         try:
-            detection_result = await self._detector.detect_phonemes(audio_path)
+            with torch.no_grad():
+                outputs = model(input_values)
+                logits = outputs.logits  # [1, T, C]
+
+            # Try transcript-constrained forced alignment if transcript provided
+            if transcript and transcript.strip():
+                token_ids = self._transcript_to_ipa_tokens(transcript, language, vocab)
+                if token_ids:
+                    segments = self._forced_align_with_tokens(
+                        logits, token_ids, id_to_token, blank_id, duration_ms
+                    )
+                    if segments is not None:
+                        return AlignmentResult(
+                            segments=segments,
+                            audio_duration_ms=duration_ms,
+                            method="wav2vec2-forced",
+                            word_segments=[],
+                        )
+                    logger.info(
+                        "Wav2Vec2 forced alignment failed, falling back to CTC argmax"
+                    )
+
+            # Fallback: blind CTC argmax detection
+            segments = self._ctc_argmax_decode(
+                logits, id_to_token, blank_id, duration_ms
+            )
 
             return AlignmentResult(
-                segments=detection_result.segments,
-                audio_duration_ms=detection_result.audio_duration_ms,
+                segments=segments,
+                audio_duration_ms=duration_ms,
                 method="wav2vec2",
-                word_segments=[],  # Wav2Vec2 doesn't provide word-level
+                word_segments=[],
             )
 
         except Exception as e:
             raise AlignmentError(f"Wav2Vec2 alignment failed: {e}") from e
+
+        finally:
+            import torch as _torch
+
+            if _torch.cuda.is_available():
+                _torch.cuda.empty_cache()
+
+    def _forced_align_with_tokens(
+        self,
+        logits,
+        token_ids: list[int],
+        id_to_token: dict[int, str],
+        blank_id: int,
+        duration_ms: float,
+    ) -> list[PhonemeSegment] | None:
+        """Perform CTC forced alignment using torchaudio.
+
+        Uses torchaudio.functional.forced_align to find the optimal
+        monotonic alignment of the expected token sequence to the CTC
+        emission matrix.
+
+        Args:
+            logits: Raw CTC logits from Wav2Vec2, shape [1, T, C]
+            token_ids: Expected phoneme token IDs from G2P
+            id_to_token: Reverse vocabulary mapping
+            blank_id: CTC blank token ID
+            duration_ms: Total audio duration in milliseconds
+
+        Returns:
+            List of PhonemeSegments, or None if alignment fails
+        """
+        import torch
+        import torchaudio.functional as F
+
+        try:
+            # Convert logits to log probabilities
+            log_probs = torch.log_softmax(logits, dim=-1)  # [1, T, C]
+
+            # Prepare targets tensor
+            targets = torch.tensor(
+                [token_ids], dtype=torch.int32, device=log_probs.device
+            )
+
+            # Run forced alignment
+            alignments, scores = F.forced_align(log_probs, targets, blank=blank_id)
+
+            # Merge consecutive identical tokens to get spans
+            # scores are log probabilities; exp() converts to probabilities
+            token_spans = F.merge_tokens(alignments[0], scores[0].exp())
+
+            # Use fixed frame duration for Wav2Vec2
+            ms_per_frame = 20.0  # WAV2VEC2_FRAME_DURATION_MS
+
+            segments: list[PhonemeSegment] = []
+            for i, span in enumerate(token_spans):
+                token_id = token_ids[i] if i < len(token_ids) else None
+                phoneme = (
+                    id_to_token.get(token_id, "?") if token_id is not None else "?"
+                )
+
+                # Skip special tokens
+                if phoneme.startswith("<") or phoneme.startswith("|"):
+                    continue
+
+                start_ms = float(span.start) * ms_per_frame
+                end_ms = float(span.end) * ms_per_frame
+
+                # Clamp end to audio duration
+                end_ms = min(end_ms, duration_ms)
+
+                # For the last segment, extend to fill remaining audio if close
+                is_last = i == len(token_spans) - 1
+                if is_last and (duration_ms - end_ms) < 100.0:
+                    end_ms = duration_ms
+
+                confidence = float(span.score)
+
+                segments.append(
+                    PhonemeSegment(
+                        phoneme=phoneme,
+                        start_ms=start_ms,
+                        end_ms=end_ms,
+                        confidence=confidence,
+                    )
+                )
+
+            if not segments:
+                logger.warning("Forced alignment produced no segments")
+                return None
+
+            return segments
+
+        except Exception as e:
+            logger.warning(f"torchaudio forced_align failed: {e}")
+            return None
+
+    def _ctc_argmax_decode(
+        self,
+        logits,
+        id_to_token: dict[int, str],
+        blank_id: int,
+        duration_ms: float,
+    ) -> list[PhonemeSegment]:
+        """Fallback blind CTC argmax decoding (no transcript constraint).
+
+        This is the original detection approach: takes the argmax of the CTC
+        output at each frame and groups consecutive identical tokens into
+        segments. Used when no transcript is available or G2P fails.
+
+        Args:
+            logits: Raw CTC logits from Wav2Vec2, shape [1, T, C]
+            id_to_token: Reverse vocabulary mapping
+            blank_id: CTC blank token ID
+            duration_ms: Total audio duration in milliseconds
+
+        Returns:
+            List of PhonemeSegments from blind detection
+        """
+        import torch
+
+        ms_per_frame = 20.0  # WAV2VEC2_FRAME_DURATION_MS
+
+        predicted_ids = torch.argmax(logits, dim=-1)
+        probs = torch.softmax(logits, dim=-1)
+        max_probs = torch.max(probs, dim=-1).values
+
+        predicted_ids_list = predicted_ids[0].cpu().tolist()
+        probs_list = max_probs[0].cpu().tolist()
+
+        segments: list[PhonemeSegment] = []
+        current_token_id: int | None = None
+        current_start_frame = 0
+        current_probs: list[float] = []
+
+        for frame_idx, (token_id, prob) in enumerate(
+            zip(predicted_ids_list, probs_list, strict=True)
+        ):
+            if token_id == blank_id:
+                if current_token_id is not None and current_token_id != blank_id:
+                    phoneme = id_to_token.get(current_token_id, "<unk>")
+                    if not phoneme.startswith("<") and not phoneme.startswith("|"):
+                        segments.append(
+                            PhonemeSegment(
+                                phoneme=phoneme,
+                                start_ms=current_start_frame * ms_per_frame,
+                                end_ms=frame_idx * ms_per_frame,
+                                confidence=float(np.mean(current_probs)),
+                            )
+                        )
+                current_token_id = None
+                current_probs = []
+            elif token_id != current_token_id:
+                if current_token_id is not None and current_token_id != blank_id:
+                    phoneme = id_to_token.get(current_token_id, "<unk>")
+                    if not phoneme.startswith("<") and not phoneme.startswith("|"):
+                        segments.append(
+                            PhonemeSegment(
+                                phoneme=phoneme,
+                                start_ms=current_start_frame * ms_per_frame,
+                                end_ms=frame_idx * ms_per_frame,
+                                confidence=float(np.mean(current_probs)),
+                            )
+                        )
+                current_token_id = token_id
+                current_start_frame = frame_idx
+                current_probs = [prob]
+            else:
+                current_probs.append(prob)
+
+        # Handle final segment
+        if current_token_id is not None and current_token_id != blank_id:
+            phoneme = id_to_token.get(current_token_id, "<unk>")
+            if not phoneme.startswith("<") and not phoneme.startswith("|"):
+                segments.append(
+                    PhonemeSegment(
+                        phoneme=phoneme,
+                        start_ms=current_start_frame * ms_per_frame,
+                        end_ms=duration_ms,
+                        confidence=float(np.mean(current_probs)),
+                    )
+                )
+
+        return segments
 
 
 class ForcedAlignerFactory:

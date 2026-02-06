@@ -14,11 +14,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.backend.api.routers.voicebank_download import (
-    create_voicebank_zip,
+from src.backend.api.dependencies import (
     get_oto_repository,
     get_voicebank_repository,
     get_voicebank_service,
+)
+from src.backend.api.routers.voicebank_download import (
+    create_voicebank_zip,
     router,
 )
 from src.backend.domain.oto_entry import OtoEntry

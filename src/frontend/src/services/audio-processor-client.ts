@@ -20,11 +20,14 @@
  *   { audioBuffer: buf2, pitchShift: 5, cacheKey: 'sa_+5' },
  * ]);
  *
- * // Cleanup
- * client.dispose();
+ * // Cleanup (waits for in-flight work to finish, with timeout)
+ * await client.dispose();
  * ```
  */
 export class AudioProcessorClient {
+  /** Timeout in ms to wait for pending requests during graceful shutdown. */
+  static readonly DISPOSE_TIMEOUT_MS = 2000;
+
   private _worker: Worker;
   private _pending = new Map<
     string,
@@ -34,6 +37,10 @@ export class AudioProcessorClient {
     }
   >();
   private _disposed = false;
+  /** True once dispose() has been called but before the worker is terminated. */
+  private _disposing = false;
+  /** Cached promise from the first dispose() call so concurrent callers share the same lifecycle. */
+  private _disposePromise: Promise<void> | null = null;
 
   constructor() {
     this._worker = new Worker(
@@ -75,10 +82,18 @@ export class AudioProcessorClient {
   }
 
   /**
-   * Whether this client has been disposed.
+   * Whether this client has been fully disposed (worker terminated).
    */
   get disposed(): boolean {
     return this._disposed;
+  }
+
+  /**
+   * Whether this client is in the process of shutting down.
+   * New requests are rejected once disposing begins.
+   */
+  get disposing(): boolean {
+    return this._disposing;
   }
 
   /**
@@ -104,7 +119,7 @@ export class AudioProcessorClient {
       formantScale?: number;
     }
   ): Promise<AudioBuffer> {
-    if (this._disposed) {
+    if (this._disposed || this._disposing) {
       throw new Error('AudioProcessorClient has been disposed');
     }
 
@@ -167,7 +182,7 @@ export class AudioProcessorClient {
       cacheKey: string;
     }>
   ): Promise<Map<string, AudioBuffer>> {
-    if (this._disposed) {
+    if (this._disposed || this._disposing) {
       throw new Error('AudioProcessorClient has been disposed');
     }
 
@@ -254,21 +269,106 @@ export class AudioProcessorClient {
   }
 
   /**
-   * Terminate the worker and reject all pending requests.
+   * Gracefully shut down the worker.
+   *
+   * New requests are rejected immediately. The method waits for in-flight
+   * requests to complete (up to `DISPOSE_TIMEOUT_MS`). After the timeout
+   * or once all pending requests resolve, the worker is terminated and any
+   * remaining pending requests are rejected.
+   *
+   * Safe to call multiple times -- subsequent calls return the same promise.
+   *
+   * @returns Promise that resolves once the worker has been terminated.
    */
-  dispose(): void {
+  dispose(): Promise<void> {
     if (this._disposed) {
-      return;
+      return Promise.resolve();
     }
-    this._disposed = true;
 
-    // Reject all pending requests
+    // Deduplicate concurrent dispose() calls
+    if (this._disposePromise) {
+      return this._disposePromise;
+    }
+
+    this._disposing = true;
+
+    this._disposePromise = this._drainAndTerminate();
+    return this._disposePromise;
+  }
+
+  /**
+   * Wait for pending requests to drain (with timeout), then terminate the worker.
+   */
+  private async _drainAndTerminate(): Promise<void> {
+    // If there are pending requests, give them time to finish
+    if (this._pending.size > 0) {
+      await Promise.race([
+        this._waitForAllPending(),
+        this._timeout(AudioProcessorClient.DISPOSE_TIMEOUT_MS),
+      ]);
+    }
+
+    // Terminate the worker -- this stops all in-flight processing
+    this._worker.terminate();
+
+    // Reject any requests that did not complete before the deadline
     for (const [, pending] of this._pending) {
-      pending.reject(new Error('AudioProcessorClient disposed'));
+      pending.reject(new Error('AudioProcessorClient disposed (shutdown timeout)'));
     }
     this._pending.clear();
 
-    this._worker.terminate();
+    this._disposed = true;
+    this._disposing = false;
+  }
+
+  /**
+   * Returns a promise that resolves when all currently pending requests
+   * have settled (resolved or rejected by the worker).
+   */
+  private _waitForAllPending(): Promise<void> {
+    if (this._pending.size === 0) {
+      return Promise.resolve();
+    }
+
+    // Wrap each pending entry's resolution in a promise we can track.
+    // We cannot simply collect the existing promises because they are
+    // stored as resolve/reject callbacks, not as Promises. Instead, we
+    // intercept each pending entry so that it also resolves a shared
+    // drain signal.
+    return new Promise<void>((drainResolve) => {
+      let remaining = this._pending.size;
+
+      const onSettle = () => {
+        remaining--;
+        if (remaining <= 0) {
+          drainResolve();
+        }
+      };
+
+      for (const [id, entry] of this._pending) {
+        const origResolve = entry.resolve;
+        const origReject = entry.reject;
+
+        entry.resolve = (value) => {
+          origResolve(value);
+          onSettle();
+        };
+        entry.reject = (reason) => {
+          origReject(reason);
+          onSettle();
+        };
+
+        // Re-set the wrapped entry (same reference, but be explicit)
+        this._pending.set(id, entry);
+      }
+    });
+  }
+
+  /**
+   * Returns a promise that resolves after `ms` milliseconds.
+   */
+  private _timeout(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -283,6 +383,10 @@ export class AudioProcessorClient {
     preserveFormants: boolean = false,
     formantScale: number = 0.0,
   ): Promise<{ channelData: Float32Array; sampleRate: number }> {
+    if (this._disposing || this._disposed) {
+      return Promise.reject(new Error('AudioProcessorClient has been disposed'));
+    }
+
     return new Promise((resolve, reject) => {
       this._pending.set(id, { resolve, reject });
 

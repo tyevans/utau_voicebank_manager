@@ -6,6 +6,7 @@ from pathlib import Path
 from src.backend.domain.oto_entry import OtoEntry
 from src.backend.repositories.interfaces import OtoRepositoryInterface
 from src.backend.repositories.voicebank_repository import VoicebankRepository
+from src.backend.utils.lock_map import BoundedLockMap
 from src.backend.utils.oto_parser import read_oto_file, write_oto_file
 
 
@@ -15,8 +16,8 @@ class OtoRepository(OtoRepositoryInterface):
     Reads and writes oto.ini files within voicebank directories.
     Uses the existing oto_parser utilities for file I/O.
 
-    Mutating operations (create, update, delete) are serialized per
-    voicebank_id using asyncio locks to prevent read-modify-write races.
+    All mutating operations (create, update, delete, save) are serialized
+    per voicebank_id using asyncio locks to prevent read-modify-write races.
     """
 
     def __init__(self, voicebank_repo: VoicebankRepository) -> None:
@@ -26,10 +27,13 @@ class OtoRepository(OtoRepositoryInterface):
             voicebank_repo: VoicebankRepository for voicebank path resolution
         """
         self.voicebank_repo = voicebank_repo
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks = BoundedLockMap(max_size=1024)
 
     def _get_lock(self, voicebank_id: str) -> asyncio.Lock:
         """Get or create an asyncio lock for a specific voicebank.
+
+        Uses a bounded lock map with LRU eviction to prevent unbounded
+        memory growth from accumulating locks for deleted voicebanks.
 
         Args:
             voicebank_id: Voicebank identifier
@@ -37,9 +41,7 @@ class OtoRepository(OtoRepositoryInterface):
         Returns:
             asyncio.Lock for the given voicebank_id
         """
-        if voicebank_id not in self._locks:
-            self._locks[voicebank_id] = asyncio.Lock()
-        return self._locks[voicebank_id]
+        return self._locks.get(voicebank_id)
 
     def _get_oto_path(self, voicebank_id: str) -> Path:
         """Get path to oto.ini file for a voicebank.
@@ -127,6 +129,22 @@ class OtoRepository(OtoRepositoryInterface):
 
         return [e for e in entries if e.filename == filename]
 
+    def _write_entries(
+        self,
+        voicebank_id: str,
+        entries: list[OtoEntry],
+    ) -> None:
+        """Write oto entries to disk (no locking).
+
+        Internal helper -- callers must already hold the voicebank lock.
+
+        Args:
+            voicebank_id: Voicebank identifier
+            entries: List of OtoEntry objects to write
+        """
+        oto_path = self._get_oto_path(voicebank_id)
+        write_oto_file(oto_path, entries)
+
     async def save_entries(
         self,
         voicebank_id: str,
@@ -134,12 +152,15 @@ class OtoRepository(OtoRepositoryInterface):
     ) -> None:
         """Save all oto entries for a voicebank, overwriting existing file.
 
+        Acquires the per-voicebank lock to prevent races with concurrent
+        create/update/delete operations.
+
         Args:
             voicebank_id: Voicebank identifier
             entries: List of OtoEntry objects to save
         """
-        oto_path = self._get_oto_path(voicebank_id)
-        write_oto_file(oto_path, entries)
+        async with self._get_lock(voicebank_id):
+            self._write_entries(voicebank_id, entries)
 
     async def create_entry(
         self,
@@ -174,7 +195,7 @@ class OtoRepository(OtoRepositoryInterface):
                     )
 
             entries.append(entry)
-            await self.save_entries(voicebank_id, entries)
+            self._write_entries(voicebank_id, entries)
             return entry
 
     async def update_entry(
@@ -204,7 +225,7 @@ class OtoRepository(OtoRepositoryInterface):
             for i, existing in enumerate(entries):
                 if existing.filename == filename and existing.alias == alias:
                     entries[i] = entry
-                    await self.save_entries(voicebank_id, entries)
+                    self._write_entries(voicebank_id, entries)
                     return entry
 
             return None
@@ -239,7 +260,7 @@ class OtoRepository(OtoRepositoryInterface):
             if len(entries) == original_count:
                 return False
 
-            await self.save_entries(voicebank_id, entries)
+            self._write_entries(voicebank_id, entries)
             return True
 
     async def wav_exists(self, voicebank_id: str, filename: str) -> bool:

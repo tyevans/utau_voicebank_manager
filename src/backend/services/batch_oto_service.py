@@ -50,6 +50,7 @@ class BatchOtoService:
         overwrite_existing: bool = False,
         progress_callback: Callable[[int, int, str], None] | None = None,
         sofa_language: str = "ja",
+        confidence_threshold: float = LOW_CONFIDENCE_THRESHOLD,
     ) -> BatchOtoResult:
         """Generate oto entries for all samples in a voicebank.
 
@@ -65,6 +66,10 @@ class BatchOtoService:
                               progress is reported at start and completion only.
             sofa_language: Language code for SOFA alignment (ja, en, zh, ko, fr).
                           Defaults to "ja" for Japanese.
+            confidence_threshold: Minimum confidence score for an entry to be
+                                 automatically saved to oto.ini. Entries below
+                                 this threshold are returned as pending_review_entries
+                                 for manual acceptance. Defaults to 0.3.
 
         Returns:
             BatchOtoResult with generated entries and statistics
@@ -113,8 +118,9 @@ class BatchOtoService:
                 f"Starting batch processing of {to_process_count} samples...",
             )
 
-        # Process all samples in batch
-        generated_entries: list[OtoEntry] = []
+        # Process all samples in batch, separating by confidence
+        accepted_entries: list[OtoEntry] = []
+        pending_review_entries: list[OtoEntry] = []
         failed_files: list[str] = []
         low_confidence_files: list[str] = []
         confidence_sum = 0.0
@@ -148,18 +154,20 @@ class BatchOtoService:
                     overlap=suggestion.overlap,
                 )
 
-                generated_entries.append(entry)
                 confidence_sum += suggestion.confidence
                 processed += 1
 
-                # Track low-confidence suggestions
-                if suggestion.confidence < LOW_CONFIDENCE_THRESHOLD:
+                # Gate by confidence: only save entries above the threshold
+                if suggestion.confidence < confidence_threshold:
+                    pending_review_entries.append(entry)
                     low_confidence_files.append(filename)
                     logger.debug(
                         f"Low confidence for {filename}: "
-                        f"confidence={suggestion.confidence:.2f}"
+                        f"confidence={suggestion.confidence:.2f} "
+                        f"(threshold={confidence_threshold}), pending review"
                     )
                 else:
+                    accepted_entries.append(entry)
                     logger.debug(
                         f"Generated oto for {filename}: "
                         f"alias={entry.alias}, confidence={suggestion.confidence:.2f}"
@@ -174,37 +182,35 @@ class BatchOtoService:
 
         failed = len(failed_files)
 
-        # Log summary of low-confidence files
-        if low_confidence_files:
-            logger.info(
-                f"{len(low_confidence_files)} files had low confidence "
-                "(may need manual review): {low_confidence_files[:5]}..."
-                if len(low_confidence_files) > 5
-                else f"{len(low_confidence_files)} files had low confidence "
-                f"(may need manual review): {low_confidence_files}"
-            )
-
         # Report progress: batch complete
+        pending_count = len(pending_review_entries)
         if progress_callback:
             progress_callback(
                 total_samples,
                 total_samples,
-                f"Batch complete: {processed} processed, {skipped} skipped, {failed} failed",
+                f"Batch complete: {processed} processed, {skipped} skipped, "
+                f"{failed} failed, {pending_count} pending review",
             )
 
         # Calculate average confidence
         average_confidence = confidence_sum / processed if processed > 0 else 0.0
 
-        # Save all generated entries to oto.ini
-        if generated_entries:
+        # Save only accepted entries (above confidence threshold) to oto.ini
+        if accepted_entries:
             await self._save_entries(
                 voicebank_id,
-                generated_entries,
+                accepted_entries,
                 existing_entries,
                 overwrite_existing,
             )
             logger.info(
-                f"Saved {len(generated_entries)} oto entries for voicebank '{voicebank_id}'"
+                f"Saved {len(accepted_entries)} oto entries for voicebank '{voicebank_id}'"
+            )
+
+        if pending_review_entries:
+            logger.info(
+                f"{pending_count} entries below confidence threshold "
+                f"({confidence_threshold}) returned for manual review"
             )
 
         return BatchOtoResult(
@@ -213,9 +219,12 @@ class BatchOtoService:
             processed=processed,
             skipped=skipped,
             failed=failed,
-            entries=generated_entries,
+            entries=accepted_entries,
+            pending_review_entries=pending_review_entries,
             failed_files=failed_files,
+            low_confidence_files=low_confidence_files,
             average_confidence=round(average_confidence, 3),
+            confidence_threshold=confidence_threshold,
         )
 
     async def _save_entries(
@@ -234,12 +243,16 @@ class BatchOtoService:
             overwrite_existing: Whether to replace existing entries
         """
         if overwrite_existing:
-            # Build a map of new entries by filename
-            new_entry_map = {entry.filename: entry for entry in new_entries}
+            # Build a set of new entry keys by (filename, alias) tuple.
+            # VCV files have multiple aliases per filename (e.g., _akasa.wav
+            # has both "a ka" and "a sa"), so filename alone is not unique.
+            new_entry_keys = {(entry.filename, entry.alias) for entry in new_entries}
 
-            # Keep existing entries for files not in the new set
+            # Keep existing entries whose (filename, alias) is not being replaced
             merged_entries = [
-                e for e in existing_entries if e.filename not in new_entry_map
+                e
+                for e in existing_entries
+                if (e.filename, e.alias) not in new_entry_keys
             ]
             # Add all new entries
             merged_entries.extend(new_entries)

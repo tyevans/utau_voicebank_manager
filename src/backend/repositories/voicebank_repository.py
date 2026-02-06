@@ -1,6 +1,8 @@
 """Repository for voicebank storage and retrieval."""
 
+import os
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -31,6 +33,47 @@ class VoicebankRepository(VoicebankRepositoryInterface):
         """
         self.base_path = base_path
         self.base_path.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _atomic_write_bytes(target: Path, data: bytes) -> None:
+        """Write bytes to a file atomically using write-to-temp-then-rename.
+
+        Creates a temporary file in the same directory as the target, writes
+        the data, then atomically replaces the target (POSIX guarantee).
+
+        Args:
+            target: Final destination path
+            data: Bytes to write
+        """
+        fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp_path, target)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _atomic_write_text(target: Path, text: str, encoding: str = "utf-8") -> None:
+        """Write text to a file atomically using write-to-temp-then-rename.
+
+        Creates a temporary file in the same directory as the target, writes
+        the text, then atomically replaces the target (POSIX guarantee).
+
+        Args:
+            target: Final destination path
+            text: Text content to write
+            encoding: Text encoding (default utf-8)
+        """
+        fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding=encoding) as f:
+                f.write(text)
+            os.replace(tmp_path, target)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
 
     def _count_wav_files(self, path: Path) -> int:
         """Count WAV files in a directory."""
@@ -129,7 +172,7 @@ class VoicebankRepository(VoicebankRepositoryInterface):
                     f"Path traversal detected: '{filename}' resolves outside voicebank directory"
                 )
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_bytes(content)
+            self._atomic_write_bytes(file_path, content)
 
         voicebank = self._build_voicebank(vb_path)
         # Override name with provided display name
@@ -282,7 +325,7 @@ class VoicebankRepository(VoicebankRepositoryInterface):
             return False
 
         file_path = vb_path / filename
-        file_path.write_text(content, encoding="utf-8")
+        self._atomic_write_text(file_path, content)
         return True
 
     # Icon file management
@@ -304,7 +347,7 @@ class VoicebankRepository(VoicebankRepositoryInterface):
             return False
 
         icon_path = vb_path / self.ICON_FILENAME
-        icon_path.write_bytes(icon_data)
+        self._atomic_write_bytes(icon_path, icon_data)
         return True
 
     async def get_icon_path(self, voicebank_id: str) -> Path | None:

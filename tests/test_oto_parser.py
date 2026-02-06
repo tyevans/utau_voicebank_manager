@@ -212,14 +212,14 @@ class TestParseOtoLine:
 
     def test_parse_vcv_line(self) -> None:
         """Test parsing a VCV (vowel-consonant-vowel) entry."""
-        entry = parse_oto_line("_akasa.wav=a ka,250,100,-200,70,30")
+        entry = parse_oto_line("_akasa.wav=a ka,250,350,-200,270,30")
         assert entry is not None
         assert entry.filename == "_akasa.wav"
         assert entry.alias == "a ka"
         assert entry.offset == 250.0
-        assert entry.consonant == 100.0
+        assert entry.consonant == 350.0
         assert entry.cutoff == -200.0
-        assert entry.preutterance == 70.0
+        assert entry.preutterance == 270.0
         assert entry.overlap == 30.0
 
     def test_parse_line_with_floats(self) -> None:
@@ -328,7 +328,7 @@ _ta.wav=- ta,40,110,-130,75,12"""
         content = """# CV samples
 _ka.wav=- ka,45,120,-140,80,15
 ; VCV samples
-_akasa.wav=a ka,250,100,-200,70,30"""
+_akasa.wav=a ka,250,350,-200,270,30"""
         entries = parse_oto_file(content)
         assert len(entries) == 2
 
@@ -352,8 +352,8 @@ _sa.wav=- sa,50,100,-120,70,10"""
 
     def test_parse_vcv_file_multiple_aliases_per_wav(self) -> None:
         """Test parsing VCV file with multiple aliases per WAV."""
-        content = """_akasa.wav=a ka,250,100,-200,70,30
-_akasa.wav=a sa,550,110,-180,75,35"""
+        content = """_akasa.wav=a ka,250,350,-200,270,30
+_akasa.wav=a sa,550,660,-180,570,35"""
         entries = parse_oto_file(content)
         assert len(entries) == 2
         assert entries[0].filename == "_akasa.wav"
@@ -432,8 +432,8 @@ class TestRoundTrip:
 
     def test_round_trip_vcv(self) -> None:
         """Test round-trip with VCV entries."""
-        original = """_akasa.wav=a ka,250,100,-200,70,30
-_akasa.wav=a sa,550,110,-180,75,35"""
+        original = """_akasa.wav=a ka,250,350,-200,270,30
+_akasa.wav=a sa,550,660,-180,570,35"""
         entries = parse_oto_file(original)
         serialized = serialize_oto_entries(entries)
         reparsed = parse_oto_file(serialized)

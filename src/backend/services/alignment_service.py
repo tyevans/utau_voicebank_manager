@@ -284,33 +284,22 @@ class AlignmentService:
         return await aligner.align(audio_path, transcript, language)
 
 
-# Module-level singleton
-_alignment_service: AlignmentService | None = None
-
-
 def get_alignment_service(
-    session_service: RecordingSessionService | None = None,
+    session_service: RecordingSessionService,
     prefer_mfa: bool = True,
 ) -> AlignmentService:
-    """Get the alignment service singleton.
+    """Create an alignment service instance.
+
+    Creates a new instance each call so that ``prefer_mfa`` and other
+    parameters are always respected.  The service object itself is cheap
+    to construct -- expensive ML model loading is handled by the model
+    registries/caches, not by this service.
 
     Args:
-        session_service: Recording session service (required on first call)
+        session_service: Recording session service
         prefer_mfa: If True, prefer MFA when available
 
     Returns:
         AlignmentService instance
-
-    Raises:
-        ValueError: If session_service not provided on first call
     """
-    global _alignment_service
-
-    if _alignment_service is None:
-        if session_service is None:
-            raise ValueError(
-                "session_service required on first call to get_alignment_service"
-            )
-        _alignment_service = AlignmentService(session_service, prefer_mfa)
-
-    return _alignment_service
+    return AlignmentService(session_service, prefer_mfa)

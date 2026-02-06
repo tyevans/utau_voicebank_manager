@@ -38,6 +38,26 @@ class CharacterMetadata(BaseModel):
         default=None,
         description="Version string of the voicebank release",
     )
+    description: str | None = Field(
+        default=None,
+        description="Free-text description of the voicebank character",
+    )
+    gender: str | None = Field(
+        default=None,
+        description="Character gender (e.g., 'male', 'female', 'neutral')",
+    )
+    license: str | None = Field(
+        default=None,
+        description="License or usage terms for the voicebank",
+    )
+    pitch_range: str | None = Field(
+        default=None,
+        description="Vocal pitch range (e.g., 'C3-C5')",
+    )
+    image_path: str | None = Field(
+        default=None,
+        description="Resolved path to the character image file",
+    )
 
 
 class PrefixMapEntry(BaseModel):

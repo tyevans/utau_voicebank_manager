@@ -3,24 +3,16 @@ import { customElement, state, query } from 'lit/decorators.js';
 import type { AfterEnterObserver, RouterLocation } from '@vaadin/router';
 
 // Import Shoelace components
-import '@shoelace-style/shoelace/dist/components/input/input.js';
-import '@shoelace-style/shoelace/dist/components/card/card.js';
-import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
-import '@shoelace-style/shoelace/dist/components/skeleton/skeleton.js';
-import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/alert/alert.js';
-import '@shoelace-style/shoelace/dist/components/divider/divider.js';
-import '@shoelace-style/shoelace/dist/components/badge/badge.js';
+import '@shoelace-style/shoelace/dist/components/icon/icon.js';
 import '@shoelace-style/shoelace/dist/components/button/button.js';
-import '@shoelace-style/shoelace/dist/components/button-group/button-group.js';
-import '@shoelace-style/shoelace/dist/components/select/select.js';
-import '@shoelace-style/shoelace/dist/components/option/option.js';
 import '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
-import '@shoelace-style/shoelace/dist/components/tooltip/tooltip.js';
-import '@shoelace-style/shoelace/dist/components/details/details.js';
 import type SlDialog from '@shoelace-style/shoelace/dist/components/dialog/dialog.js';
 
 // Import child components
+import './uvm-audio-manager.js';
+import './uvm-oto-manager.js';
+import './uvm-editor-toolbar.js';
 import './uvm-sample-browser.js';
 import './uvm-waveform-editor.js';
 import './uvm-entry-list.js';
@@ -30,26 +22,14 @@ import './uvm-precision-drawer.js';
 import './uvm-shortcut-overlay.js';
 import './uvm-batch-review.js';
 import './uvm-metadata-editor.js';
+import './uvm-validation-warnings.js';
 
-import { api, ApiError } from '../services/api.js';
-import { getSharedAudioContext } from '../services/audio-context.js';
+import { api } from '../services/api.js';
+import type { UvmOtoManager, OtoValidationWarning } from './uvm-oto-manager.js';
 import type { BatchSampleResult } from './uvm-batch-review.js';
-import type { EntryCreateDetail } from './uvm-entry-list.js';
 import type { OtoEntry } from '../services/types.js';
 import type { PrecisionDrawerChangeDetail } from './uvm-precision-drawer.js';
-import type { AlignmentMethod } from './uvm-alignment-settings.js';
 import { UvmToastManager } from './uvm-toast-manager.js';
-
-/**
- * Default oto parameter values for new entries.
- */
-const DEFAULT_OTO_VALUES = {
-  offset: 0,
-  consonant: 100,
-  cutoff: -50,
-  preutterance: 50,
-  overlap: 20,
-};
 
 /**
  * Event detail for sample-select events from the sample browser.
@@ -70,10 +50,21 @@ interface MarkerChangeDetail {
 /**
  * Main editor view component with waveform-centric layout.
  *
+ * This component acts as an orchestrator, composing focused sub-components:
+ * - uvm-audio-manager: Audio loading, AudioContext lifecycle (headless)
+ * - uvm-oto-manager: OtoEntry CRUD, undo/redo, auto-detection (headless)
+ * - uvm-editor-toolbar: Keyboard shortcuts and status indicator
+ * - uvm-context-bar: Breadcrumb navigation + action buttons
+ * - uvm-waveform-editor: Main waveform editing area
+ * - uvm-value-bar: Read-only marker values
+ * - uvm-precision-drawer: Numeric input panel
+ * - uvm-sample-browser: Modal sample selection
+ *
  * Layout (top to bottom):
  * - Context bar: Breadcrumb navigation + undo/redo/save actions
  * - Entry tabs: For VCV samples with multiple aliases (hidden if 1 entry)
  * - Waveform editor: Main editing area (fills available space)
+ * - Status indicator: Detection/save/loading state
  * - Value bar: Read-only display of current marker values
  * - Precision drawer: Collapsible numeric input panel
  * - Sample browser: Modal overlay (not inline)
@@ -278,118 +269,43 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
       margin: 0;
       color: #374151;
     }
-
-    /* Loading state */
-    .loading-overlay {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-      text-align: center;
-      color: #6b7280;
-    }
-
-    .loading-overlay sl-spinner {
-      font-size: 1.75rem;
-      --indicator-color: #3b82f6;
-      margin-bottom: 0.625rem;
-    }
-
-    /* Status indicator */
-    .status-indicator {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 1rem;
-      font-size: 0.75rem;
-      color: var(--uvm-secondary, #6b7280);
-      background-color: var(--uvm-surface, #fafafa);
-      border-top: 1px solid var(--uvm-border, #e5e7eb);
-    }
-
-    .status-indicator.detecting {
-      color: var(--sl-color-primary-600, #2563eb);
-    }
-
-    .status-indicator.success {
-      color: var(--sl-color-success-600, #16a34a);
-    }
-
-    .status-indicator.loading {
-      color: var(--uvm-secondary, #6b7280);
-    }
-
-    .status-indicator sl-spinner {
-      font-size: 0.875rem;
-      --indicator-color: currentColor;
-    }
-
-    .status-indicator sl-icon {
-      font-size: 0.875rem;
-    }
-
-    .confidence-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.25rem;
-      padding: 0.125rem 0.5rem;
-      font-size: 0.6875rem;
-      font-weight: 500;
-      background-color: var(--sl-color-primary-100, #dbeafe);
-      color: var(--sl-color-primary-700, #1d4ed8);
-      border-radius: 9999px;
-    }
   `;
 
-  // URL parameter state (from router)
+  // ==================== URL Parameter State ====================
+
   @state()
   private _urlVoicebankId: string | null = null;
 
   @state()
   private _urlSampleId: string | null = null;
 
-  // Current selection state
+  // ==================== Current Selection ====================
+
   @state()
   private _currentVoicebankId: string | null = null;
 
   @state()
   private _currentFilename: string | null = null;
 
-  // Oto entries for the current file
+  // ==================== State Mirrored from Sub-Components ====================
+
+  /** Audio buffer from uvm-audio-manager. */
+  @state()
+  private _audioBuffer: AudioBuffer | null = null;
+
+  @state()
+  private _loadingAudio = false;
+
+  /** Current entry from uvm-oto-manager. */
+  @state()
+  private _currentEntry: OtoEntry | null = null;
+
   @state()
   private _otoEntries: OtoEntry[] = [];
 
   @state()
   private _selectedEntryIndex = 0;
 
-  // Current entry values (local state for editing)
-  @state()
-  private _currentEntry: OtoEntry | null = null;
-
-  // Audio state
-  @state()
-  private _audioBuffer: AudioBuffer | null = null;
-
-  @state()
-  private _audioContext: AudioContext | null = null;
-
-  // Loading states
-  @state()
-  private _loadingAudio = false;
-
-  @state()
-  private _loadingEntries = false;
-
-  // Zoom level for waveform
-  @state()
-  private _zoom = 1;
-
-  // Error state
-  @state()
-  private _error: string | null = null;
-
-  // Save state tracking
   @state()
   private _isDirty = false;
 
@@ -399,14 +315,28 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   @state()
   private _saveSuccess = false;
 
-  // Auto-detect state
   @state()
   private _isDetecting = false;
 
   @state()
   private _lastConfidence: number | null = null;
 
-  // New layout state
+  @state()
+  private _loadingEntries = false;
+
+  @state()
+  private _error: string | null = null;
+
+  @state()
+  private _validationWarnings: OtoValidationWarning[] = [];
+
+  // ==================== Zoom ====================
+
+  @state()
+  private _zoom = 1;
+
+  // ==================== UI Toggle State ====================
+
   @state()
   private _showBrowser = false;
 
@@ -428,39 +358,23 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   @state()
   private _batchResults: BatchSampleResult[] = [];
 
-  // Alignment settings
-  @state()
-  private _alignmentTightness = 0.5;
+  // ==================== Navigation ====================
 
   @state()
-  private _alignmentMethodOverride: 'sofa' | 'fa' | 'blind' | null = null;
+  private _samplesList: string[] = [];
 
-  @state()
-  private _availableAlignmentMethods: AlignmentMethod[] = [];
-
-  @state()
-  private _undoStack: OtoEntry[] = [];
-
-  @state()
-  private _redoStack: OtoEntry[] = [];
-
-  // Original entry to detect changes and determine create vs update
-  private _originalEntry: OtoEntry | null = null;
-
-  // Pending sample selection (used when prompting to save)
+  /** Pending sample selection (used when prompting to save). */
   private _pendingSampleSelect: SampleSelectDetail | null = null;
 
-  // Reference to unsaved changes dialog
+  // ==================== Queries ====================
+
   @query('#unsaved-dialog')
   private _unsavedDialog!: SlDialog;
 
-  connectedCallback(): void {
-    super.connectedCallback();
-    // Add keyboard listener for shortcuts
-    this._boundKeyHandler = this._onKeyDown.bind(this);
-    document.addEventListener('keydown', this._boundKeyHandler);
-    this._loadAlignmentConfig();
-  }
+  @query('uvm-oto-manager')
+  private _otoManager!: UvmOtoManager;
+
+  // ==================== Lifecycle ====================
 
   /**
    * Vaadin Router lifecycle hook - called when navigating to this view.
@@ -491,76 +405,205 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
   }
 
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    this._cleanupAudioContext();
-    // Remove keyboard listener
-    if (this._boundKeyHandler) {
-      document.removeEventListener('keydown', this._boundKeyHandler);
-    }
-  }
-
-  private _boundKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  // ==================== Sample Loading ====================
 
   /**
-   * Handle keyboard events for shortcuts.
+   * Load a sample (triggers audio + oto loading via sub-components).
    */
-  private _onKeyDown(e: KeyboardEvent): void {
-    // Ctrl+S or Cmd+S to save (handled by context-bar, but keep for fallback)
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-      e.preventDefault();
-      if (this._isDirty && !this._isSaving) {
-        this._saveEntry();
-      }
-      return;
+  private async _loadSample(voicebankId: string, filename: string): Promise<void> {
+    // Clear samples list cache if voicebank changed
+    if (this._currentVoicebankId !== voicebankId) {
+      this._samplesList = [];
     }
 
-    // Don't trigger shortcuts if user is typing in an input
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-      return;
-    }
+    this._currentVoicebankId = voicebankId;
+    this._currentFilename = filename;
+    this._error = null;
 
-    // Sample navigation shortcuts
-    if (e.key === '[') {
-      e.preventDefault();
-      this._navigateToPreviousSample();
-      return;
-    }
+    // Update URL to reflect current selection
+    const newPath = `/editor/${encodeURIComponent(voicebankId)}/sample/${encodeURIComponent(filename)}`;
+    window.history.replaceState(null, '', newPath);
 
-    if (e.key === ']') {
-      e.preventDefault();
-      this._navigateToNextSample();
-      return;
-    }
+    // The sub-components (uvm-audio-manager and uvm-oto-manager) will
+    // react to the property changes and load their respective data.
+    // We also explicitly call loadEntries on the oto manager to handle
+    // the auto-detect-on-load logic that depends on audioBuffer.
+    await this.updateComplete;
 
-    // Toggle precision drawer with = or + key
-    if (e.key === '=' || e.key === '+') {
-      e.preventDefault();
-      this._showPrecision = !this._showPrecision;
-      return;
-    }
-
-    // D key for auto-detect
-    if (e.key === 'd' || e.key === 'D') {
-      e.preventDefault();
-      if (!this._isDetecting && this._currentFilename) {
-        this._autoDetect();
-      }
-      return;
-    }
-
-    // ? key for shortcut overlay
-    if (e.key === '?') {
-      e.preventDefault();
-      this._showShortcuts = true;
-      return;
+    // The audio manager loads automatically via property change.
+    // The oto manager needs explicit invocation for auto-detect coordination.
+    if (this._otoManager) {
+      this._otoManager.loadEntries(voicebankId, filename);
     }
   }
 
-  // Sample list cache for navigation
-  @state()
-  private _samplesList: string[] = [];
+  // ==================== Audio Manager Events ====================
+
+  /**
+   * Handle audio-loaded event from the audio manager.
+   */
+  private _onAudioLoaded(e: CustomEvent<{ audioBuffer: AudioBuffer | null; error: string | null }>): void {
+    this._audioBuffer = e.detail.audioBuffer;
+    this._loadingAudio = false;
+
+    if (e.detail.error) {
+      this._error = e.detail.error;
+    }
+  }
+
+  // ==================== Oto Manager Events ====================
+
+  /**
+   * Handle oto-entries-loaded from the oto manager.
+   */
+  private _onEntriesLoaded(e: CustomEvent<{ entries: OtoEntry[]; currentEntry: OtoEntry | null; isNew: boolean }>): void {
+    this._otoEntries = e.detail.entries;
+    this._currentEntry = e.detail.currentEntry;
+    this._selectedEntryIndex = 0;
+    this._isDirty = false;
+    this._loadingEntries = false;
+    if (this._otoManager) {
+      this._validationWarnings = this._otoManager.validationWarnings;
+    }
+  }
+
+  /**
+   * Handle oto-entry-changed from the oto manager.
+   */
+  private _onEntryChanged(e: CustomEvent<{ entry: OtoEntry; isDirty: boolean }>): void {
+    this._currentEntry = e.detail.entry;
+    this._isDirty = e.detail.isDirty;
+    this._saveSuccess = false;
+    // Sync validation warnings from the oto manager
+    if (this._otoManager) {
+      this._validationWarnings = this._otoManager.validationWarnings;
+    }
+  }
+
+  /**
+   * Handle oto-entry-saved from the oto manager.
+   */
+  private _onEntrySaved(): void {
+    this._syncFromOtoManager();
+
+    // Auto-advance to next sample if enabled
+    if (this._autoAdvance) {
+      setTimeout(() => {
+        this._navigateToNextSample();
+      }, 300);
+    }
+  }
+
+  /**
+   * Handle oto-detected from the oto manager.
+   */
+  private _onOtoDetected(): void {
+    this._syncFromOtoManager();
+  }
+
+  /**
+   * Handle oto-error from the oto manager.
+   */
+  private _onOtoError(e: CustomEvent<{ message: string }>): void {
+    this._error = e.detail.message;
+  }
+
+  /**
+   * Sync state from the oto manager after operations that modify multiple properties.
+   */
+  private _syncFromOtoManager(): void {
+    if (!this._otoManager) return;
+    this._currentEntry = this._otoManager.currentEntry;
+    this._otoEntries = this._otoManager.entries;
+    this._selectedEntryIndex = this._otoManager.selectedEntryIndex;
+    this._isDirty = this._otoManager.isDirty;
+    this._isSaving = this._otoManager.isSaving;
+    this._saveSuccess = this._otoManager.saveSuccess;
+    this._isDetecting = this._otoManager.isDetecting;
+    this._lastConfidence = this._otoManager.lastConfidence;
+    this._loadingEntries = this._otoManager.loadingEntries;
+    this._validationWarnings = this._otoManager.validationWarnings;
+  }
+
+  // ==================== Waveform Events ====================
+
+  /**
+   * Handle marker changes from the waveform editor.
+   * Delegates to the oto manager.
+   */
+  private _onMarkerChange(e: CustomEvent<MarkerChangeDetail>): void {
+    const { name, value } = e.detail;
+    this._otoManager?.updateMarker(name, value);
+    this._syncFromOtoManager();
+  }
+
+  /**
+   * Handle zoom changes from the waveform editor.
+   */
+  private _onZoomChange(e: CustomEvent<{ zoom: number }>): void {
+    this._zoom = e.detail.zoom;
+  }
+
+  // ==================== Context Bar Events ====================
+
+  private _onContextBarUndo(): void {
+    this._otoManager?.undo();
+    this._syncFromOtoManager();
+  }
+
+  private _onContextBarRedo(): void {
+    this._otoManager?.redo();
+    this._syncFromOtoManager();
+  }
+
+  private _onContextBarSave(): void {
+    this._otoManager?.saveEntry();
+    // Sync handled via oto-entry-saved event
+  }
+
+  private _onContextBarDetect(): void {
+    this._otoManager?.autoDetect();
+    // Sync handled via oto-detected event
+  }
+
+  private _onAutoAdvanceToggle(): void {
+    this._autoAdvance = !this._autoAdvance;
+    const status = this._autoAdvance ? 'enabled' : 'disabled';
+    UvmToastManager.info(`Auto-advance ${status}`);
+  }
+
+  private _onAlignmentChange(e: CustomEvent<{ tightness: number; methodOverride: 'sofa' | 'fa' | 'blind' | null }>): void {
+    const { tightness, methodOverride } = e.detail;
+    this._otoManager?.updateAlignmentSettings(tightness, methodOverride);
+  }
+
+  // ==================== Editor Toolbar Events ====================
+
+  private _onToolbarPreviousSample(): void {
+    this._navigateToPreviousSample();
+  }
+
+  private _onToolbarNextSample(): void {
+    this._navigateToNextSample();
+  }
+
+  private _onToolbarTogglePrecision(): void {
+    this._showPrecision = !this._showPrecision;
+  }
+
+  private _onToolbarDetect(): void {
+    this._otoManager?.autoDetect();
+  }
+
+  private _onToolbarShowShortcuts(): void {
+    this._showShortcuts = true;
+  }
+
+  private _onToolbarSave(): void {
+    this._otoManager?.saveEntry();
+  }
+
+  // ==================== Sample Navigation ====================
 
   /**
    * Navigate to the previous sample in the current voicebank.
@@ -568,17 +611,15 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   private async _navigateToPreviousSample(): Promise<void> {
     if (!this._currentVoicebankId || !this._currentFilename) return;
 
-    // Fetch samples list if not cached or voicebank changed
     if (this._samplesList.length === 0) {
       await this._fetchSamplesList();
     }
 
     const currentIndex = this._samplesList.indexOf(this._currentFilename);
-    if (currentIndex <= 0) return; // Already at first sample
+    if (currentIndex <= 0) return;
 
     const previousSample = this._samplesList[currentIndex - 1];
 
-    // Check for unsaved changes before navigating
     if (this._isDirty) {
       this._pendingSampleSelect = {
         voicebankId: this._currentVoicebankId,
@@ -597,17 +638,15 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   private async _navigateToNextSample(): Promise<void> {
     if (!this._currentVoicebankId || !this._currentFilename) return;
 
-    // Fetch samples list if not cached or voicebank changed
     if (this._samplesList.length === 0) {
       await this._fetchSamplesList();
     }
 
     const currentIndex = this._samplesList.indexOf(this._currentFilename);
-    if (currentIndex < 0 || currentIndex >= this._samplesList.length - 1) return; // Already at last sample
+    if (currentIndex < 0 || currentIndex >= this._samplesList.length - 1) return;
 
     const nextSample = this._samplesList[currentIndex + 1];
 
-    // Check for unsaved changes before navigating
     if (this._isDirty) {
       this._pendingSampleSelect = {
         voicebankId: this._currentVoicebankId,
@@ -634,18 +673,18 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
   }
 
+  // ==================== Sample Browser Events ====================
+
   /**
    * Handle sample selection from the sample browser.
    */
   private async _onSampleSelect(e: CustomEvent<SampleSelectDetail>): Promise<void> {
     const { voicebankId, filename } = e.detail;
 
-    // Skip if same sample is selected
     if (this._currentVoicebankId === voicebankId && this._currentFilename === filename) {
       return;
     }
 
-    // Check for unsaved changes
     if (this._isDirty) {
       this._pendingSampleSelect = { voicebankId, filename };
       this._unsavedDialog.show();
@@ -656,62 +695,16 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Load a sample (audio and oto entries).
+   * Handle voicebank selection from the sample browser.
    */
-  private async _loadSample(voicebankId: string, filename: string): Promise<void> {
-    // Clear samples list cache if voicebank changed
-    if (this._currentVoicebankId !== voicebankId) {
-      this._samplesList = [];
-    }
-
-    this._currentVoicebankId = voicebankId;
-    this._currentFilename = filename;
-    this._error = null;
-    this._selectedEntryIndex = 0;
-    this._isDirty = false;
-    this._originalEntry = null;
-    this._lastConfidence = null;
-    this._undoStack = [];
-    this._redoStack = [];
-
-    // Load audio and oto entries in parallel
-    await Promise.all([
-      this._loadAudio(voicebankId, filename),
-      this._loadOtoEntries(voicebankId, filename),
-    ]);
-
-    // Auto-detect if this is a new entry OR has only default values
-    if (
-      (this._originalEntry === null || this._hasOnlyDefaultValues(this._originalEntry)) &&
-      this._audioBuffer !== null
-    ) {
-      // Small delay to let UI update before starting detection
-      setTimeout(() => this._autoDetect(), 100);
-    }
-
-    // Update URL to reflect current selection
-    const newPath = `/editor/${encodeURIComponent(voicebankId)}/sample/${encodeURIComponent(filename)}`;
+  private _onVoicebankSelect(e: CustomEvent<{ voicebankId: string }>): void {
+    const { voicebankId } = e.detail;
+    const newPath = `/editor/${encodeURIComponent(voicebankId)}`;
     window.history.replaceState(null, '', newPath);
   }
 
-  /**
-   * Check if entry has only default values (hasn't been configured).
-   */
-  private _hasOnlyDefaultValues(entry: OtoEntry | null): boolean {
-    if (!entry) return true;
+  // ==================== Unsaved Changes Dialog ====================
 
-    return (
-      entry.offset === DEFAULT_OTO_VALUES.offset &&
-      entry.consonant === DEFAULT_OTO_VALUES.consonant &&
-      entry.cutoff === DEFAULT_OTO_VALUES.cutoff &&
-      entry.preutterance === DEFAULT_OTO_VALUES.preutterance &&
-      entry.overlap === DEFAULT_OTO_VALUES.overlap
-    );
-  }
-
-  /**
-   * Handle unsaved dialog "Discard" action.
-   */
   private _onDiscardChanges(): void {
     this._unsavedDialog.hide();
     this._isDirty = false;
@@ -723,11 +716,9 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
   }
 
-  /**
-   * Handle unsaved dialog "Save" action.
-   */
   private async _onSaveAndContinue(): Promise<void> {
-    await this._saveEntry();
+    await this._otoManager?.saveEntry();
+    this._syncFromOtoManager();
     this._unsavedDialog.hide();
 
     if (this._pendingSampleSelect && !this._isDirty) {
@@ -737,548 +728,42 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
   }
 
-  /**
-   * Handle unsaved dialog "Cancel" action.
-   */
   private _onCancelNavigation(): void {
     this._unsavedDialog.hide();
     this._pendingSampleSelect = null;
   }
 
-  /**
-   * Load audio file as AudioBuffer.
-   */
-  private async _loadAudio(voicebankId: string, filename: string): Promise<void> {
-    this._loadingAudio = true;
-    this._audioBuffer = null;
-
-    try {
-      // Get shared AudioContext on first use
-      if (!this._audioContext) {
-        this._audioContext = getSharedAudioContext();
-      }
-
-      // Request resume without blocking -- decodeAudioData works on suspended
-      // contexts, and awaiting resume() blocks until a user gesture on deep links.
-      if (this._audioContext.state === 'suspended') {
-        this._audioContext.resume();
-      }
-
-      this._audioBuffer = await api.loadSampleAsAudioBuffer(
-        voicebankId,
-        filename,
-        this._audioContext
-      );
-    } catch (error) {
-      console.error('Failed to load audio:', error);
-      if (error instanceof ApiError) {
-        if (error.isNotFound()) {
-          this._error = 'Sample not found';
-          UvmToastManager.error('Sample not found');
-        } else {
-          this._error = error.message;
-          UvmToastManager.error(`Failed to load audio: ${error.message}`);
-        }
-      } else {
-        this._error = error instanceof Error ? error.message : 'Failed to load audio';
-        UvmToastManager.error('Failed to load audio');
-      }
-    } finally {
-      this._loadingAudio = false;
-    }
-  }
+  // ==================== Entry Tabs ====================
 
   /**
-   * Load oto entries for the current file.
-   */
-  private async _loadOtoEntries(voicebankId: string, filename: string): Promise<void> {
-    this._loadingEntries = true;
-    this._otoEntries = [];
-
-    try {
-      this._otoEntries = await api.getOtoEntriesForFile(voicebankId, filename);
-
-      if (this._otoEntries.length > 0) {
-        // Use existing entry
-        this._currentEntry = { ...this._otoEntries[0] };
-        this._originalEntry = { ...this._otoEntries[0] };
-      } else {
-        // Create default entry (new, not yet saved)
-        this._currentEntry = this._createDefaultEntry(filename);
-        this._originalEntry = null;
-      }
-    } catch (error) {
-      // If no entries exist, create default (new entry, not yet saved)
-      this._currentEntry = this._createDefaultEntry(filename);
-      this._originalEntry = null;
-      console.warn('No oto entries found, using defaults:', error);
-    } finally {
-      this._loadingEntries = false;
-    }
-  }
-
-  /**
-   * Create a default oto entry for a new file.
-   */
-  private _createDefaultEntry(filename: string): OtoEntry {
-    // Generate default alias from filename (remove extension and leading underscore)
-    const baseName = filename.replace(/\.wav$/i, '').replace(/^_/, '');
-    const alias = `- ${baseName}`;
-
-    return {
-      filename,
-      alias,
-      ...DEFAULT_OTO_VALUES,
-    };
-  }
-
-  /**
-   * Handle marker changes from the waveform editor.
-   */
-  private _onMarkerChange(e: CustomEvent<MarkerChangeDetail>): void {
-    if (!this._currentEntry) return;
-
-    const { name, value } = e.detail;
-
-    // Push current state to undo stack before making changes
-    this._pushUndo();
-
-    // Update the local entry state
-    this._currentEntry = {
-      ...this._currentEntry,
-      [name]: value,
-    };
-
-    // Mark as dirty
-    this._isDirty = true;
-    this._saveSuccess = false;
-  }
-
-  /**
-   * Handle zoom changes from the waveform editor.
-   */
-  private _onZoomChange(e: CustomEvent<{ zoom: number }>): void {
-    this._zoom = e.detail.zoom;
-  }
-
-  /**
-   * Save the current oto entry to the API.
-   */
-  private async _saveEntry(): Promise<void> {
-    if (!this._currentEntry || !this._currentVoicebankId) return;
-
-    this._isSaving = true;
-    this._saveSuccess = false;
-    this._error = null;
-
-    try {
-      const isNew = this._originalEntry === null;
-
-      if (isNew) {
-        // Create new entry
-        const created = await api.createOtoEntry(this._currentVoicebankId, {
-          filename: this._currentEntry.filename,
-          alias: this._currentEntry.alias,
-          offset: this._currentEntry.offset,
-          consonant: this._currentEntry.consonant,
-          cutoff: this._currentEntry.cutoff,
-          preutterance: this._currentEntry.preutterance,
-          overlap: this._currentEntry.overlap,
-        });
-
-        // Update local state with server response
-        this._currentEntry = { ...created };
-        this._originalEntry = { ...created };
-
-        // Update oto entries list
-        this._otoEntries = [...this._otoEntries, created];
-      } else {
-        // Update existing entry (we know _originalEntry is not null here)
-        const updated = await api.updateOtoEntry(
-          this._currentVoicebankId,
-          this._currentEntry.filename,
-          this._originalEntry!.alias, // Use original alias for lookup
-          {
-            offset: this._currentEntry.offset,
-            consonant: this._currentEntry.consonant,
-            cutoff: this._currentEntry.cutoff,
-            preutterance: this._currentEntry.preutterance,
-            overlap: this._currentEntry.overlap,
-          }
-        );
-
-        // Update local state with server response
-        this._currentEntry = { ...updated };
-        this._originalEntry = { ...updated };
-
-        // Update the entry in the list
-        this._otoEntries = this._otoEntries.map((entry, i) =>
-          i === this._selectedEntryIndex ? updated : entry
-        );
-      }
-
-      this._isDirty = false;
-      this._saveSuccess = true;
-
-      // Show success toast
-      UvmToastManager.success('Entry saved');
-
-      // Clear success indicator after 2 seconds
-      setTimeout(() => {
-        this._saveSuccess = false;
-      }, 2000);
-
-      // Auto-advance to next sample if enabled
-      if (this._autoAdvance) {
-        // Small delay to let user see save confirmation
-        setTimeout(() => {
-          this._navigateToNextSample();
-        }, 300);
-      }
-    } catch (error) {
-      console.error('Failed to save oto entry:', error);
-      if (error instanceof ApiError) {
-        if (error.isNotFound()) {
-          UvmToastManager.error('Sample not found');
-        } else if (error.isConflict()) {
-          UvmToastManager.error('An entry with this alias already exists');
-        } else {
-          UvmToastManager.error(error.message);
-        }
-        this._error = error.message;
-      } else {
-        UvmToastManager.error('Failed to save entry');
-        this._error = error instanceof Error ? error.message : 'Failed to save entry';
-      }
-    } finally {
-      this._isSaving = false;
-    }
-  }
-
-  /**
-   * Handle entry selection from the entry list/tabs.
+   * Handle entry selection from the entry tabs.
    */
   private _selectEntry(index: number): void {
-    if (index < 0 || index >= this._otoEntries.length) return;
-    if (index === this._selectedEntryIndex) return;
-
-    this._selectedEntryIndex = index;
-    this._currentEntry = { ...this._otoEntries[index] };
-    this._originalEntry = { ...this._otoEntries[index] };
-    this._isDirty = false;
-    this._saveSuccess = false;
-    this._lastConfidence = null;
-    this._undoStack = [];
-    this._redoStack = [];
-  }
-
-
-  /**
-   * Handle entry creation request from the entry list component.
-   */
-  private async _onEntryCreate(e: CustomEvent<EntryCreateDetail>): Promise<void> {
-    const { alias } = e.detail;
-
-    if (!this._currentVoicebankId || !this._currentFilename) return;
-
-    // Create new entry with default values
-    const newEntry = {
-      filename: this._currentFilename,
-      alias,
-      ...DEFAULT_OTO_VALUES,
-    };
-
-    try {
-      const created = await api.createOtoEntry(this._currentVoicebankId, newEntry);
-      UvmToastManager.success(`Created alias "${alias}"`);
-
-      // Add to entries list
-      this._otoEntries = [...this._otoEntries, created];
-
-      // Select the new entry
-      this._selectedEntryIndex = this._otoEntries.length - 1;
-      this._currentEntry = { ...created };
-      this._originalEntry = { ...created };
-      this._isDirty = false;
-      this._saveSuccess = false;
-      this._lastConfidence = null;
-      this._undoStack = [];
-      this._redoStack = [];
-    } catch (error) {
-      console.error('Failed to create oto entry:', error);
-      if (error instanceof ApiError) {
-        if (error.isConflict()) {
-          UvmToastManager.error(`An entry with alias "${alias}" already exists`);
-        } else {
-          UvmToastManager.error(error.message);
-        }
-      } else {
-        UvmToastManager.error('Failed to create entry');
-      }
-    }
+    this._otoManager?.selectEntry(index);
+    this._syncFromOtoManager();
   }
 
   /**
    * Add a new entry (for VCV samples with multiple aliases).
    */
   private _addEntry(): void {
-    if (!this._currentFilename) return;
-
-    // Generate a unique alias
-    const baseName = this._currentFilename.replace(/\.wav$/i, '').replace(/^_/, '');
-    let alias = `- ${baseName}`;
-    let suffix = 2;
-
-    while (this._otoEntries.some((e) => e.alias === alias)) {
-      alias = `- ${baseName} ${suffix}`;
-      suffix++;
-    }
-
-    // Trigger entry creation
-    this._onEntryCreate(new CustomEvent('entry-create', { detail: { alias } }));
+    this._otoManager?.addEntry();
   }
 
-  /**
-   * Load alignment configuration and available methods from the backend.
-   */
-  private async _loadAlignmentConfig(): Promise<void> {
-    try {
-      const [configResult, methodsResult] = await Promise.all([
-        api.getAlignmentConfig(),
-        api.getAlignmentMethods(),
-      ]);
-
-      this._alignmentTightness = configResult.tightness;
-      this._alignmentMethodOverride = configResult.method_override as typeof this._alignmentMethodOverride;
-
-      // Map backend methods to frontend AlignmentMethod shape
-      this._availableAlignmentMethods = methodsResult.methods.map(m => ({
-        name: m.name as 'sofa' | 'fa' | 'blind',
-        available: m.available,
-        displayName: m.display_name,
-        unavailableReason: m.available ? undefined : (m.description || 'Not available'),
-      }));
-    } catch (error) {
-      console.warn('Failed to load alignment config:', error);
-      // Use defaults - not critical
-    }
-  }
-
-  /**
-   * Handle alignment settings changes from the context bar.
-   * Updates local state immediately and persists to backend in the background.
-   */
-  private async _onAlignmentChange(e: CustomEvent<{tightness: number; methodOverride: 'sofa' | 'fa' | 'blind' | null}>): Promise<void> {
-    const { tightness, methodOverride } = e.detail;
-    this._alignmentTightness = tightness;
-    this._alignmentMethodOverride = methodOverride;
-
-    // Persist to backend (fire-and-forget, don't block UI)
-    try {
-      await api.updateAlignmentConfig({
-        tightness,
-        method_override: methodOverride === 'blind' ? null : methodOverride,
-      });
-    } catch (error) {
-      console.warn('Failed to persist alignment config:', error);
-    }
-  }
-
-  /**
-   * Auto-detect oto parameters using ML phoneme detection.
-   */
-  private async _autoDetect(): Promise<void> {
-    if (!this._currentVoicebankId || !this._currentFilename) return;
-
-    this._isDetecting = true;
-    this._error = null;
-
-    try {
-      const suggestion = await api.suggestOto(
-        this._currentVoicebankId,
-        this._currentFilename,
-        {
-          alias: this._currentEntry?.alias,
-          tightness: this._alignmentTightness,
-          methodOverride: this._alignmentMethodOverride === 'blind' ? null : this._alignmentMethodOverride,
-        }
-      );
-
-      // Push current state to undo stack before applying detection
-      this._pushUndo();
-
-      // Apply suggested values
-      this._currentEntry = {
-        filename: suggestion.filename,
-        alias: suggestion.alias,
-        offset: suggestion.offset,
-        consonant: suggestion.consonant,
-        cutoff: suggestion.cutoff,
-        preutterance: suggestion.preutterance,
-        overlap: suggestion.overlap,
-      };
-
-      this._lastConfidence = suggestion.confidence;
-      this._isDirty = true;
-      this._saveSuccess = false;
-
-      // Show success toast with confidence info
-      const confidencePercent = Math.round(suggestion.confidence * 100);
-      UvmToastManager.success(`Parameters detected (${confidencePercent}% confidence)`);
-    } catch (error) {
-      console.error('Failed to auto-detect oto parameters:', error);
-      if (error instanceof ApiError) {
-        if (error.isNotFound()) {
-          UvmToastManager.error('Sample not found');
-        } else if (error.status === 503) {
-          UvmToastManager.error('ML service is not available');
-        } else {
-          UvmToastManager.error(error.message);
-        }
-        this._error = error.message;
-      } else {
-        UvmToastManager.error('Failed to auto-detect parameters');
-        this._error = error instanceof Error ? error.message : 'Failed to auto-detect parameters';
-      }
-      this._lastConfidence = null;
-    } finally {
-      this._isDetecting = false;
-    }
-  }
-
-  /**
-   * Clean up audio context when component is disconnected.
-   */
-  private _cleanupAudioContext(): void {
-    // Release reference to shared AudioContext (do not close -- it is shared)
-    this._audioContext = null;
-  }
-
-  /**
-   * Get the voicebank name for display.
-   */
-  private _getVoicebankName(): string {
-    return this._currentVoicebankId || '';
-  }
-
-  /**
-   * Open the sample browser modal.
-   */
-  private _openBrowser(): void {
-    this._showBrowser = true;
-  }
-
-  /**
-   * Get current entry as OtoEntry object.
-   */
-  private _getCurrentEntry(): OtoEntry | null {
-    if (!this._currentFilename || !this._currentEntry) return null;
-    return { ...this._currentEntry };
-  }
-
-  /**
-   * Push current state to undo stack.
-   */
-  private _pushUndo(): void {
-    const current = this._getCurrentEntry();
-    if (current) {
-      this._undoStack = [...this._undoStack, current];
-      this._redoStack = []; // Clear redo on new action
-    }
-  }
-
-  /**
-   * Apply an entry state (used for undo/redo).
-   */
-  private _applyEntry(entry: OtoEntry): void {
-    this._currentEntry = { ...entry };
-    this._isDirty = true;
-    this._saveSuccess = false;
-  }
-
-  /**
-   * Undo the last change.
-   */
-  private _undo(): void {
-    if (this._undoStack.length === 0) return;
-
-    const current = this._getCurrentEntry();
-    if (current) {
-      this._redoStack = [...this._redoStack, current];
-    }
-
-    const previous = this._undoStack[this._undoStack.length - 1];
-    this._undoStack = this._undoStack.slice(0, -1);
-    this._applyEntry(previous);
-  }
-
-  /**
-   * Redo a previously undone change.
-   */
-  private _redo(): void {
-    if (this._redoStack.length === 0) return;
-
-    const current = this._getCurrentEntry();
-    if (current) {
-      this._undoStack = [...this._undoStack, current];
-    }
-
-    const next = this._redoStack[this._redoStack.length - 1];
-    this._redoStack = this._redoStack.slice(0, -1);
-    this._applyEntry(next);
-  }
+  // ==================== Precision Drawer ====================
 
   /**
    * Handle precision drawer value changes.
+   * Delegates to the oto manager.
    */
   private _onPrecisionChange(e: CustomEvent<PrecisionDrawerChangeDetail>): void {
-    if (!this._currentEntry) return;
-
     const { name, value } = e.detail;
-
-    // Push current state to undo stack before making changes
-    this._pushUndo();
-
-    // Update the entry
-    this._currentEntry = {
-      ...this._currentEntry,
-      [name]: value,
-    };
-
-    this._isDirty = true;
-    this._saveSuccess = false;
+    this._otoManager?.updateMarker(name, value);
+    this._syncFromOtoManager();
   }
 
-  /**
-   * Handle voicebank selection from the sample browser.
-   * Updates the URL to reflect the selected voicebank.
-   */
-  private _onVoicebankSelect(e: CustomEvent<{ voicebankId: string }>): void {
-    const { voicebankId } = e.detail;
-    // Update URL to show voicebank selection (without triggering navigation)
-    const newPath = `/editor/${encodeURIComponent(voicebankId)}`;
-    window.history.replaceState(null, '', newPath);
-  }
+  // ==================== Batch Review ====================
 
-  /**
-   * Open the metadata editor dialog.
-   */
-  private _openMetadata(): void {
-    this._showMetadata = true;
-  }
-
-  /**
-   * Handle auto-advance toggle from context bar.
-   */
-  private _onAutoAdvanceToggle(): void {
-    this._autoAdvance = !this._autoAdvance;
-    const status = this._autoAdvance ? 'enabled' : 'disabled';
-    UvmToastManager.info(`Auto-advance ${status}`);
-  }
-
-  /**
-   * Handle batch review completion.
-   */
   private _onBatchReviewComplete(e: CustomEvent<{ accepted: BatchSampleResult[]; skipped: BatchSampleResult[] }>): void {
     const { accepted } = e.detail;
     this._showBatchReview = false;
@@ -1289,37 +774,51 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     }
   }
 
-  /**
-   * Handle request to adjust a sample from batch review.
-   */
   private _onBatchReviewAdjust(e: CustomEvent<{ sample: BatchSampleResult }>): void {
     const { sample } = e.detail;
     this._showBatchReview = false;
 
-    // Navigate to the sample for manual adjustment
     if (this._currentVoicebankId) {
       this._loadSample(this._currentVoicebankId, sample.filename);
     }
   }
 
+  // ==================== Helpers ====================
+
   /**
-   * Get progress counts for the current voicebank.
+   * Compute a Set of parameter names that have validation warnings,
+   * for passing to the precision drawer's warningParameters property.
    */
+  private get _warningParameterSet(): Set<string> {
+    return new Set(this._validationWarnings.map((w) => w.parameter));
+  }
+
+  private _getVoicebankName(): string {
+    return this._currentVoicebankId || '';
+  }
+
+  private _openBrowser(): void {
+    this._showBrowser = true;
+  }
+
+  private _openMetadata(): void {
+    this._showMetadata = true;
+  }
+
   private _getProgressCounts(): { configured: number; total: number } {
-    // For now, use samples list length as total
-    // In a real implementation, we'd track which samples have oto entries
     const total = this._samplesList.length;
-    // This is a placeholder - in production we'd track actual configured count
     const configured = this._otoEntries.length > 0 ? 1 : 0;
     return { configured, total };
   }
+
+  // ==================== Render Helpers ====================
 
   /**
    * Render entry tabs for VCV samples with multiple aliases.
    */
   private _renderEntryTabs() {
     if (!this._otoEntries || this._otoEntries.length <= 1) {
-      return null; // No tabs for single entry
+      return null;
     }
 
     return html`
@@ -1407,64 +906,6 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
   }
 
   /**
-   * Render status indicator showing detection/save/loading state.
-   */
-  private _renderStatusIndicator() {
-    // Show detecting state
-    if (this._isDetecting) {
-      return html`
-        <div class="status-indicator detecting" role="status" aria-label="Detecting parameters">
-          <sl-spinner></sl-spinner>
-          <span>Detecting parameters...</span>
-        </div>
-      `;
-    }
-
-    // Show loading entries state
-    if (this._loadingEntries) {
-      return html`
-        <div class="status-indicator loading" role="status" aria-label="Loading entries">
-          <sl-spinner></sl-spinner>
-          <span>Loading entries...</span>
-        </div>
-      `;
-    }
-
-    // Show save success with confidence
-    if (this._saveSuccess) {
-      return html`
-        <div class="status-indicator success" role="status" aria-label="Entry saved successfully">
-          <sl-icon name="check-circle"></sl-icon>
-          <span>Saved</span>
-          ${this._lastConfidence !== null
-            ? html`
-                <span class="confidence-badge">
-                  <sl-icon name="cpu"></sl-icon>
-                  ${Math.round(this._lastConfidence * 100)}% confidence
-                </span>
-              `
-            : null}
-        </div>
-      `;
-    }
-
-    // Show confidence from last detection (if available)
-    if (this._lastConfidence !== null) {
-      return html`
-        <div class="status-indicator">
-          <span class="confidence-badge">
-            <sl-icon name="cpu"></sl-icon>
-            ${Math.round(this._lastConfidence * 100)}% confidence
-          </span>
-        </div>
-      `;
-    }
-
-    // No status to show
-    return null;
-  }
-
-  /**
    * Render the unsaved changes confirmation dialog.
    */
   private _renderUnsavedDialog() {
@@ -1486,16 +927,53 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
     `;
   }
 
+  // ==================== Main Render ====================
+
   render() {
     const progress = this._getProgressCounts();
 
     return html`
       <div class="editor-layout" role="main" aria-label="Oto parameter editor">
+        <!-- Headless sub-components for audio and oto management -->
+        <uvm-audio-manager
+          .voicebankId=${this._currentVoicebankId}
+          .filename=${this._currentFilename}
+          @audio-loaded=${this._onAudioLoaded}
+        ></uvm-audio-manager>
+
+        <uvm-oto-manager
+          .voicebankId=${this._currentVoicebankId}
+          .filename=${this._currentFilename}
+          .audioBuffer=${this._audioBuffer}
+          @oto-entries-loaded=${this._onEntriesLoaded}
+          @oto-entry-changed=${this._onEntryChanged}
+          @oto-entry-saved=${this._onEntrySaved}
+          @oto-detected=${this._onOtoDetected}
+          @oto-error=${this._onOtoError}
+        ></uvm-oto-manager>
+
+        <!-- Keyboard shortcut handler and status indicator -->
+        <uvm-editor-toolbar
+          .hasSample=${!!this._currentFilename}
+          .isDetecting=${this._isDetecting}
+          .isDirty=${this._isDirty}
+          .isSaving=${this._isSaving}
+          .saveSuccess=${this._saveSuccess}
+          .loadingEntries=${this._loadingEntries}
+          .lastConfidence=${this._lastConfidence}
+          @editor-toolbar:previous-sample=${this._onToolbarPreviousSample}
+          @editor-toolbar:next-sample=${this._onToolbarNextSample}
+          @editor-toolbar:toggle-precision=${this._onToolbarTogglePrecision}
+          @editor-toolbar:detect=${this._onToolbarDetect}
+          @editor-toolbar:show-shortcuts=${this._onToolbarShowShortcuts}
+          @editor-toolbar:save=${this._onToolbarSave}
+        ></uvm-editor-toolbar>
+
         <uvm-context-bar
           .voicebankName=${this._getVoicebankName()}
           .sampleName=${this._currentFilename || ''}
-          .canUndo=${this._undoStack.length > 0}
-          .canRedo=${this._redoStack.length > 0}
+          .canUndo=${this._otoManager?.canUndo ?? false}
+          .canRedo=${this._otoManager?.canRedo ?? false}
           .hasUnsavedChanges=${this._isDirty}
           .saving=${this._isSaving}
           .autoAdvance=${this._autoAdvance}
@@ -1503,16 +981,16 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
           .progressTotal=${progress.total}
           .detecting=${this._isDetecting}
           .detectDisabled=${!this._currentFilename}
-          .alignmentTightness=${this._alignmentTightness}
-          .alignmentMethodOverride=${this._alignmentMethodOverride}
-          .availableAlignmentMethods=${this._availableAlignmentMethods}
+          .alignmentTightness=${this._otoManager?.alignmentTightness ?? 0.5}
+          .alignmentMethodOverride=${this._otoManager?.alignmentMethodOverride ?? null}
+          .availableAlignmentMethods=${this._otoManager?.availableAlignmentMethods ?? []}
           @uvm-context-bar:browse=${this._openBrowser}
-          @uvm-context-bar:undo=${this._undo}
-          @uvm-context-bar:redo=${this._redo}
-          @uvm-context-bar:save=${this._saveEntry}
+          @uvm-context-bar:undo=${this._onContextBarUndo}
+          @uvm-context-bar:redo=${this._onContextBarRedo}
+          @uvm-context-bar:save=${this._onContextBarSave}
           @uvm-context-bar:auto-advance-toggle=${this._onAutoAdvanceToggle}
           @uvm-context-bar:metadata=${this._openMetadata}
-          @uvm-context-bar:detect=${this._autoDetect}
+          @uvm-context-bar:detect=${this._onContextBarDetect}
           @uvm-context-bar:alignment-change=${this._onAlignmentChange}
         ></uvm-context-bar>
 
@@ -1523,7 +1001,6 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
               <div class="waveform-area">
                 <div class="waveform-section">
                   ${this._renderWaveform()}
-                  ${this._renderStatusIndicator()}
                 </div>
 
                 <uvm-value-bar
@@ -1534,6 +1011,10 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
                   .overlap=${this._currentEntry?.overlap ?? 0}
                 ></uvm-value-bar>
 
+                <uvm-validation-warnings
+                  .warnings=${this._validationWarnings}
+                ></uvm-validation-warnings>
+
                 <uvm-precision-drawer
                   ?open=${this._showPrecision}
                   .offset=${this._currentEntry?.offset ?? 0}
@@ -1541,6 +1022,7 @@ export class UvmEditorView extends LitElement implements AfterEnterObserver {
                   .cutoff=${this._currentEntry?.cutoff ?? 0}
                   .preutterance=${this._currentEntry?.preutterance ?? 0}
                   .overlap=${this._currentEntry?.overlap ?? 0}
+                  .warningParameters=${this._warningParameterSet}
                   @uvm-precision-drawer:change=${this._onPrecisionChange}
                   @uvm-precision-drawer:close=${() => (this._showPrecision = false)}
                 ></uvm-precision-drawer>

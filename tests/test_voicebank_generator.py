@@ -25,6 +25,7 @@ from src.backend.services.alignment_service import (
     SessionAlignmentResult,
 )
 from src.backend.services.voicebank_generator import (
+    TARGET_SAMPLE_RATE,
     NoAlignedSegmentsError,
     VoicebankGenerator,
 )
@@ -578,3 +579,277 @@ class TestVoicebankGeneratorIntegration:
         assert result.sample_count >= 1
         assert result.skipped_segments == 1
         assert len(result.warnings) >= 1
+
+
+class TestIsVowelPhoneme:
+    """Tests for VoicebankGenerator._is_vowel_phoneme classification."""
+
+    @pytest.fixture
+    def generator(self, tmp_path: Path) -> VoicebankGenerator:
+        """Create a VoicebankGenerator for static method access."""
+        return VoicebankGenerator(
+            session_service=MagicMock(),
+            alignment_service=MagicMock(),
+            oto_suggester=MagicMock(),
+            output_base_path=tmp_path / "output",
+        )
+
+    @pytest.mark.parametrize(
+        "phoneme",
+        ["a", "e", "i", "o", "u", "A", "E", "I", "O", "U"],
+    )
+    def test_basic_vowels(self, phoneme: str) -> None:
+        """Test that basic Latin vowels are recognized."""
+        assert VoicebankGenerator._is_vowel_phoneme(phoneme) is True
+
+    @pytest.mark.parametrize(
+        "phoneme",
+        ["aa", "ii", "uu", "ee", "oo"],
+    )
+    def test_long_vowel_romaji(self, phoneme: str) -> None:
+        """Test that Japanese long-vowel romaji variants are recognized."""
+        assert VoicebankGenerator._is_vowel_phoneme(phoneme) is True
+
+    @pytest.mark.parametrize(
+        "phoneme",
+        ["a\u02d0", "i:", "e\u02d0"],
+    )
+    def test_length_marked_vowels(self, phoneme: str) -> None:
+        """Test vowels with IPA length markers (long diacritic, colon)."""
+        assert VoicebankGenerator._is_vowel_phoneme(phoneme) is True
+
+    @pytest.mark.parametrize(
+        "phoneme",
+        ["\u0259", "\u00e6", "\u0254", "\u026a", "\u028a", "\u028c", "\u025b"],
+    )
+    def test_ipa_vowels(self, phoneme: str) -> None:
+        """Test common IPA vowel symbols."""
+        assert VoicebankGenerator._is_vowel_phoneme(phoneme) is True
+
+    @pytest.mark.parametrize(
+        "phoneme",
+        ["k", "s", "t", "n", "m", "r", "p", "b", "d", "g", "sh", "ch"],
+    )
+    def test_consonants_not_vowels(self, phoneme: str) -> None:
+        """Test that consonants are not classified as vowels."""
+        assert VoicebankGenerator._is_vowel_phoneme(phoneme) is False
+
+
+class TestSliceVcvStyle:
+    """Tests for VoicebankGenerator._slice_vcv_style VCV pattern detection."""
+
+    @pytest.fixture
+    def temp_dir(self) -> Path:
+        """Create a temporary directory."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    @pytest.fixture
+    def mock_oto_suggester(self) -> MagicMock:
+        """Create a mock oto suggester."""
+        suggester = MagicMock()
+        suggester.suggest_oto = AsyncMock(
+            return_value=OtoSuggestion(
+                filename="test.wav",
+                alias="test",
+                offset=10,
+                consonant=80,
+                cutoff=-50,
+                preutterance=40,
+                overlap=15,
+                confidence=0.9,
+                phonemes_detected=[],
+                audio_duration_ms=500,
+            )
+        )
+        return suggester
+
+    @pytest.fixture
+    def generator(
+        self, temp_dir: Path, mock_oto_suggester: MagicMock
+    ) -> VoicebankGenerator:
+        """Create a VoicebankGenerator instance."""
+        return VoicebankGenerator(
+            session_service=MagicMock(),
+            alignment_service=MagicMock(),
+            oto_suggester=mock_oto_suggester,
+            output_base_path=temp_dir / "output",
+        )
+
+    def _make_audio(self, duration_ms: float = 1000) -> np.ndarray:
+        """Create a test audio array."""
+        num_samples = int(TARGET_SAMPLE_RATE * duration_ms / 1000)
+        return (
+            np.random.default_rng(42).uniform(-0.5, 0.5, num_samples).astype(np.float32)
+        )
+
+    @pytest.mark.asyncio
+    async def test_vcv_basic_pattern(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test basic V-C-V pattern: a k a produces one VCV sample."""
+        phonemes = [
+            PhonemeSegment(phoneme="a", start_ms=0, end_ms=100, confidence=0.9),
+            PhonemeSegment(phoneme="k", start_ms=100, end_ms=150, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=150, end_ms=300, confidence=0.9),
+        ]
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_out"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "aka", "seg1", output
+        )
+
+        assert len(samples) == 1
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_vcv_consonant_cluster(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test V-CC-V pattern: a s t a produces one VCV sample with cluster."""
+        phonemes = [
+            PhonemeSegment(phoneme="a", start_ms=0, end_ms=100, confidence=0.9),
+            PhonemeSegment(phoneme="s", start_ms=100, end_ms=130, confidence=0.9),
+            PhonemeSegment(phoneme="t", start_ms=130, end_ms=160, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=160, end_ms=300, confidence=0.9),
+        ]
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_cluster"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "asta", "seg1", output
+        )
+
+        assert len(samples) == 1
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_vcv_multiple_triplets(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test chain: a k a s a produces two VCV samples (a-k-a, a-s-a)."""
+        phonemes = [
+            PhonemeSegment(phoneme="a", start_ms=0, end_ms=100, confidence=0.9),
+            PhonemeSegment(phoneme="k", start_ms=100, end_ms=150, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=150, end_ms=250, confidence=0.9),
+            PhonemeSegment(phoneme="s", start_ms=250, end_ms=300, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=300, end_ms=450, confidence=0.9),
+        ]
+        audio = self._make_audio(600)
+        output = temp_dir / "vcv_chain"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "akasa", "seg1", output
+        )
+
+        assert len(samples) == 2
+        assert len(entries) == 2
+
+    @pytest.mark.asyncio
+    async def test_vcv_single_vowel_fallback(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test single vowel falls back to whole segment (the original bug)."""
+        phonemes = [
+            PhonemeSegment(phoneme="k", start_ms=0, end_ms=50, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=50, end_ms=200, confidence=0.9),
+        ]
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_single"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "ka", "seg1", output
+        )
+
+        # Should fall back to whole segment -- produces 1 sample, not 0
+        assert len(samples) == 1
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_vcv_no_phonemes_fallback(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test empty phoneme list falls back to whole segment."""
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_empty"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, [], "ka", "seg1", output
+        )
+
+        assert len(samples) == 1
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_vcv_adjacent_vowels_skipped(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test adjacent vowels (no consonant) do not create a VCV sample."""
+        phonemes = [
+            PhonemeSegment(phoneme="a", start_ms=0, end_ms=100, confidence=0.9),
+            PhonemeSegment(phoneme="i", start_ms=100, end_ms=200, confidence=0.9),
+        ]
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_adj"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "ai", "seg1", output
+        )
+
+        # Adjacent vowels: no V-C-V pattern, should fallback to whole segment
+        assert len(samples) == 1  # whole segment fallback
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_vcv_consonants_only_fallback(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test all-consonant phoneme list falls back to whole segment."""
+        phonemes = [
+            PhonemeSegment(phoneme="k", start_ms=0, end_ms=50, confidence=0.9),
+            PhonemeSegment(phoneme="s", start_ms=50, end_ms=100, confidence=0.9),
+            PhonemeSegment(phoneme="t", start_ms=100, end_ms=150, confidence=0.9),
+        ]
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_cons"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "kst", "seg1", output
+        )
+
+        # No vowels at all => fallback
+        assert len(samples) == 1
+        assert len(entries) == 1
+
+    @pytest.mark.asyncio
+    async def test_vcv_with_leading_consonants(
+        self, generator: VoicebankGenerator, temp_dir: Path
+    ) -> None:
+        """Test leading consonants before first vowel are handled: k a s a."""
+        phonemes = [
+            PhonemeSegment(phoneme="k", start_ms=0, end_ms=50, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=50, end_ms=150, confidence=0.9),
+            PhonemeSegment(phoneme="s", start_ms=150, end_ms=200, confidence=0.9),
+            PhonemeSegment(phoneme="a", start_ms=200, end_ms=350, confidence=0.9),
+        ]
+        audio = self._make_audio(500)
+        output = temp_dir / "vcv_lead"
+        output.mkdir()
+
+        samples, entries, _ = await generator._slice_vcv_style(
+            audio, TARGET_SAMPLE_RATE, phonemes, "kasa", "seg1", output
+        )
+
+        # Should find one V-C-V: a-s-a (leading k is before first vowel)
+        assert len(samples) == 1
+        assert len(entries) == 1
